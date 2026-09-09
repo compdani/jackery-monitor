@@ -318,8 +318,8 @@ document.querySelectorAll('.switch').forEach((btn) => {
     const port = btn.dataset.port;
     if (!port) return;
     // If the AC button is in watchdog-error state, route the click to
-    // the dismiss endpoint instead of toggling. The watchdog will start
-    // a fresh retry sequence on the next AC=OFF observation.
+    // the dismiss endpoint instead of toggling. The next hardware-trip
+    // observation starts a fresh cycle sequence.
     if (port === 'ac' && btn.classList.contains('wd-err')) {
       const viewSnDismiss = activeJackeryDevice()?.device_sn || null;
       try {
@@ -4114,7 +4114,7 @@ function applyStatus(s) {
   }
 
   // Inverter recovery watchdog decoration on the AC button.
-  // (Pure decoration — the server is doing the actual retry MQTT
+  // (Pure decoration — the server is doing the actual cycle MQTT
   // commands; this just communicates the state visually.)
   //   - consecutive_attempts > 0, no error  → yellow wd-warn + tooltip
   //   - error_message latched               → red wd-err + tooltip; click
@@ -4133,8 +4133,9 @@ function applyStatus(s) {
       acSw.classList.remove('wd-err');
       acSw.classList.add('wd-warn');
       acSw.title = (
-        `Inverter recovery in progress: retry ${wd.consecutive_attempts}/5. ` +
-        `Sending AC-on every 10s; will surface an error after 5 attempts.`);
+        `Inverter recovery in progress: hardware-trip cycle ` +
+        `${wd.consecutive_attempts}/2. Cycling AC off/on; will stop ` +
+        `after 2 attempts if output does not return.`);
     } else {
       acSw.classList.remove('wd-err', 'wd-warn');
       acSw.title = '';

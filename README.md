@@ -421,6 +421,7 @@ Persistent state on the NAS (Docker volume `jackery-data`, mounted at
 | Dashboard says *bridge unreachable* | `docker compose logs jackery-bridge` — usually a creds issue. Sign in via the dashboard. |
 | Phone app keeps signing out when bridge is running | Expected — Jackery allows one session per account. Use the "Pause polling" button on the Device tab to hand the session over for a configurable duration, or wait the 60s contested-cooldown. |
 | Output toggle button reverts after click | Normal — the device takes 5-30s to apply. The UI holds the optimistic state during a 30s "pending" window. |
+| AC turns itself back on after you switch it off | Older builds treated any AC=OFF as an inverter trip and published AC-on after ~10s (or ~60s after a UI off). Current builds leave a port that reports OFF alone. Hardware-trip recovery (port still claims ON, watts collapsed) is opt-in via Settings → inverter trip-recovery floor; leave it at 0 unless your rig always has load. |
 | Kasa device test fails with `Device response did not match our challenge` | Newer Kasa firmware uses KLAP auth. Enter your Kasa cloud email + password in **Automation tab → Kasa account**. Email is case-sensitive. |
 | Kasa test fails with `ZoneInfoNotFoundError` | The image needs the `tzdata` Python package. Should be in latest builds — make sure Watchtower has pulled. |
 | Live chart shows only 6 minutes after a deploy | Watchtower restarted the container, in-memory chart history was wiped. The chart hydrates from the energy DB on the next poll — give it a minute. |

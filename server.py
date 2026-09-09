@@ -454,11 +454,10 @@ async def poll_loop() -> None:
                     )
                 for sn, t, name, model_code, frame_ts in samples_to_write:
                     state.energy.upsert_device(sn, name, model_code, None)
-                    # Inverter recovery watchdog: AC port should stay ON
-                    # always; OFF means the inverter tripped on overload.
-                    # Drive the recovery state machine — on "retry" we
-                    # send the AC-on MQTT command. Best-effort; never let
-                    # this fail the poll-write path.
+                    # Inverter recovery watchdog: opt-in hardware-trip
+                    # recovery (port claims ON, output collapsed). A
+                    # port that reports OFF is left alone. Best-effort;
+                    # never let this fail the poll-write path.
                     try:
                         await _inverter_watchdog_tick(sn, t, frame_ts)
                     except Exception as e:
@@ -1885,7 +1884,7 @@ async def smart_charge_loop():
         await asyncio.sleep(bo.next_sleep(5 * 60))
 
 
-# ---------- Inverter recovery watchdog (AC-port auto-restart) ----------
+# ---------- Inverter recovery watchdog (hardware-trip AC cycle) ----------
 # Strong refs for in-flight AC off->on cycle tasks: asyncio holds tasks
 # only weakly, and losing one between the "off" and the "on" is the
 # exact outage this feature exists to prevent.
@@ -1897,9 +1896,10 @@ async def _inverter_watchdog_tick(device_sn: str, telemetry: dict,
 
     Called from the poll_loop per-device write-sample loop, so we
     re-evaluate every cloud poll tick (default 2s). When the state
-    machine says "retry", fire an AC-on MQTT command via the cloud
-    client. Best-effort: any failure logs at debug and bails — the
-    inverter recovery layer must never break telemetry persistence."""
+    machine says "cycle" (opt-in hardware trip: port claims ON,
+    output collapsed), toggle AC off → on. A port that reports OFF
+    is never auto-enabled. Best-effort: any failure logs and bails —
+    the inverter recovery layer must never break telemetry persistence."""
     if not device_sn:
         return
     ac_on = bool(telemetry.get("ac_on"))
@@ -1917,52 +1917,38 @@ async def _inverter_watchdog_tick(device_sn: str, telemetry: dict,
         sample_ts=frame_ts, collapse_floor_w=collapse_floor)
     # Edge-triggered logging: only log on state transitions so the
     # event log stays clean while we're idle.
-    if action in ("retry", "cycle"):
-        phase = ("slow" if rs.consecutive_attempts
-                 > inverter_watchdog.DEFAULT_MAX_ATTEMPTS else "fast")
+    if action == "cycle":
         setter = getattr(state.client, "set_output", None)
-        if action == "cycle":
-            # Hardware trip: the port claims ON with collapsed output, so
-            # a plain AC-on is a no-op — toggle off, pause, on. Runs as a
-            # task so the 2s pause never stalls the poll loop; the 10s
-            # retry pacing prevents overlapping cycles.
-            log.warning(
-                "inverter_watchdog: HARDWARE TRIP for %s — port claims ON "
-                "but output collapsed; cycling AC off->on (%s attempt %d)",
-                device_sn, phase, rs.consecutive_attempts,
-            )
-            if setter:
-                async def _cycle(sn=device_sn, set_fn=setter):
-                    try:
-                        await set_fn("ac", False, device_sn=sn)
-                        await asyncio.sleep(2.0)
-                        await set_fn("ac", True, device_sn=sn)
-                    except Exception as e:
-                        log.warning("inverter_watchdog: AC cycle failed "
-                                    "for %s: %s", sn, e)
-                _task = asyncio.create_task(_cycle())
-                _WATCHDOG_CYCLE_TASKS.add(_task)
-                _task.add_done_callback(_WATCHDOG_CYCLE_TASKS.discard)
-        else:
-            log.warning(
-                "inverter_watchdog: AC=OFF for %s — sending AC-on (%s attempt %d)",
-                device_sn, phase, rs.consecutive_attempts,
-            )
-            if setter:
+        # Hardware trip: the port claims ON with collapsed output, so
+        # a plain AC-on is a no-op — toggle off, pause, on. Runs as a
+        # task so the 2s pause never stalls the poll loop; the 10s
+        # retry pacing prevents overlapping cycles.
+        log.warning(
+            "inverter_watchdog: HARDWARE TRIP for %s — port claims ON "
+            "but output collapsed; cycling AC off->on (attempt %d)",
+            device_sn, rs.consecutive_attempts,
+        )
+        if setter:
+            async def _cycle(sn=device_sn, set_fn=setter):
                 try:
-                    await setter("ac", True, device_sn=device_sn)
+                    await set_fn("ac", False, device_sn=sn)
+                    await asyncio.sleep(2.0)
+                    await set_fn("ac", True, device_sn=sn)
                 except Exception as e:
-                    log.warning("inverter_watchdog: AC-on MQTT command failed "
-                                "for %s: %s", device_sn, e)
+                    log.warning("inverter_watchdog: AC cycle failed "
+                                "for %s: %s", sn, e)
+            _task = asyncio.create_task(_cycle())
+            _WATCHDOG_CYCLE_TASKS.add(_task)
+            _task.add_done_callback(_WATCHDOG_CYCLE_TASKS.discard)
     elif action == "error" and not prior_error:
         log.error(
-            "inverter_watchdog: %s exhausted %d fast retries; AC still OFF — "
-            "continuing slow retries every %ds until it comes back",
-            device_sn, inverter_watchdog.DEFAULT_MAX_ATTEMPTS,
-            int(inverter_watchdog.DEFAULT_SLOW_RETRY_INTERVAL_S),
+            "inverter_watchdog: %s hardware-trip recovery exhausted "
+            "%d AC off/on cycles without output returning; stopped "
+            "to avoid repeated power cuts",
+            device_sn, inverter_watchdog.MAX_CYCLES_PER_EPISODE,
         )
     elif action == "idle" and (prior_attempts > 0 or prior_error):
-        log.info("inverter_watchdog: %s recovered (AC back ON)", device_sn)
+        log.info("inverter_watchdog: %s recovered (output back)", device_sn)
 
 
 # ---------- Solar-charge (inverse controller: Jackery → car) ----------
@@ -5059,10 +5045,9 @@ async def api_set_output(body: dict):
         await setter(port, on, device_sn=device_sn)
     except DeviceClientError as e:
         raise HTTPException(400, str(e)) from e
-    # If the user just toggled AC OFF, mark the watchdog so it doesn't
-    # fight the action by re-clicking ON 10s later. The grace window
-    # (DEFAULT_USER_GRACE_S) covers an intentional brief OFF; after it
-    # expires the watchdog assumes the user forgot and re-engages.
+    # If the user just toggled AC OFF, stamp grace so lagging telemetry
+    # (port still claims ON, watts already 0) cannot look like a
+    # hardware trip and cycle AC back on during the apply window.
     if port == "ac" and not on:
         target_sn = device_sn or (state.device.device_sn if state.device else None)
         if target_sn:
@@ -5074,8 +5059,8 @@ async def api_set_output(body: dict):
 @app.get("/api/inverter_watchdog/status")
 def api_inverter_watchdog_status(device_sn: str | None = None):
     """Per-device watchdog snapshot for the UI. Returns attempts so far
-    (0 = idle), error_message (set after max retries exhausted), and
-    timestamps. UI uses error_message to decorate the AC button."""
+    (0 = idle), error_message (set after the hardware-trip cycle cap),
+    and timestamps. UI uses error_message to decorate the AC button."""
     if not device_sn:
         device_sn = state.device.device_sn if state.device else None
     if not device_sn:
@@ -5087,9 +5072,9 @@ def api_inverter_watchdog_status(device_sn: str | None = None):
 
 @app.post("/api/inverter_watchdog/dismiss")
 def api_inverter_watchdog_dismiss(device_sn: str | None = None):
-    """Reset the watchdog error. The next AC=OFF observation will start
-    a fresh retry sequence. Called from the UI's dismiss click on the
-    AC button's error badge."""
+    """Reset the watchdog error. The next hardware-trip observation
+    will start a fresh cycle sequence. Called from the UI's dismiss
+    click on the AC button's error badge."""
     if not device_sn:
         device_sn = state.device.device_sn if state.device else None
     if not device_sn:

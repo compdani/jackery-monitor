@@ -1,41 +1,30 @@
 """Inverter recovery watchdog.
 
-The Jackery 5000+ inverter trips its AC output when an overload or
-thermal event exceeds its hardware protection threshold. Once tripped,
-the AC port stays OFF until something commands it back ON — the inverter
-does not auto-recover. The user's invariant is "AC stays ON 100% of the
-time," so we treat any AC=OFF observation as a trip and attempt to
-recover automatically.
+The Jackery 5000+ inverter can trip in a way that does NOT flip `oac`:
+the unit keeps reporting the AC port ON while output sits at 0W. That
+hardware-trip signature is OPT-IN via `collapse_floor_w` (0 = disabled).
+When it fires, the caller must cycle AC off → on — a plain AC-on is a
+no-op while the port still claims on.
+
+A port that actually reports OFF is left alone. The dashboard never
+auto-enables AC just because `oac` is False (UI off, phone-app off, or
+already off at startup). Operators who want collapse recovery set
+`inverter_trip_recovery_min_w` below their known 24/7 base load.
 
 This module is the pure-function state machine; the server's poll_loop
 drives it via `evaluate()` after each successful telemetry read, and
-issues the AC-on MQTT command on "retry" (or an off→on cycle on
-"cycle").
+issues an off→on cycle on "cycle".
 
-Two trip signatures, learned the hard way:
-
-1. PORT-OFF trip (`oac` → False). The original design. Recovery: plain
-   AC-on. After `max_attempts` (default 5) attempts at 10s intervals the
-   watchdog latches an error badge but does NOT stop — it keeps retrying
-   at the slow interval (60s) forever. The 2026-07-14 dead-battery
-   incident showed the unit refuses AC-on for 1min+ while booting on
-   grid power; a give-up design left the house dark.
-
-2. HARDWARE trip (2026-07-21): an overload shutdown that does NOT flip
-   `oac` — the unit kept reporting the AC port ON while output sat at
-   0W. Detection is OPT-IN via `collapse_floor_w` (0 = disabled; the
-   operator sets it below their known 24/7 base load, e.g. 100W on a rig
-   whose house floor is ~450W): after output was recently at/above
-   OUTPUT_BASELINE_W, if COLLAPSE_MIN_SAMPLES *distinct* fresh telemetry
-   samples (deduped by sample_ts) sit at/below the floor for at least
-   COLLAPSE_MIN_DURATION_S, and the drop from baseline to floor was
-   abrupt (within ABRUPT_DROP_MAX_S), a hardware-trip episode latches.
-   Recovery: "cycle" (off → on; plain on is a no-op when the port claims
-   on), capped at MAX_CYCLES_PER_EPISODE per episode — a false positive
-   costs at most two brief cuts, never a burst. The episode latch clears
-   ONLY on genuine recovery (fresh output above the floor); it does NOT
-   time out while output is still collapsed, so the badge can never be
-   silently wiped mid-outage.
+HARDWARE trip (2026-07-21): after output was recently at/above
+OUTPUT_BASELINE_W, if COLLAPSE_MIN_SAMPLES *distinct* fresh telemetry
+samples (deduped by sample_ts) sit at/below the floor for at least
+COLLAPSE_MIN_DURATION_S, and the drop from baseline to floor was
+abrupt (within ABRUPT_DROP_MAX_S), a hardware-trip episode latches.
+Recovery: "cycle", capped at MAX_CYCLES_PER_EPISODE per episode — a
+false positive costs at most two brief cuts, never a burst. The episode
+latch clears ONLY on genuine recovery (fresh output above the floor);
+it does NOT time out while output is still collapsed, so the badge can
+never be silently wiped mid-outage.
 """
 from __future__ import annotations
 
@@ -48,7 +37,7 @@ from typing import Literal
 # "cycle" = hardware-trip recovery: the port CLAIMS on (oac=1) but output
 # collapsed, so a plain AC-on is a no-op — the caller must toggle
 # off -> on to reset the inverter.
-Action = Literal["idle", "retry", "cycle", "waiting", "user_grace", "error"]
+Action = Literal["idle", "cycle", "waiting", "user_grace", "error"]
 
 
 @dataclass
@@ -64,11 +53,13 @@ class WatchdogState:
     # retry interval instead of an unpaced storm of power cuts.
     last_attempt_ts: float = 0.0
     # Stamped by the AC-toggle endpoint when the user explicitly turns
-    # AC off via our UI. Suppresses the watchdog for `user_grace_s`
-    # afterward so we don't fight an intentional user action.
+    # AC off via our UI. Suppresses hardware-trip detection for
+    # `user_grace_s` afterward so lagging telemetry (port still claims
+    # ON, watts already 0) cannot look like a collapse and cycle AC
+    # back on during the device's apply window.
     last_user_off_ts: float = 0.0
-    # Set when we've exhausted max_attempts (port-off path) or the cycle
-    # cap (hardware-trip path). UI shows this; clicking dismiss resets.
+    # Set when we've exhausted the cycle cap (hardware-trip path).
+    # UI shows this; clicking dismiss resets.
     error_message: str | None = None
     # ---- hardware-trip (output-collapse) detection ----
     last_high_output_ts: float = 0.0   # newest fresh sample >= baseline
@@ -80,11 +71,7 @@ class WatchdogState:
 
 
 DEFAULT_RETRY_INTERVAL_S = 10.0
-DEFAULT_MAX_ATTEMPTS = 5
 DEFAULT_USER_GRACE_S = 60.0
-# After max_attempts fast retries, keep trying at this cadence forever
-# (post-shutdown the unit refuses AC-on for 1min+ while it boots).
-DEFAULT_SLOW_RETRY_INTERVAL_S = 60.0
 
 # Hardware-trip signature gates (see module docstring). The floor itself
 # is per-rig config (settings: inverter_trip_recovery_min_w; 0 disables).
@@ -109,8 +96,8 @@ def _track_collapse(state: WatchdogState, ac_on: bool,
             return  # same cached frame — not a new observation
         state.last_sample_ts = sample_ts
     if not ac_on:
-        # The port-off path owns recovery; a streak accumulated while AC
-        # was off must not fire a gratuitous cycle right after recovery.
+        # Port is actually off — a streak accumulated while AC was off
+        # must not fire a gratuitous cycle right after the port returns.
         state.first_low_ts = 0.0
         state.low_samples = 0
         return
@@ -153,9 +140,7 @@ def evaluate(
     collapse_floor_w: float = 0.0,
     now_ts: float | None = None,
     retry_interval_s: float = DEFAULT_RETRY_INTERVAL_S,
-    max_attempts: int = DEFAULT_MAX_ATTEMPTS,
     user_grace_s: float = DEFAULT_USER_GRACE_S,
-    slow_retry_interval_s: float = DEFAULT_SLOW_RETRY_INTERVAL_S,
 ) -> Action:
     """Drive the recovery state machine one tick. Mutates `state`.
 
@@ -170,21 +155,19 @@ def evaluate(
             DISABLES detection; operators set it below their known 24/7
             base load (settings: inverter_trip_recovery_min_w).
         now_ts: clock injection for tests; defaults to time.time().
-        retry_interval_s: seconds between retry attempts.
-        max_attempts: fast attempts before latching the error badge.
-        user_grace_s: skip watchdog this long after a user-initiated OFF.
-        slow_retry_interval_s: retry cadence AFTER the error badge is
-            latched on the port-off path — that recovery never stops.
+        retry_interval_s: seconds between cycle attempts.
+        user_grace_s: skip collapse detection this long after a
+            user-initiated OFF, so lagging ON+0W telemetry cannot
+            look like a hardware trip.
 
     Returns one of the Action strings. Callers should:
-        - "retry"       → send AC-on MQTT command
         - "cycle"       → hardware trip: send AC-off, pause, AC-on
-        - "idle"        → AC healthy; nothing to do
+        - "idle"        → nothing to do (healthy, or port genuinely OFF)
         - "waiting"     → mid-recovery, holding for retry interval
-        - "user_grace"  → user turned AC off recently; suppressed
-        - "error"       → badge latched (port-off path keeps slow
-                          retries; hardware-trip path stops after the
-                          cycle cap until output genuinely recovers)
+        - "user_grace"  → user turned AC off recently; telemetry still
+                          claims ON; collapse detection suppressed
+        - "error"       → badge latched; hardware-trip path stops after
+                          the cycle cap until output genuinely recovers
     """
     now = float(now_ts if now_ts is not None else time.time())
     grace_active = bool(state.last_user_off_ts
@@ -197,6 +180,18 @@ def evaluate(
     else:
         _track_collapse(state, ac_on, output_w, sample_ts,
                         collapse_floor_w, now)
+
+    if not ac_on:
+        # Port reports OFF — never auto-enable. Clear recovery counters
+        # and any latched hardware-trip episode so a later AC-on with
+        # brief 0W lag does not inherit a stale cycle.
+        state.consecutive_attempts = 0
+        state.error_message = None
+        state.hw_trip_active = False
+        state.episode_cycles = 0
+        state.first_low_ts = 0.0
+        state.low_samples = 0
+        return "idle"
 
     effective_on = ac_on and not state.hw_trip_active
     if effective_on:
@@ -214,8 +209,8 @@ def evaluate(
     # more likely a false positive or a unit that needs eyes on it —
     # repeating unconfirmed 2s outages multiplies harm without adding
     # recovery power. The episode (and badge) clears only on genuine
-    # output recovery, or hands off to the plain path if oac goes False.
-    if ac_on and state.hw_trip_active \
+    # output recovery.
+    if state.hw_trip_active \
             and state.episode_cycles >= MAX_CYCLES_PER_EPISODE:
         if not state.error_message:
             state.error_message = (
@@ -227,44 +222,21 @@ def evaluate(
                 f"(or the port reports OFF)."
             )
         return "error"
-    if state.error_message:
-        # Port-off path: badge latched but never give up — keep nudging
-        # at the slow cadence (dead-battery reboots refuse AC-on for
-        # 1min+). On the hardware-trip path this branch is only reachable
-        # below the cycle cap.
-        if (now - state.last_attempt_ts) >= slow_retry_interval_s:
-            state.consecutive_attempts += 1
-            state.last_attempt_ts = now
-            if ac_on:
-                state.episode_cycles += 1
-                return "cycle"
-            return "retry"
-        return "error"
-    if state.consecutive_attempts >= max_attempts:
-        state.error_message = (
-            f"AC output remained OFF after {max_attempts} retry attempts "
-            f"(~{int(max_attempts * retry_interval_s)}s). Still retrying "
-            f"every {int(slow_retry_interval_s)}s — after a dead-battery "
-            f"shutdown the unit can take a minute or more to accept "
-            f"AC-on. Dismiss to reset the fast-retry sequence."
-        )
-        return "error"
     # Fire when the pacing interval allows. Note attempts==0 no longer
     # bypasses pacing: last_attempt_ts survives resets, so an arm/clear/
     # re-arm flap can't fire faster than retry_interval_s.
-    fire: Action = "cycle" if ac_on else "retry"
     if (now - state.last_attempt_ts) >= retry_interval_s:
         state.consecutive_attempts += 1
         state.last_attempt_ts = now
-        if fire == "cycle":
-            state.episode_cycles += 1
-        return fire
+        state.episode_cycles += 1
+        return "cycle"
     return "waiting"
 
 
 def record_user_off(state: WatchdogState, now_ts: float | None = None) -> None:
     """Stamp the user-initiated AC-off timestamp. Called from the AC
-    toggle endpoint when the user clicks AC OFF in our UI."""
+    toggle endpoint when the user clicks AC OFF in our UI. Suppresses
+    hardware-trip collapse detection during the device's apply window."""
     state.last_user_off_ts = float(now_ts if now_ts is not None else time.time())
 
 

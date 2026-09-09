@@ -21,7 +21,7 @@ def test_ac_on_returns_idle():
 
 
 def test_ac_on_clears_mid_recovery_state():
-    """If AC recovered during a retry sequence, reset everything."""
+    """If AC recovered during a cycle sequence, reset everything."""
     s = _fresh()
     s.consecutive_attempts = 3
     s.last_attempt_ts = 950.0
@@ -34,82 +34,46 @@ def test_ac_on_clears_mid_recovery_state():
     assert s.last_attempt_ts == 950.0
 
 
-# ---------- First AC=OFF observation ----------
-def test_first_off_fires_immediately():
-    """First OFF observation fires the retry on the same tick — no
-    initial wait. (Better recovery latency.)"""
+# ---------- AC=OFF is never auto-enabled ----------
+def test_port_off_stays_idle():
+    """A port that reports OFF is left alone — no AC-on retry."""
     s = _fresh()
     action = inverter_watchdog.evaluate(s, False, now_ts=1000.0)
-    assert action == "retry"
-    assert s.consecutive_attempts == 1
-    assert s.last_attempt_ts == 1000.0
+    assert action == "idle"
+    assert s.consecutive_attempts == 0
+    assert s.error_message is None
 
 
-# ---------- Hold between retries ----------
-def test_holds_during_retry_interval():
-    """Within retry_interval_s of the last attempt, return 'waiting'."""
+def test_port_off_never_retries_across_ticks():
+    """OFF stays idle on later ticks too — no waiting/retry cadence."""
     s = _fresh()
-    inverter_watchdog.evaluate(s, False, now_ts=1000.0)
-    # 5s later, still within the 10s default interval.
-    action = inverter_watchdog.evaluate(s, False, now_ts=1005.0)
-    assert action == "waiting"
-    assert s.consecutive_attempts == 1
+    assert inverter_watchdog.evaluate(s, False, now_ts=1000.0) == "idle"
+    assert inverter_watchdog.evaluate(s, False, now_ts=1005.0) == "idle"
+    assert inverter_watchdog.evaluate(s, False, now_ts=1010.0) == "idle"
+    assert inverter_watchdog.evaluate(s, False, now_ts=2000.0) == "idle"
+    assert s.consecutive_attempts == 0
 
 
-def test_fires_again_after_interval():
-    """Exactly at retry_interval_s, the next attempt fires."""
+def test_port_off_clears_latched_hw_trip():
+    """Observing a genuine port-off must drop any in-flight hardware-trip
+    episode so a later AC-on with brief 0W lag cannot inherit a cycle."""
     s = _fresh()
-    inverter_watchdog.evaluate(s, False, now_ts=1000.0)
-    action = inverter_watchdog.evaluate(s, False, now_ts=1010.0)
-    assert action == "retry"
-    assert s.consecutive_attempts == 2
+    s.consecutive_attempts = 2
+    s.error_message = "stale hardware trip"
+    s.hw_trip_active = True
+    s.episode_cycles = 2
+    s.first_low_ts = 900.0
+    s.low_samples = 3
+    assert inverter_watchdog.evaluate(s, False, now_ts=1000.0) == "idle"
+    assert s.consecutive_attempts == 0
+    assert s.error_message is None
+    assert not s.hw_trip_active
+    assert s.episode_cycles == 0
+    assert s.low_samples == 0
 
 
-# ---------- Max attempts → error ----------
-def test_latches_error_after_max_attempts():
-    """5 attempts at 10s intervals → 50s total → error latched."""
-    s = _fresh()
-    t = 1000.0
-    for expected_attempt in range(1, 6):
-        action = inverter_watchdog.evaluate(s, False, now_ts=t)
-        assert action == "retry"
-        assert s.consecutive_attempts == expected_attempt
-        t += 10.0
-    # 6th call (50s after first) should latch the error.
-    action = inverter_watchdog.evaluate(s, False, now_ts=t)
-    assert action == "error"
-    assert s.error_message is not None
-    # Don't assert exact text — message is copy-edited often. Just check
-    # it mentions the attempt count from DEFAULT_MAX_ATTEMPTS.
-    assert str(inverter_watchdog.DEFAULT_MAX_ATTEMPTS) in s.error_message
-
-
-def test_error_badge_latched_but_slow_retries_continue():
-    """The 2026-07-14 case: after a dead-battery shutdown the unit
-    refuses AC-on for 1min+, so all 5 fast attempts fail. The badge
-    latches, but recovery must NEVER stop — slow retries keep firing
-    every DEFAULT_SLOW_RETRY_INTERVAL_S until the unit accepts."""
-    s = _fresh()
-    t = 1000.0
-    for _ in range(6):
-        inverter_watchdog.evaluate(s, False, now_ts=t)
-        t += 10.0
-    # Badge latched after the fast phase...
-    assert s.error_message is not None
-    last_attempt = s.last_attempt_ts
-    # ...within the slow interval: hold (reported as "error").
-    assert inverter_watchdog.evaluate(s, False, now_ts=last_attempt + 30) == "error"
-    # ...past the slow interval: a retry fires, badge stays.
-    assert inverter_watchdog.evaluate(
-        s, False, now_ts=last_attempt + 61) == "retry"
-    assert s.error_message is not None
-    # And it keeps going indefinitely (another interval, another retry).
-    assert inverter_watchdog.evaluate(
-        s, False, now_ts=last_attempt + 61 + 61) == "retry"
-
-
-def test_ac_recovery_clears_latched_error():
-    """If AC comes back ON (e.g. manual fix), drop the error."""
+def test_healthy_ac_clears_latched_error():
+    """If AC comes back ON healthy (e.g. manual fix), drop the error."""
     s = _fresh()
     s.error_message = "old error"
     s.consecutive_attempts = 5
@@ -118,59 +82,40 @@ def test_ac_recovery_clears_latched_error():
     assert s.consecutive_attempts == 0
 
 
-# ---------- User OFF grace ----------
-def test_user_off_grace_suppresses_retry():
-    """User intentionally turned AC off via the UI — don't fight them."""
+# ---------- User OFF grace (hardware-trip suppression only) ----------
+def test_user_off_with_port_off_stays_idle():
+    """User turned AC off and telemetry agrees — idle, not a retry."""
     s = _fresh()
     inverter_watchdog.record_user_off(s, now_ts=1000.0)
-    assert inverter_watchdog.evaluate(s, False, now_ts=1030.0) == "user_grace"
-    assert s.consecutive_attempts == 0  # no retry fired
+    assert inverter_watchdog.evaluate(s, False, now_ts=1030.0) == "idle"
+    assert s.consecutive_attempts == 0
 
 
-def test_user_off_grace_expires():
-    """After 60s the watchdog assumes the user moved on and re-engages."""
+def test_user_off_grace_expiry_does_not_reenable():
+    """After the 60s grace window, a still-OFF port must NOT turn back on."""
     s = _fresh()
     inverter_watchdog.record_user_off(s, now_ts=1000.0)
-    # Just inside grace → suppressed.
-    assert inverter_watchdog.evaluate(s, False, now_ts=1059.0) == "user_grace"
-    # Just outside → first retry fires.
-    assert inverter_watchdog.evaluate(s, False, now_ts=1061.0) == "retry"
-    assert s.consecutive_attempts == 1
+    assert inverter_watchdog.evaluate(s, False, now_ts=1059.0) == "idle"
+    assert inverter_watchdog.evaluate(s, False, now_ts=1061.0) == "idle"
+    assert s.consecutive_attempts == 0
 
 
-def test_user_grace_overrides_in_flight_retries():
-    """If the user clicks AC OFF while retries are already in flight,
-    suspend them — the user's action wins until grace expires. Attempt
-    counter is preserved so retries resume from where they left off."""
+def test_user_grace_suppresses_cycle_while_telemetry_lags():
+    """User clicked OFF during an active hardware-trip episode, but the
+    port still claims ON. Grace must win — do not cycle AC back on."""
     s = _fresh()
-    inverter_watchdog.evaluate(s, False, now_ts=1000.0)
-    inverter_watchdog.evaluate(s, False, now_ts=1010.0)
-    assert s.consecutive_attempts == 2  # mid-recovery
-    inverter_watchdog.record_user_off(s, now_ts=1015.0)
-    assert inverter_watchdog.evaluate(s, False, now_ts=1020.0) == "user_grace"
-    # Attempt counter untouched while in grace.
-    assert s.consecutive_attempts == 2
-
-
-def test_grace_resumes_from_existing_attempt_count():
-    """After grace expires, the next retry continues the sequence (not
-    a fresh start). If we'd already done 2 attempts, the next one is #3
-    — only `dismiss_error()` or AC=ON resets the counter."""
-    s = _fresh()
-    inverter_watchdog.evaluate(s, False, now_ts=1000.0)
-    inverter_watchdog.evaluate(s, False, now_ts=1010.0)
-    assert s.consecutive_attempts == 2
-    inverter_watchdog.record_user_off(s, now_ts=1015.0)
-    # Past the 60s grace window AND past the 10s retry interval.
-    action = inverter_watchdog.evaluate(s, False, now_ts=1080.0)
-    assert action == "retry"
-    assert s.consecutive_attempts == 3  # continues, doesn't restart
+    s.hw_trip_active = True
+    s.episode_cycles = 1
+    s.last_attempt_ts = 990.0
+    inverter_watchdog.record_user_off(s, now_ts=1000.0)
+    assert inverter_watchdog.evaluate(s, True, 0.0, now_ts=1005.0) == "user_grace"
+    assert s.episode_cycles == 1  # no additional cycle
 
 
 # ---------- Dismiss ----------
 def test_dismiss_resets_state():
     """User clicked dismiss after the error latched. Next AC=OFF
-    observation must start a fresh retry sequence."""
+    observation must stay idle (port-off is never auto-enabled)."""
     s = _fresh()
     s.consecutive_attempts = 5
     s.last_attempt_ts = 1500.0
@@ -178,9 +123,8 @@ def test_dismiss_resets_state():
     inverter_watchdog.dismiss_error(s)
     assert s.error_message is None
     assert s.consecutive_attempts == 0
-    # And immediately retry-able.
-    assert inverter_watchdog.evaluate(s, False, now_ts=2000.0) == "retry"
-    assert s.consecutive_attempts == 1
+    assert inverter_watchdog.evaluate(s, False, now_ts=2000.0) == "idle"
+    assert s.consecutive_attempts == 0
 
 
 # ---------- Registry ----------
@@ -357,7 +301,7 @@ def test_hw_trip_grace_suppresses_accumulation():
 
 
 def test_no_output_signal_is_backcompat():
-    """output_w=None / floor unset -> ac_on-only behavior unchanged."""
+    """output_w=None / floor unset -> ON is idle, OFF is idle (no retry)."""
     s = _fresh()
     assert inverter_watchdog.evaluate(s, True, now_ts=1000.0) == "idle"
-    assert inverter_watchdog.evaluate(s, False, now_ts=1002.0) == "retry"
+    assert inverter_watchdog.evaluate(s, False, now_ts=1002.0) == "idle"

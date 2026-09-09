@@ -27,6 +27,13 @@ Pre-1.0 means breaking changes can land in any minor.
 - `[hidden]` HTML attribute now wins over flex layouts (was being defeated
   by `.field { display: flex }`).
 
+### Fixed
+- AC output no longer turns itself back on after a UI off or when the
+  bridge starts with the port already off. The inverter watchdog used to
+  treat any `AC=OFF` as a trip and publish AC-on (`action_id` 4). Port-off
+  auto-recovery is gone; the opt-in hardware-trip off/on cycle (Settings →
+  inverter trip-recovery floor, default 0 / disabled) is unchanged.
+
 ## [0.x — pre-tag history]
 
 The project's first ~50 commits don't have proper semver tags yet. Highlights
