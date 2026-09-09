@@ -2059,6 +2059,50 @@ main {
 .range-btn:hover { color: var(--text); }
 .range-btn.on { background: var(--accent); color: #032012; }
 
+/* Energy history: extra-device chips for overlay comparison. Hidden
+   when the account only has one Jackery. */
+.energy-compare {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin: 10px 0 4px;
+}
+.energy-compare-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--bg-elev-2);
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  padding: 4px 10px;
+  font-size: 12px;
+  font-weight: 500;
+  font-family: inherit;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background .15s, color .15s, border-color .15s, opacity .15s;
+}
+.energy-compare-chip:hover { color: var(--text); border-color: var(--text-mute); }
+.energy-compare-chip.on {
+  color: var(--text);
+  border-color: var(--energy-chip-color, var(--accent));
+  background: color-mix(in srgb, var(--energy-chip-color, var(--accent)) 16%, var(--bg-elev-2));
+}
+.energy-compare-swatch {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--energy-chip-color, var(--accent));
+  flex-shrink: 0;
+}
+.energy-compare-hint {
+  flex: 1 1 100%;
+  margin: 2px 0 0;
+  font-size: 11px;
+}
+
 /* ============== Data table ============== */
 .data-table {
   width: 100%;

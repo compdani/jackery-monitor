@@ -30,6 +30,11 @@ let lastDevices = [];
 let energyRangeHours = 6;     // current Energy tab range selection
 let energyHistoryCache = null; // last fetched series for the energy tab
 let energyDailyCache = null;
+// Serials ticked on the Energy history compare chips. Empty until the
+// first device list arrives, then seeded with the viewed unit. A single
+// selection follows the header picker; two or more stay sticky.
+let energyCompareSns = new Set();
+let _energyHistoryLoadSig = '';
 // Set when the user picks a device in the picker: {id, until}. While
 // pending, status frames rendered for any OTHER device are dropped so
 // in-flight polls/WS frames from the previous view can't fight the new
@@ -446,7 +451,7 @@ function switchTab(name, opts = {}) {
   document.querySelectorAll('.tab').forEach(t => t.classList.toggle('on', t.dataset.tab === name));
   document.querySelectorAll('.tab-panel').forEach(p => p.toggleAttribute('hidden', p.id !== `tab-${name}`));
   if (name === 'live')     { drawLiveChart(lastStatus); }
-  if (name === 'energy')   { fetchEnergyHistory(); fetchEnergyAllDevices(); fetchEnergyDaily(); }
+  if (name === 'energy')   { renderEnergyComparePicker(); fetchEnergyHistory(); fetchEnergyAllDevices(); fetchEnergyDaily(); }
   if (name === 'forecast') { fetchForecast(); }
   if (name === 'settings') { loadSettings(); loadCostPlan(); initKeepAwakeToggle(); loadAnthropicKeyStatus(); loadAnthropicModelPickers(); loadAIProvider(); loadOpenAIKeyStatus(); loadOpenAIModelPickers(); loadBackupAll(); restoreSettingsSubtab(); }
   if (name === 'logs')     { loadLogs(); }
@@ -915,14 +920,72 @@ async function refreshAutomationDot() {
 // ============================================================
 // DEVICE TAB: capacity override + raw props viewer
 // ============================================================
+// Drop in-flight probe polls + wipe shared Device-tab widgets so a
+// device switch can't leave the previous unit's capacity/params/debug
+// dump under the new identity card.
+let _probePollTimer = null;
+
+function resetDeviceTabWidgets() {
+  const inp = $('capacity-input');
+  if (inp) {
+    inp.value = '';
+    delete inp.dataset.deviceSn;
+  }
+  const def = $('capacity-default');
+  if (def) def.textContent = '(device default: —)';
+  const capStatus = $('capacity-status');
+  if (capStatus) { capStatus.hidden = true; capStatus.textContent = ''; }
+  const list = $('device-params-list');
+  if (list) list.innerHTML = '<div class="hint">Loading…</div>';
+  const paramStatus = $('device-params-status');
+  if (paramStatus) { paramStatus.hidden = true; paramStatus.textContent = ''; }
+  const banner = $('unknown-model-banner');
+  if (banner) {
+    banner.hidden = true;
+    delete banner.dataset.deviceSn;
+  }
+  if (_probePollTimer) { clearTimeout(_probePollTimer); _probePollTimer = null; }
+  const rawDump = $('raw-props-dump');
+  const rawBtn = $('raw-props-toggle');
+  if (rawDump) {
+    rawDump.hidden = true;
+    rawDump.textContent = '—';
+  }
+  if (rawBtn) rawBtn.textContent = 'Show';
+  const probeDump = $('cloud-probe-dump');
+  const probeBtn = $('cloud-probe-btn');
+  if (probeDump) {
+    probeDump.hidden = true;
+    probeDump.textContent = '—';
+  }
+  if (probeBtn) {
+    probeBtn.textContent = 'Probe now';
+    probeBtn.disabled = false;
+  }
+}
+
+function deviceTabLoadStale(requestedSn) {
+  return (activeJackeryDevice()?.device_sn || null) !== (requestedSn || null);
+}
+
 async function loadDeviceCapacity() {
+  const requestedSn = activeJackeryDevice()?.device_sn;
+  if (!requestedSn) {
+    const inp = $('capacity-input');
+    if (inp) {
+      inp.value = '';
+      delete inp.dataset.deviceSn;
+    }
+    refreshUnknownModelBanner();
+    return;
+  }
   try {
     const r = await fetch('/api/devices/capacity');
     if (!r.ok) return;
+    if (deviceTabLoadStale(requestedSn)) return;
     const j = await r.json();
-    const active = activeJackeryDevice();
-    const sn = active?.device_sn;
-    const dev = (j.devices || []).find(d => d.device_sn === sn) || (j.devices || [])[0];
+    if (deviceTabLoadStale(requestedSn)) return;
+    const dev = (j.devices || []).find(d => d.device_sn === requestedSn);
     if (!dev) return;
     const inp = $('capacity-input');
     const def = $('capacity-default');
@@ -938,11 +1001,14 @@ async function loadDeviceCapacity() {
         def.textContent = `(device default: ${dev.default_capacity_wh} Wh)`;
       }
     }
-    if (inp) inp.value = dev.capacity_wh_override ?? '';
-    inp.dataset.deviceSn = dev.device_sn;
+    if (inp) {
+      inp.value = dev.capacity_wh_override ?? '';
+      inp.dataset.deviceSn = dev.device_sn;
+    }
   } catch (e) {
     console.warn('capacity load failed', e);
   }
+  if (deviceTabLoadStale(requestedSn)) return;
   // Refresh the unknown-model banner alongside the capacity widget.
   refreshUnknownModelBanner();
 }
@@ -964,18 +1030,21 @@ const UNKNOWN_MODEL_DISMISS_KEY = 'jackery-umb-dismissed';
 async function loadDeviceParams() {
   const list = $('device-params-list');
   if (!list) return;
-  const dev = activeJackeryDevice();
-  if (!dev?.device_sn) {
+  const requestedSn = activeJackeryDevice()?.device_sn;
+  if (!requestedSn) {
     list.innerHTML = '<div class="hint">No active device.</div>';
     return;
   }
   list.innerHTML = '<div class="hint">Loading…</div>';
   try {
-    const r = await fetch(`/api/devices/params?device_sn=${encodeURIComponent(dev.device_sn)}`);
+    const r = await fetch(`/api/devices/params?device_sn=${encodeURIComponent(requestedSn)}`);
+    if (deviceTabLoadStale(requestedSn)) return;
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
     const j = await r.json();
-    renderDeviceParams(j.params || [], dev.device_sn);
+    if (deviceTabLoadStale(requestedSn)) return;
+    renderDeviceParams(j.params || [], requestedSn);
   } catch (e) {
+    if (deviceTabLoadStale(requestedSn)) return;
     list.innerHTML = `<div class="hint">Failed to load: ${escapeHtml(e.message || e)}</div>`;
   }
 }
@@ -1171,13 +1240,18 @@ async function refreshUnknownModelBanner() {
     banner.hidden = true;
     return;
   }
+  const requestedSn = activeJackeryDevice()?.device_sn;
+  if (!requestedSn) {
+    banner.hidden = true;
+    return;
+  }
   try {
     const r = await fetch('/api/devices');
+    if (deviceTabLoadStale(requestedSn)) return;
     if (!r.ok) { banner.hidden = true; return; }
     const j = await r.json();
-    const active = activeJackeryDevice();
-    const sn = active?.device_sn;
-    const dev = (j.devices || []).find(d => d.device_sn === sn) || (j.devices || [])[0];
+    if (deviceTabLoadStale(requestedSn)) return;
+    const dev = (j.devices || []).find(d => d.device_sn === requestedSn);
     if (!dev || dev.model_recognized !== false) {
       banner.hidden = true;
       return;
@@ -1191,12 +1265,12 @@ async function refreshUnknownModelBanner() {
     banner.dataset.deviceSn  = dev.device_sn || '';
     refreshProbeCandidates(dev.device_sn);
   } catch (e) {
+    if (deviceTabLoadStale(requestedSn)) return;
     console.warn('unknown-model banner refresh failed', e);
     banner.hidden = true;
   }
 }
 
-let _probePollTimer = null;
 async function refreshProbeCandidates(deviceSn) {
   const status = $('umb-probe-status');
   const list = $('umb-candidates');
@@ -1205,8 +1279,10 @@ async function refreshProbeCandidates(deviceSn) {
   try {
     const params = `?device_sn=${encodeURIComponent(deviceSn)}`;
     const r = await fetch(`/api/devices/probe_results${params}`);
+    if (deviceTabLoadStale(deviceSn)) return;
     if (!r.ok) { status.textContent = 'Probe results unavailable.'; list.innerHTML = ''; return; }
     const j = await r.json();
+    if (deviceTabLoadStale(deviceSn)) return;
     const safe = (s) => String(s || '').replace(/[<>&"]/g, (c) =>
       ({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;'}[c]));
     if (!j.found && j.in_flight) {
@@ -1242,6 +1318,7 @@ async function refreshProbeCandidates(deviceSn) {
       btn.addEventListener('click', () => useProbeCandidate(deviceSn, cands[parseInt(btn.dataset.candIndex, 10)]));
     });
   } catch (e) {
+    if (deviceTabLoadStale(deviceSn)) return;
     status.textContent = `Probe lookup failed: ${e.message || e}`;
     list.innerHTML = '';
   }
@@ -1411,10 +1488,17 @@ $('raw-props-toggle')?.addEventListener('click', async () => {
   dump.hidden = false;
   btn.textContent = 'Refresh';
   dump.textContent = 'Loading…';
+  const sn = activeJackeryDevice()?.device_sn;
   try {
-    const r = await fetch('/api/debug/raw_props');
+    if (!sn) {
+      dump.textContent = 'No active device.';
+      return;
+    }
+    const r = await fetch(`/api/debug/raw_props?device_sn=${encodeURIComponent(sn)}`);
+    if (deviceTabLoadStale(sn)) return;
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
     const j = await r.json();
+    if (deviceTabLoadStale(sn)) return;
     if (j.error) {
       dump.textContent = `Error: ${j.error}`;
       return;
@@ -1427,6 +1511,7 @@ $('raw-props-toggle')?.addEventListener('click', async () => {
     }
     dump.textContent = keys.map(k => `${k.padEnd(12)} = ${JSON.stringify(props[k])}`).join('\n');
   } catch (e) {
+    if (sn && deviceTabLoadStale(sn)) return;
     dump.textContent = `Failed: ${e.message || e}`;
   }
 });
@@ -4022,7 +4107,15 @@ function applyStatus(s) {
     // export can't carry the previous device's data, and refresh in
     // place if the Energy tab is what the user is looking at.
     energyDailyCache = null;
-    if (activeTab === 'energy') fetchEnergyDaily();
+    if (energyCompareSns.size <= 1) {
+      energyCompareSns.clear();
+      energyCompareSns.add(newDeviceSn);
+    }
+    renderEnergyComparePicker();
+    if (activeTab === 'energy') {
+      fetchEnergyDaily();
+      fetchEnergyHistory();
+    }
     fetchEodForecast();
     // Pack list is per-device — drop the previous device's cache so we
     // don't briefly show the old packs while the new fetch is in flight.
@@ -4048,6 +4141,15 @@ function applyStatus(s) {
     const solBtn = $('solar-charge-toggle');
     if (solBtn) solBtn.hidden = true;
     refreshSolarChargeButton().catch(() => {});
+    // Device-tab capacity / learned params / debug dumps are a single
+    // shared form. Identity fields update from this status frame, but
+    // those widgets only used to load on tab enter — reload them so
+    // switching devices while staying on Device can't mix unit A and B.
+    if (activeTab === 'device') {
+      resetDeviceTabWidgets();
+      loadDeviceCapacity();
+      loadDeviceParams();
+    }
   }
 
   // Pack data piggy-backs on the WS payload — the bridge has it pushed
@@ -4076,6 +4178,7 @@ function applyStatus(s) {
   lastDevices = devices;
   renderDevicePicker(devices, selectedId);
   renderFleet(s.cloud?.devices_overview, selectedId);
+  renderEnergyComparePicker();
 
   // Source badges
   const srcLabel = s.source ? s.source.toUpperCase() : '—';
@@ -4645,6 +4748,95 @@ function renderSavingsRow(prefix, savings, currency) {
 // ============================================================
 // ENERGY HISTORY CHART + RANGE PICKER
 // ============================================================
+const ENERGY_COMPARE_COLORS = ['#4ade80', '#38bdf8', '#fbbf24', '#c084fc', '#fb7185'];
+
+function energyCompareColor(sn) {
+  const idx = (lastDevices || []).findIndex((d) => d.device_sn === sn);
+  if (idx >= 0) return ENERGY_COMPARE_COLORS[idx % ENERGY_COMPARE_COLORS.length];
+  let h = 0;
+  const s = String(sn || '');
+  for (let i = 0; i < s.length; i++) h = (h * 33 + s.charCodeAt(i)) >>> 0;
+  return ENERGY_COMPARE_COLORS[h % ENERGY_COMPARE_COLORS.length];
+}
+
+function energyDeviceName(sn) {
+  const d = (lastDevices || []).find((x) => x.device_sn === sn);
+  return d?.name || d?.model_name || sn || 'device';
+}
+
+function energyCompareSnsOrdered() {
+  const wanted = energyCompareSns;
+  const ordered = (lastDevices || [])
+    .map((d) => d.device_sn)
+    .filter((sn) => sn && wanted.has(sn));
+  for (const sn of wanted) {
+    if (sn && !ordered.includes(sn)) ordered.push(sn);
+  }
+  return ordered;
+}
+
+function seedEnergyCompare(viewedSn) {
+  if (!viewedSn) return;
+  if (!energyCompareSns.size) energyCompareSns.add(viewedSn);
+}
+
+function renderEnergyComparePicker() {
+  const wrap = $('energy-compare');
+  if (!wrap) return;
+  const devices = (lastDevices || []).filter((d) => d.device_sn);
+  if (devices.length < 2) {
+    wrap.hidden = true;
+    wrap.innerHTML = '';
+    wrap.dataset.sig = '';
+    return;
+  }
+  const viewedSn = activeJackeryDevice()?.device_sn;
+  seedEnergyCompare(viewedSn);
+  for (const sn of [...energyCompareSns]) {
+    if (!devices.some((d) => d.device_sn === sn)) energyCompareSns.delete(sn);
+  }
+  if (!energyCompareSns.size && viewedSn) energyCompareSns.add(viewedSn);
+  const sel = [...energyCompareSns].sort().join(',');
+  const sig = devices.map((d) => d.device_sn).join('|') + '#' + sel;
+  if (wrap.dataset.sig === sig) {
+    wrap.hidden = false;
+    return;
+  }
+  wrap.dataset.sig = sig;
+  wrap.hidden = false;
+  const chips = devices.map((d) => {
+    const on = energyCompareSns.has(d.device_sn);
+    const color = energyCompareColor(d.device_sn);
+    const name = escapeHtml(d.name || d.model_name || d.device_sn);
+    return `<button type="button" class="energy-compare-chip${on ? ' on' : ''}"
+        data-sn="${escapeHtml(d.device_sn)}" aria-pressed="${on}"
+        style="--energy-chip-color:${color}">
+      <i class="energy-compare-swatch"></i>${name}
+    </button>`;
+  }).join('');
+  const hint = energyCompareSns.size > 1
+    ? '<span class="hint energy-compare-hint">Solid = consumed · dashed = charged · thin = battery %</span>'
+    : '';
+  wrap.innerHTML = chips + hint;
+}
+
+$('energy-compare')?.addEventListener('click', (e) => {
+  const chip = e.target.closest('.energy-compare-chip');
+  if (!chip) return;
+  const sn = chip.dataset.sn;
+  if (!sn) return;
+  if (energyCompareSns.has(sn)) {
+    if (energyCompareSns.size <= 1) return;
+    energyCompareSns.delete(sn);
+  } else {
+    energyCompareSns.add(sn);
+  }
+  const wrap = $('energy-compare');
+  if (wrap) wrap.dataset.sig = '';
+  renderEnergyComparePicker();
+  fetchEnergyHistory();
+});
+
 document.querySelectorAll('.range-btn').forEach((btn) => {
   btn.addEventListener('click', () => {
     document.querySelectorAll('.range-btn').forEach(b => b.classList.remove('on'));
@@ -4655,16 +4847,32 @@ document.querySelectorAll('.range-btn').forEach((btn) => {
 });
 
 async function fetchEnergyHistory() {
+  const viewedSn = activeJackeryDevice()?.device_sn;
+  seedEnergyCompare(viewedSn);
+  const sns = energyCompareSnsOrdered();
+  const fallback = sns.length ? sns : (viewedSn ? [viewedSn] : []);
+  if (!fallback.length) {
+    energyHistoryCache = { hours: energyRangeHours, series: [] };
+    drawEnergyChart(energyHistoryCache);
+    return;
+  }
+  const sig = `${energyRangeHours}|${fallback.join(',')}`;
+  _energyHistoryLoadSig = sig;
   try {
-    const histSn = activeJackeryDevice()?.device_sn;
-    const r = await fetch(`/api/energy/history?hours=${energyRangeHours}`
-      + (histSn ? `&device_sn=${encodeURIComponent(histSn)}` : ''));
-    if (histSn && activeJackeryDevice()?.device_sn
-        && histSn !== activeJackeryDevice().device_sn) return;
-    if (!r.ok) return;
-    const j = await r.json();
-    energyHistoryCache = j;
-    drawEnergyChart(j);
+    const results = await Promise.all(fallback.map(async (sn) => {
+      const r = await fetch(`/api/energy/history?hours=${energyRangeHours}`
+        + `&device_sn=${encodeURIComponent(sn)}`);
+      if (!r.ok) return { device_sn: sn, name: energyDeviceName(sn), history: [] };
+      const j = await r.json();
+      return {
+        device_sn: sn,
+        name: energyDeviceName(sn),
+        history: j.history || [],
+      };
+    }));
+    if (_energyHistoryLoadSig !== sig) return;
+    energyHistoryCache = { hours: energyRangeHours, series: results };
+    drawEnergyChart(energyHistoryCache);
   } catch (e) { console.warn('energy history fetch failed', e); }
 }
 
@@ -5191,6 +5399,14 @@ function _attachChartHover(canvas, hist, htmlFn, geomFn) {
   canvas._redraw = () => drawLiveChart(lastStatus);
 }
 
+function energyChartSeries(j) {
+  if (Array.isArray(j?.series) && j.series.length) return j.series;
+  if (Array.isArray(j?.history)) {
+    return [{ device_sn: j.device_sn, name: '', history: j.history }];
+  }
+  return [];
+}
+
 function drawEnergyChart(j) {
   const canvas = $('chart-energy');
   if (!canvas) return;
@@ -5199,17 +5415,32 @@ function drawEnergyChart(j) {
   const padL = 42, padR = 16, padT = 14, padB = 28;
   drawAxes(ctx, w, h, padL, padR, padT, padB);
 
-  const hist = (j?.history) || [];
-  if (!hist.length) {
+  const series = energyChartSeries(j);
+  const compare = series.length > 1;
+  const anyHist = series.some((s) => (s.history || []).length);
+  if (!anyHist) {
     ctx.fillStyle = '#6b7280'; ctx.font = '12px Inter';
     ctx.fillText('No energy data yet — keep the monitor running.', padL + 8, padT + 16);
     return;
   }
 
-  const out = hist.map(p => p.output_wh || 0);
-  const inp = hist.map(p => p.input_wh || 0);
-  const bat = hist.map(p => (p.avg_battery_percent ?? p.battery_pct));
-  const maxWh = Math.max(1, Math.max(...out, ...inp));
+  const tsSet = new Set();
+  let maxWh = 1;
+  for (const s of series) {
+    for (const p of (s.history || [])) {
+      if (p.ts != null) tsSet.add(p.ts);
+      if ((p.output_wh || 0) > maxWh) maxWh = p.output_wh;
+      if ((p.input_wh || 0) > maxWh) maxWh = p.input_wh;
+    }
+  }
+  const tsAxis = compare
+    ? [...tsSet].sort((a, b) => a - b)
+    : (series[0].history || []).map((p) => p.ts);
+  if (!tsAxis.length) {
+    ctx.fillStyle = '#6b7280'; ctx.font = '12px Inter';
+    ctx.fillText('No energy data yet — keep the monitor running.', padL + 8, padT + 16);
+    return;
+  }
 
   // Grid + y-axis labels (Wh per bucket)
   ctx.strokeStyle = '#1c2128'; ctx.lineWidth = 1;
@@ -5223,9 +5454,8 @@ function drawEnergyChart(j) {
   }
   ctx.textAlign = 'start';
 
-  // X-axis labels (a few timestamps)
-  if (hist.length >= 2) {
-    const first = hist[0].ts, last = hist[hist.length - 1].ts;
+  if (tsAxis.length >= 2) {
+    const first = tsAxis[0], last = tsAxis[tsAxis.length - 1];
     const span = last - first;
     const fmtTs = (ts) => {
       const d = new Date(ts * 1000);
@@ -5235,44 +5465,76 @@ function drawEnergyChart(j) {
     const ticks = 4;
     ctx.fillStyle = '#6b7280';
     for (let i = 0; i <= ticks; i++) {
-      const idx = Math.floor((hist.length - 1) * (i / ticks));
+      const idx = Math.floor((tsAxis.length - 1) * (i / ticks));
       const x = padL + (i / ticks) * (w - padL - padR);
-      ctx.fillText(fmtTs(hist[idx].ts), x - 18, h - 8);
+      ctx.fillText(fmtTs(tsAxis[idx]), x - 18, h - 8);
     }
   }
 
-  // Bars: consumed (left of slot) + charged (right of slot), interleaved.
-  const n = hist.length;
+  const n = tsAxis.length;
   const totalW = w - padL - padR;
   const slot = totalW / n;
-  const barW = Math.max(1, Math.min(slot * 0.4, 16));
-  for (let i = 0; i < n; i++) {
-    const xCenter = padL + slot * (i + 0.5);
-    const yBase = h - padB;
-    if (_seriesVisible.energy.output) {
-      const yOut = yBase - (out[i] / maxWh) * (h - padT - padB);
-      ctx.fillStyle = SERIES_COLORS.output;
-      ctx.fillRect(xCenter - barW - 1, yOut, barW, yBase - yOut);
+  const xs = (i) => padL + slot * (i + 0.5);
+  const yWh = (v) => (h - padB) - (v / maxWh) * (h - padT - padB);
+  const yPct = (v) => (h - padB) - (v / 100) * (h - padT - padB);
+
+  if (!compare) {
+    const hist = series[0].history || [];
+    const out = hist.map(p => p.output_wh || 0);
+    const inp = hist.map(p => p.input_wh || 0);
+    const bat = hist.map(p => (p.avg_battery_percent ?? p.battery_pct));
+    const barW = Math.max(1, Math.min(slot * 0.4, 16));
+    for (let i = 0; i < n; i++) {
+      const xCenter = xs(i);
+      const yBase = h - padB;
+      if (_seriesVisible.energy.output) {
+        const yOut = yBase - (out[i] / maxWh) * (h - padT - padB);
+        ctx.fillStyle = SERIES_COLORS.output;
+        ctx.fillRect(xCenter - barW - 1, yOut, barW, yBase - yOut);
+      }
+      if (_seriesVisible.energy.input) {
+        const yIn = yBase - (inp[i] / maxWh) * (h - padT - padB);
+        ctx.fillStyle = SERIES_COLORS.input;
+        ctx.fillRect(xCenter + 1, yIn, barW, yBase - yIn);
+      }
     }
-    if (_seriesVisible.energy.input) {
-      const yIn = yBase - (inp[i] / maxWh) * (h - padT - padB);
-      ctx.fillStyle = SERIES_COLORS.input;
-      ctx.fillRect(xCenter + 1, yIn, barW, yBase - yIn);
+    if (_seriesVisible.energy.battery && bat.some(v => v != null)) {
+      ctx.setLineDash([]);
+      drawSmoothLine(ctx, bat, xs, yPct, SERIES_COLORS.battery, 2);
     }
+    return;
   }
 
-  if (_seriesVisible.energy.battery && bat.some(v => v != null)) {
-    ctx.strokeStyle = SERIES_COLORS.battery;
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    let started = false;
-    bat.forEach((v, i) => {
-      if (v == null) { started = false; return; }
-      const x = padL + slot * (i + 0.5);
-      const y = (h - padB) - (v / 100) * (h - padT - padB);
-      if (!started) { ctx.moveTo(x, y); started = true; } else ctx.lineTo(x, y);
+  for (const s of series) {
+    const color = energyCompareColor(s.device_sn);
+    const byTs = new Map((s.history || []).map((p) => [p.ts, p]));
+    const out = tsAxis.map((ts) => {
+      const p = byTs.get(ts);
+      return p ? (p.output_wh || 0) : null;
     });
-    ctx.stroke();
+    const inp = tsAxis.map((ts) => {
+      const p = byTs.get(ts);
+      return p ? (p.input_wh || 0) : null;
+    });
+    const bat = tsAxis.map((ts) => {
+      const p = byTs.get(ts);
+      if (!p) return null;
+      const v = p.avg_battery_percent ?? p.battery_pct;
+      return v == null ? null : v;
+    });
+    if (_seriesVisible.energy.output) {
+      ctx.setLineDash([]);
+      drawSmoothLine(ctx, out, xs, yWh, color, 2.5);
+    }
+    if (_seriesVisible.energy.input) {
+      ctx.setLineDash([6, 4]);
+      drawSmoothLine(ctx, inp, xs, yWh, color, 2.5);
+      ctx.setLineDash([]);
+    }
+    if (_seriesVisible.energy.battery && bat.some(v => v != null)) {
+      ctx.setLineDash([]);
+      drawSmoothLine(ctx, bat, xs, yPct, color, 1.4);
+    }
   }
 }
 

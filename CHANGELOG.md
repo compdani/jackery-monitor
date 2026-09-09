@@ -9,6 +9,11 @@ Pre-1.0 means breaking changes can land in any minor.
 ## [Unreleased]
 
 ### Added
+- Energy history chart **compare chips** when two or more Jackerys are
+  on the account: tick extra units to overlay consumed / charged / battery
+  as colored lines (solid / dashed / thin). One device still uses the
+  existing bar chart. KPI cards, daily table, and records stay on the
+  viewed device.
 - Live-tab **fleet strip** when two or more Jackerys are on the account:
   compact cards with system SOC, solar/load W, charge state, and pack
   count. Clicking a card focuses the existing Live hero (same per-browser
@@ -42,6 +47,12 @@ Pre-1.0 means breaking changes can land in any minor.
   by `.field { display: flex }`).
 
 ### Fixed
+- Device tab capacity override, learned parameters, and the unknown-model
+  banner now reload when you switch Jackerys while staying on that tab.
+  Identity used to update from the live status frame while those shared
+  form fields kept the previous unit's values (and Save could write to
+  the old serial). Cloud properties fetch now passes the viewed device
+  serial instead of defaulting to the bridge-active unit.
 - AC output no longer turns itself back on after a UI off or when the
   bridge starts with the port already off. The inverter watchdog used to
   treat any `AC=OFF` as a trip and publish AC-on (`action_id` 4). Port-off
