@@ -56,7 +56,6 @@ COPY models.json tunables.json ./
 
 # Persistent data lives here (energy.db, jackery-creds.json on Linux hosts).
 RUN mkdir -p /data
-VOLUME ["/data"]
 
 # Note on non-root: deliberately running as root inside the container.
 # Switching to a non-root UID would break existing deployments where the
