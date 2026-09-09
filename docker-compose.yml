@@ -108,8 +108,11 @@ services:
   # Auto-update the two services above when a new :latest image is published
   # to GHCR (by .github/workflows/docker-publish.yml on push to main).
   # Polls every 60s; only touches containers with the watchtower.enable label.
+  # nickfedor/watchtower is the maintained drop-in for containrrr/watchtower,
+  # which hardcodes Docker API 1.25 and crash-loops on engines that require
+  # 1.40+ (Synology Container Manager, Docker 25+). This fork negotiates.
   watchtower:
-    image: containrrr/watchtower
+    image: nickfedor/watchtower
     container_name: watchtower
     restart: unless-stopped
     volumes:

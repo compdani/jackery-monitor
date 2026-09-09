@@ -47,6 +47,11 @@ Pre-1.0 means breaking changes can land in any minor.
   by `.field { display: flex }`).
 
 ### Fixed
+- Watchtower no longer crash-loops on Docker API ≥ 1.40 (`client version
+  1.25 is too old`). Prod compose now uses `nickfedor/watchtower`, which
+  negotiates the API; the unmaintained `containrrr/watchtower` image
+  hardcoded 1.25. Copy the new compose file to the NAS and recreate the
+  project — Watchtower cannot heal itself.
 - Device tab capacity override, learned parameters, and the unknown-model
   banner now reload when you switch Jackerys while staying on that tab.
   Identity used to update from the live status frame while those shared

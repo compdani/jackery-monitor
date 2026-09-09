@@ -166,13 +166,17 @@ want it elsewhere.
 
 ### Updating
 
-The compose file ships with a Watchtower service that polls GHCR every
-60s and recreates the labelled containers when a new `:latest` is
-published. So `git push` → image rebuild → ~60-90s → NAS is up to date.
+The compose file ships with a Watchtower service (`nickfedor/watchtower`,
+a maintained drop-in for the unmaintained `containrrr/watchtower` image)
+that polls GHCR every 60s and recreates the labelled containers when a
+new `:latest` is published. Upstream Watchtower hardcodes Docker API
+1.25 and crash-loops on engines that require 1.40+ (Synology Container
+Manager, Docker 25+). So `git push` → image rebuild → ~60-90s → NAS is
+up to date.
 
 To update the **compose file itself** (env, services, ports), copy the
 new `docker-compose.yml` to your NAS via File Station and recreate the
-project.
+project. Watchtower cannot apply compose changes on its own.
 
 ## Quick start — macOS dev
 
