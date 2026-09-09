@@ -20,8 +20,8 @@ services:
   # Cloud bridge — holds Jackery credentials, polls the Jackery cloud,
   # exposes JSON-RPC on TCP 8766 (internal docker network only, NOT to the LAN).
   jackery-bridge:
-    image: ghcr.io/yaniverel-code/jackery-monitor:latest
-    pull_policy: always
+    image: jackerymonitor:latest
+    pull_policy: never
     container_name: jackery-bridge
     restart: unless-stopped
     command: ["python", "bridge.py"]
@@ -57,8 +57,8 @@ services:
   # otherwise hide the LAN behind NAT). Reachable on the LAN at
   # http://<nas-ip>:${JACKERY_HTTP_PORT}.
   jackery-monitor:
-    image: ghcr.io/yaniverel-code/jackery-monitor:latest
-    pull_policy: always
+    image: jackerymonitor:latest
+    pull_policy: never
     container_name: jackery-monitor
     restart: unless-stopped
     depends_on:
