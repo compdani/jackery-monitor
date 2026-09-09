@@ -134,9 +134,13 @@ def _load_model_catalog() -> dict[str, Any]:
 _MODEL_CATALOG = _load_model_catalog()
 DEFAULT_BATTERY_CAPACITY_WH = int(_MODEL_CATALOG.get("default_capacity_wh") or 3024)
 BATTERY_CAPACITY_WH: dict[int, int] = {}
+PACK_CAPACITY_WH: dict[int, int] = {}
 for _k, _v in (_MODEL_CATALOG.get("models") or {}).items():
     try:
-        BATTERY_CAPACITY_WH[int(_k)] = int(_v["capacity_wh"])
+        _code = int(_k)
+        BATTERY_CAPACITY_WH[_code] = int(_v["capacity_wh"])
+        if "pack_capacity_wh" in _v:
+            PACK_CAPACITY_WH[_code] = int(_v["pack_capacity_wh"])
     except (TypeError, ValueError, KeyError) as _e:
         log.warning("models.json: skipping bad entry %r=%r (%s)", _k, _v, _e)
 
@@ -399,9 +403,13 @@ def battery_capacity_wh(model_code: int | None) -> int:
 
 def expansion_pack_capacity_wh(model_code: int | None) -> int:
     """Per-pack capacity for a given main-unit model. The 5000 Plus uses
-    5040 Wh expansion packs (same as the main unit); older 1500/2000-class
-    units use 2042 Wh packs. Unknown models default to the main capacity
-    since stacked packs of a different size are uncommon."""
+    5040 Wh expansion packs (same as the main unit); Explorer 2000 Plus
+    uses 2042 Wh Battery Pack 2000 Plus cells. Optional `pack_capacity_wh`
+    in models.json overrides the default of "same as the main unit" —
+    stacked packs of a different size are uncommon, so unknown models
+    still fall back to main capacity."""
+    if model_code is not None and model_code in PACK_CAPACITY_WH:
+        return PACK_CAPACITY_WH[model_code]
     return battery_capacity_wh(model_code)
 
 

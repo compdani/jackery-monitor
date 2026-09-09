@@ -104,6 +104,11 @@
 
     <!-- ============== LIVE TAB ============== -->
     <section id="tab-live" class="tab-panel">
+      <!-- Fleet strip: one compact card per Jackery when the account
+           has 2+. Clicking a card focuses the existing Live hero on
+           that unit (same POST /api/view/select_device as the header
+           picker). Hidden for single-device accounts. -->
+      <div id="fleet-strip" class="fleet-strip" hidden></div>
       <!-- Hero: battery + key KPIs. Cards are drag-reorderable on
            desktop; the order persists per-browser via localStorage. -->
       <div id="hero-grid" class="grid hero-grid">

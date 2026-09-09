@@ -9,8 +9,22 @@ import forecaster
 def test_battery_capacity_known_and_unknown():
     assert forecaster.battery_capacity_wh(13) == 5040
     assert forecaster.battery_capacity_wh(22) == 5040
+    assert forecaster.battery_capacity_wh(2) == 2042
+    assert forecaster.battery_capacity_wh(17) == 1534
+    assert forecaster.battery_capacity_wh(21) == 1512
     assert forecaster.battery_capacity_wh(99) == forecaster.DEFAULT_BATTERY_CAPACITY_WH
     assert forecaster.battery_capacity_wh(None) == forecaster.DEFAULT_BATTERY_CAPACITY_WH
+
+
+def test_expansion_pack_capacity_uses_catalog_override():
+    # 2000 Plus: pack_capacity_wh is explicit 2042.
+    assert forecaster.expansion_pack_capacity_wh(2) == 2042
+    # 5000 Plus: no pack override → same as main.
+    assert forecaster.expansion_pack_capacity_wh(13) == 5040
+    assert forecaster.expansion_pack_capacity_wh(22) == 5040
+    # Unknown / missing code falls back to main (default 3024).
+    assert forecaster.expansion_pack_capacity_wh(99) == forecaster.DEFAULT_BATTERY_CAPACITY_WH
+    assert forecaster.expansion_pack_capacity_wh(None) == forecaster.DEFAULT_BATTERY_CAPACITY_WH
 
 
 def test_solar_fit_recovers_known_coefficient():

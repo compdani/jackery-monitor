@@ -9,6 +9,14 @@ Pre-1.0 means breaking changes can land in any minor.
 ## [Unreleased]
 
 ### Added
+- Live-tab **fleet strip** when two or more Jackerys are on the account:
+  compact cards with system SOC, solar/load W, charge state, and pack
+  count. Clicking a card focuses the existing Live hero (same per-browser
+  view cookie as the header picker). Hidden for single-device accounts.
+- `models.json` entries for Explorer 2000 Plus (`model_code` 2, 2042 Wh),
+  Explorer 1500 Ultra (17, 1534 Wh), and Explorer 1500 v2 (21, 1512 Wh).
+  Optional `pack_capacity_wh` so 2000 Plus expansion packs aren't sized as
+  5040 Wh 5000 Plus cells.
 - App-level username/password login (`auth.py`) — first-visit setup, PBKDF2
   password hash, HMAC-signed session cookies, sign-out button.
 - `LICENSE`, `CONTRIBUTING.md`, `SECURITY.md`, issue + PR templates,
@@ -19,11 +27,17 @@ Pre-1.0 means breaking changes can land in any minor.
 - `pyproject.toml` with pytest + ruff config; `requirements-dev.txt`.
 
 ### Changed
+- Packs UI uses server `main_capacity_wh` / `pack_capacity_wh` instead of a
+  hardcoded 5040 Wh default, so a 2000 Plus + Battery Pack 2000 Plus
+  weights SOC correctly.
+- Cloud property `bs` (idle / charging / discharging) is parsed into
+  telemetry and shown on fleet cards.
 - Static assets now send `Cache-Control: no-cache` so CDNs (Cloudflare in
   front of a Tunnel) revalidate every request instead of serving 4-hour-stale
   CSS after a deploy.
 - Service worker drops `style.css` from the precache shell; bumped cache
-  version to `v3` so existing PWAs evict stale shells on next nav.
+  version to `v4` so existing PWAs evict stale shells on next nav (fleet
+  strip markup lives in the HTML/JS shell).
 - `[hidden]` HTML attribute now wins over flex layouts (was being defeated
   by `.field { display: flex }`).
 

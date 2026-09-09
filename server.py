@@ -806,6 +806,66 @@ def _pack_count_for(device_sn: str | None) -> int:
     return 0
 
 
+def _as_int(v, default: int = 0) -> int:
+    try:
+        return int(v)
+    except (TypeError, ValueError):
+        return default
+
+
+def _devices_overview(cloud_src: dict | None) -> list[dict]:
+    """Compact per-device snapshot for the Live fleet strip.
+
+    SOC is capacity-weighted across main + expansion packs so a 2000
+    Plus with a pack at 22% doesn't show the main unit's 26% as the
+    glance number. Watts and charge state come from the per-SN
+    telemetry cache the bridge already refreshes every poll.
+    """
+    if not cloud_src:
+        return []
+    now = time.time()
+    devices = cloud_src.get("devices") or []
+    tele_by_sn = cloud_src.get("devices_telemetry") or {}
+    out: list[dict] = []
+    for d in devices:
+        if not isinstance(d, dict):
+            continue
+        sn = str(d.get("device_sn") or "")
+        mc = d.get("model_code")
+        entry = tele_by_sn.get(sn) or {}
+        tele = entry.get("telemetry") or {}
+        ts = entry.get("ts")
+        main_pct = tele.get("battery_percent")
+        soc = None
+        if main_pct is not None:
+            try:
+                soc = round(_system_soc_pct(float(main_pct), sn or None, mc), 1)
+            except (TypeError, ValueError):
+                soc = None
+        age_s = None
+        if ts:
+            try:
+                age_s = round(now - float(ts), 1)
+            except (TypeError, ValueError):
+                age_s = None
+        out.append({
+            "device_id": d.get("device_id"),
+            "device_sn": sn or None,
+            "name": d.get("name") or d.get("model_name"),
+            "model_code": mc,
+            "model_name": d.get("model_name"),
+            "soc_pct": soc,
+            "pack_count": len(state.battery_packs_by_sn.get(sn, [])) if sn else 0,
+            "solar_w": _as_int(tele.get("solar_input_w")),
+            "ac_input_w": _as_int(tele.get("ac_input_w")),
+            "output_w": _as_int(tele.get("output_power_w")),
+            "ac_on": bool(tele.get("ac_on")),
+            "battery_status": tele.get("battery_status"),
+            "age_s": age_s,
+        })
+    return out
+
+
 def _in_progress_savings_row() -> dict | None:
     """A synthetic energy_db.history row covering [last_db_record, now]
     so the cost display reflects current grid/output use without waiting
@@ -1055,6 +1115,7 @@ def serialize_status(view_device_id: str | None = None) -> dict[str, Any]:
         main_pct = telemetry.get("battery_percent")
         if main_pct is not None:
             sys_pct = _system_soc_pct(float(main_pct), view_sn, model_code)
+            main_wh, pack_wh = _capacity_hints(view_sn)
             telemetry = {**telemetry,
                          "main_soc_pct": main_pct,
                          "system_soc_pct": sys_pct,
@@ -1063,10 +1124,15 @@ def serialize_status(view_device_id: str | None = None) -> dict[str, Any]:
                          # Wh without having to hardcode a per-model constant.
                          # Single-unit devices fall through this branch and get
                          # capacity_wh from the else below.
-                         "capacity_wh": _total_capacity_wh(view_sn, model_code)}
+                         "capacity_wh": _total_capacity_wh(view_sn, model_code),
+                         "main_capacity_wh": main_wh,
+                         "pack_capacity_wh": pack_wh}
     elif telemetry and view_sn:
+        main_wh, pack_wh = _capacity_hints(view_sn)
         telemetry = {**telemetry,
-                     "capacity_wh": _total_capacity_wh(view_sn, model_code)}
+                     "capacity_wh": _total_capacity_wh(view_sn, model_code),
+                     "main_capacity_wh": main_wh,
+                     "pack_capacity_wh": pack_wh}
 
     energy = None
     try:
@@ -1082,6 +1148,9 @@ def serialize_status(view_device_id: str | None = None) -> dict[str, Any]:
     cloud_out = dict(state.last_cloud_meta) if state.last_cloud_meta else None
     if cloud_out is not None:
         cloud_out["selected_device_id"] = view_id
+        # Fleet strip on Live: one compact row per account device so
+        # the glance numbers don't require switching the view cookie.
+        cloud_out["devices_overview"] = _devices_overview(cloud_src)
 
     # Inverter recovery watchdog snapshot. Always present so the UI can
     # clear stale decoration without an extra fetch when AC recovers.
@@ -4278,6 +4347,8 @@ async def api_devices_battery_packs(device_sn: str | None = None,
     }
     if not device_sn:
         return {"error": "no device", "packs": [], "_diag": diag}
+    main_wh, pack_wh = _capacity_hints(device_sn)
+    cap = {"main_capacity_wh": main_wh, "pack_capacity_wh": pack_wh}
     # Only return live main_soc_pct for the *active* device — that's the
     # one whose battery_percent is in state.last_status.
     main_pct = (state.last_status or {}).get("battery_percent") if device_sn == active_sn else None
@@ -4287,7 +4358,8 @@ async def api_devices_battery_packs(device_sn: str | None = None,
                 "main_soc_pct": main_pct,
                 "fetched_at": last_ts,
                 "cached": True,
-                "_diag": diag}
+                "_diag": diag,
+                **cap}
     # No cache for this device. If we've already learned (via a prior
     # successful fetch with empty packs) that this device has no packs,
     # short-circuit so the UI hides the card without another RPC.
@@ -4298,16 +4370,17 @@ async def api_devices_battery_packs(device_sn: str | None = None,
                 "fetched_at": last_ts,
                 "cached": True,
                 "no_packs": True,
-                "_diag": diag}
+                "_diag": diag,
+                **cap}
     rpc = getattr(state.client, "_rpc", None)
     if rpc is None:
         return {"error": "bridge not available (backend=" + state.backend + ")",
-                "packs": [], "_diag": diag}
+                "packs": [], "_diag": diag, **cap}
     try:
         result = await rpc("get_battery_packs", device_sn=device_sn)
     except Exception as e:
         log.warning("battery_packs API RPC failed: %s", e)
-        return {"error": f"rpc failed: {e}", "packs": [], "_diag": diag}
+        return {"error": f"rpc failed: {e}", "packs": [], "_diag": diag, **cap}
     packs = (result or {}).get("packs", [])
     rpc_err = (result or {}).get("error")
     if rpc_err:
@@ -4328,7 +4401,8 @@ async def api_devices_battery_packs(device_sn: str | None = None,
             "fetched_at": time.time(),
             "cached": False,
             "error": rpc_err,
-            "_diag": diag}
+            "_diag": diag,
+            **cap}
 
 
 @app.get("/api/location")

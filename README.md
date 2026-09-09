@@ -16,10 +16,11 @@ and suggests one-click tweaks** to the algorithm constants.
 Designed to run on a Synology NAS in Docker. Works anywhere with Docker
 Compose. Multi-device — handles multiple Jackery devices on the same account
 (e.g. Explorer 5000 Plus with up to 5 expansion packs + HomePower 3000) and
-per-device automation rules and AI insights. **Each browser picks which
-Jackery it's viewing independently** (per-browser cookie), so the phone and
-the laptop can look at different units at the same time without stomping
-each other.
+per-device automation rules and AI insights. **The Live tab shows every
+unit at a glance** (SOC, solar/load, charge state); click a card to focus
+the full power-flow hero. **Each browser also picks which Jackery it's
+viewing independently** (per-browser cookie), so the phone and the laptop
+can look at different units at the same time without stomping each other.
 
 It connects through the **Jackery cloud account** (the same one the official app uses). On first launch the dashboard prompts you to sign in; credentials are encrypted on disk (AES-256-GCM on Linux/Synology, macOS Keychain on Mac) and never leave your host.
 
@@ -33,12 +34,15 @@ It connects through the **Jackery cloud account** (the same one the official app
 
 ## What's in it
 
-- **Live tab** — hero battery card with mood-aware glow (green when
-  charging, blue when discharging, red when low), today's KPIs with
-  solar / grid / net savings breakdown, **Tesla-style animated power
-  flow diagram** (Solar / Grid → Battery → Loads with travelling
-  dots whose speed encodes wattage), 6-hour chart with smooth-bezier
-  fills + dual-axis battery %, hover tooltip.
+- **Live tab** — when two or more Jackerys are on the account, a **fleet
+  strip** of compact cards sits above the hero (name, system SOC, solar /
+  load W, charge state, pack count). Click a card to focus that unit.
+  Then: hero battery card with mood-aware glow (green when charging,
+  blue when discharging, red when low), today's KPIs with solar / grid /
+  net savings breakdown, **Tesla-style animated power flow diagram**
+  (Solar / Grid → Battery → Loads with travelling dots whose speed
+  encodes wattage), 6-hour chart with smooth-bezier fills + dual-axis
+  battery %, hover tooltip. Single-device accounts skip the strip.
 - **Output + grid control** — one toggle row covers all five power
   paths: AC, DC, USB, Car output ports plus the AC-charge Kasa plug
   (the latter only renders when configured for the active device).
@@ -55,12 +59,12 @@ It connects through the **Jackery cloud account** (the same one the official app
   from your own observed solar-vs-GHI pairs (Open-Meteo); load model uses
   per-hour-of-day medians with a runaway-bucket cap so a single high-output
   event doesn't dominate. Predicted-vs-actual chart accumulates over time.
-- **Battery packs card** (5000 Plus + expansions) — per-pack SOC,
+- **Battery packs card** (5000 Plus / 2000 Plus + expansions) — per-pack SOC,
   input W, temp. Real-time updates over MQTT (no polling).
-  Auto-detected total capacity = main + N × expansion. Collapsed by
-  default with the summary line always visible (`5 packs · avg 76%
-  · system 76% · 237W in`); click the header to drill in. Hidden
-  cleanly on no-pack devices.
+  Auto-detected total capacity = main + N × expansion (per-model pack
+  Wh from `models.json`). Collapsed by default with the summary line always
+  visible (`5 packs · avg 76% · system 76% · 237W in`); click the header
+  to drill in. Hidden cleanly on no-pack devices.
 - **Smart charge** (per-device, in Automation tab) — every 5
   minutes, runs a counterfactual forecast (what would SOC do without
   any AC charging?). If the predicted sunrise SOC falls below your
@@ -475,7 +479,7 @@ What is **never** sent off-device by this app:
 
 ## Adding a new Jackery model
 
-The model_code → battery capacity catalog lives in [`models.json`](models.json) at the repo root. If your device's model_code isn't listed, the forecaster falls back to a conservative 3024 Wh default.
+The model_code → battery capacity catalog lives in [`models.json`](models.json) at the repo root. If your device's model_code isn't listed, the forecaster falls back to a conservative 3024 Wh default. Catalogued today: Explorer 2000 Plus (2), Explorer 1000 v2 (8), Explorer 5000 Plus (13 / 22), Explorer 1500 Ultra (17), HomePower 3000 (19), Explorer 1500 v2 (21).
 
 To check your device's model_code:
 1. **Device tab → Show raw cloud properties** — look for `_dev_modelCode` in the dump.
@@ -488,10 +492,12 @@ To add a new model:
    ```json
    "42": {
      "capacity_wh": 2042,
+     "pack_capacity_wh": 2042,
      "name": "Explorer 2000 Pro",
      "comment": "Confirmed on firmware vX.Y"
    }
    ```
+   `pack_capacity_wh` is optional; omit it when expansion packs match the main unit.
 4. Until your PR lands, you can also use **Device tab → Capacity override** for a per-device-only override that takes priority over the catalog.
 
 ## Limitations
@@ -508,6 +514,9 @@ To add a new model:
 - **The cloud API is reverse-engineered** and could change at any time.
   We've added tolerance for known field-name variations, but a major API
   rev would need code changes.
+- **`/v1/device/version` is not a capacity source.** Probes against that
+  endpoint typically return `data: null` or error 10600. Model recognition
+  comes from `modelCode` on `/v1/device/bind/list` plus [`models.json`](models.json).
 
 ---
 

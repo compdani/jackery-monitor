@@ -4,6 +4,12 @@
   "default_capacity_wh": 3024,
   "default_capacity_comment": "HomePower 3000 \u2014 conservative fallback for unknown model codes so we don't over-promise SOC headroom.",
   "models": {
+    "2": {
+      "capacity_wh": 2042,
+      "pack_capacity_wh": 2042,
+      "name": "Explorer 2000 Plus",
+      "comment": "Jackery cloud model_code 2 (socketry ha/c.java PORTABLE_099). Spec-sheet 2042.8 Wh; Battery Pack 2000 Plus is the same 2042 Wh cell stack."
+    },
     "8": {
       "capacity_wh": 1070,
       "name": "Explorer 1000 v2",
@@ -14,10 +20,20 @@
       "name": "Explorer 5000 Plus",
       "comment": "5000 Plus reports under both 13 and 22 depending on firmware/region; both are the same 5040 Wh cell stack."
     },
+    "17": {
+      "capacity_wh": 1534,
+      "name": "Explorer 1500 Ultra",
+      "comment": "Jackery cloud model_code 17 (private_jack E1500Ultra). Spec-sheet 1534.24 Wh. Confirm Device-tab _dev_modelCode if the unknown-model banner still fires."
+    },
     "19": {
       "capacity_wh": 3024,
       "name": "HomePower 3000",
       "comment": "Jackery model_name HTE1163000B; reported as model_code 19 from the cloud API. Confirmed against a real unit on 2026-05-02."
+    },
+    "21": {
+      "capacity_wh": 1512,
+      "name": "Explorer 1500 v2",
+      "comment": "Jackery cloud model_code 21 (private_jack E1500V2). Spec-sheet ~1512 Wh. Confirm Device-tab _dev_modelCode if the unknown-model banner still fires."
     },
     "22": {
       "capacity_wh": 5040,

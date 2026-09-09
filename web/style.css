@@ -210,6 +210,94 @@ a.brand:hover .logo-dot { transform: scale(1.15); transition: transform .15s; }
 }
 .device-select option { background: var(--bg-elev); color: var(--text); }
 
+/* ============== Live fleet strip (multi-device glance) ============== */
+.fleet-strip {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px;
+  margin-bottom: 16px;
+}
+.fleet-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+  margin: 0;
+  padding: 12px 14px;
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-card);
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color .15s, box-shadow .15s;
+}
+.fleet-card:hover { border-color: var(--text-mute); }
+.fleet-card.is-selected {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+.fleet-card-top {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+.fleet-name {
+  font-size: 13px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.fleet-badge {
+  flex-shrink: 0;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  color: var(--text-mute);
+}
+.fleet-badge.charging { color: var(--accent-2); }
+.fleet-badge.discharging { color: var(--accent); }
+.fleet-soc {
+  font-variant-numeric: tabular-nums;
+  font-size: 28px;
+  font-weight: 600;
+  letter-spacing: -0.03em;
+  line-height: 1;
+}
+.fleet-soc small { font-size: 13px; margin-left: 2px; }
+.fleet-bar {
+  height: 4px;
+  background: var(--border);
+  border-radius: 2px;
+  overflow: hidden;
+}
+.fleet-bar-fill {
+  display: block;
+  height: 100%;
+  background: var(--accent-3);
+  border-radius: 2px;
+  width: 0;
+}
+.fleet-card.charging .fleet-bar-fill { background: var(--accent-2); }
+.fleet-card.discharging .fleet-bar-fill { background: var(--accent); }
+.fleet-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 10px;
+  font-size: 11px;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+.fleet-packs { color: var(--text-mute); }
+@media (max-width: 600px) {
+  .fleet-strip { grid-template-columns: 1fr; }
+}
+
 /* ============== Main + Tabs ============== */
 main {
   /* Default tier — laptops and most desktops. Stays the same as the

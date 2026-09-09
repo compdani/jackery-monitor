@@ -73,6 +73,7 @@ def server_state(isolated_data, monkeypatch):
                 "output_power_w": 75,
                 "ac_input_w": 0,
                 "solar_input_w": 0,
+                "battery_status": 2,
             }, "ts": 1700000000},
         },
     }
@@ -164,6 +165,35 @@ def test_unknown_cookie_falls_back_to_bridge_active(server_state):
     out = server_state.serialize_status(view_device_id="id-DOES-NOT-EXIST")
     assert out["device"]["device_sn"] == "SN-A"
     assert out["cloud"]["selected_device_id"] == "id-A"
+
+
+def test_devices_overview_includes_all_devices(server_state):
+    """Live fleet strip needs a compact row for every account device,
+    regardless of which one this browser is viewing."""
+    out = server_state.serialize_status(view_device_id="id-B")
+    overview = out["cloud"]["devices_overview"]
+    assert [r["device_id"] for r in overview] == ["id-A", "id-B"]
+    by_id = {r["device_id"]: r for r in overview}
+    assert by_id["id-A"]["soc_pct"] == 80
+    assert by_id["id-A"]["solar_w"] == 100
+    assert by_id["id-A"]["pack_count"] == 0
+    assert by_id["id-B"]["soc_pct"] == 42
+    assert by_id["id-B"]["output_w"] == 75
+    assert by_id["id-B"]["battery_status"] == 2
+    # Overview is on the per-client copy, not the shared cache.
+    assert "devices_overview" not in server_state.state.last_cloud_meta
+
+
+def test_devices_overview_soc_weights_packs(server_state):
+    """Glance SOC must be capacity-weighted across main + packs, not
+    the main unit's rb alone. Equal-size 5040 Wh cells: 80% + 50% → 65%."""
+    server_state.state.battery_packs_by_sn["SN-A"] = [{"rb": 50}]
+    out = server_state.serialize_status(view_device_id=None)
+    by_id = {r["device_id"]: r for r in out["cloud"]["devices_overview"]}
+    assert by_id["id-A"]["soc_pct"] == 65.0
+    assert by_id["id-A"]["pack_count"] == 1
+    assert by_id["id-B"]["soc_pct"] == 42
+    assert by_id["id-B"]["pack_count"] == 0
 
 
 def test_cookie_does_not_mutate_cached_cloud_meta(server_state):

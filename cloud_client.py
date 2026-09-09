@@ -748,7 +748,7 @@ def cloud_props_to_telemetry(p: dict[str, Any]) -> dict[str, Any]:
     # 99.9h (raw 999) is the protocol's "not applicable" sentinel; treat as 0.
     raw_it = i("it")
     raw_ot = i("ot")
-    return {
+    out = {
         "battery_percent": i("rb"),
         "battery_temp_c": round(f("bt") / 10.0, 1),
         "input_power_w": total_in_w,
@@ -773,3 +773,9 @@ def cloud_props_to_telemetry(p: dict[str, Any]) -> dict[str, Any]:
         # local midnight when no Open-Meteo location is configured.
         "utc_offset_seconds": i("uo") if "uo" in p else None,
     }
+    # bs: 0=idle, 1=charging, 2=discharging (socketry protocol.md). Only
+    # set when the cloud actually sent the key so a missing field isn't
+    # silently reported as idle.
+    if "bs" in p:
+        out["battery_status"] = i("bs")
+    return out

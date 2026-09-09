@@ -3679,10 +3679,9 @@ function renderBacktestResult(j) {
 }
 
 // ============================================================
-// DEVICE PICKER
+// DEVICE PICKER + LIVE FLEET
 // ============================================================
-$('device-select')?.addEventListener('change', async (e) => {
-  const device_id = e.target.value;
+async function selectViewDevice(device_id) {
   if (!device_id) return;
   // Latch the choice so applyStatus drops frames from the previous view
   // until the first frame for THIS device arrives (or 8s pass).
@@ -3704,6 +3703,10 @@ $('device-select')?.addEventListener('change', async (e) => {
     setDeviceSwitching(false);
     console.warn('view/select_device failed', err);
   }
+}
+
+$('device-select')?.addEventListener('change', (e) => {
+  selectViewDevice(e.target.value);
 });
 
 function renderDevicePicker(devices, selectedId) {
@@ -3725,6 +3728,116 @@ function renderDevicePicker(devices, selectedId) {
     sel.appendChild(o);
   }
 }
+
+function fleetStatus(d) {
+  const bs = d.battery_status;
+  if (bs === 1) return { cls: 'charging', text: 'charging' };
+  if (bs === 2) return { cls: 'discharging', text: 'discharging' };
+  if (bs === 0) return { cls: 'idle', text: 'idle' };
+  const net = (d.solar_w || 0) + (d.ac_input_w || 0) - (d.output_w || 0);
+  if (net > 25) return { cls: 'charging', text: 'charging' };
+  if (net < -25) return { cls: 'discharging', text: 'discharging' };
+  return { cls: 'idle', text: 'idle' };
+}
+
+function fleetCardHtml(d, selectedId) {
+  const st = fleetStatus(d);
+  const selected = String(d.device_id) === String(selectedId);
+  const soc = d.soc_pct;
+  const socTxt = soc != null && Number.isFinite(soc) ? String(Math.round(soc)) : '—';
+  const barW = soc != null && Number.isFinite(soc) ? Math.max(0, Math.min(100, soc)) : 0;
+  const watts = [];
+  watts.push(`☀ ${Math.round(d.solar_w || 0)}W`);
+  if ((d.ac_input_w || 0) > 0) watts.push(`⚡ ${Math.round(d.ac_input_w)}W`);
+  watts.push(`⌂ ${Math.round(d.output_w || 0)}W`);
+  const packLabel = d.pack_count > 0
+    ? `+${d.pack_count} pack${d.pack_count === 1 ? '' : 's'}`
+    : '';
+  const name = escapeHtml(d.name || d.model_name || d.device_sn || d.device_id || 'Device');
+  return `<button type="button" class="fleet-card ${st.cls}${selected ? ' is-selected' : ''}"
+      data-device-id="${escapeHtml(d.device_id)}"
+      aria-pressed="${selected ? 'true' : 'false'}">
+    <div class="fleet-card-top">
+      <span class="fleet-name">${name}</span>
+      <span class="fleet-badge ${st.cls}">${st.text}</span>
+    </div>
+    <div class="fleet-soc"><span class="fleet-soc-n">${socTxt}</span><small>%</small></div>
+    <div class="fleet-bar"><span class="fleet-bar-fill" style="width:${barW}%"></span></div>
+    <div class="fleet-meta">
+      <span class="fleet-watts">${watts.join(' · ')}</span>
+      <span class="fleet-packs"${d.pack_count > 0 ? '' : ' hidden'}>${packLabel}</span>
+    </div>
+  </button>`;
+}
+
+function updateFleetCard(strip, d, selectedId) {
+  const id = String(d.device_id ?? '');
+  const card = strip.querySelector(`[data-device-id="${CSS.escape(id)}"]`);
+  if (!card) return;
+  const st = fleetStatus(d);
+  const selected = String(d.device_id) === String(selectedId);
+  card.classList.toggle('is-selected', selected);
+  card.classList.toggle('charging', st.cls === 'charging');
+  card.classList.toggle('discharging', st.cls === 'discharging');
+  card.classList.toggle('idle', st.cls === 'idle');
+  card.setAttribute('aria-pressed', selected ? 'true' : 'false');
+  const badge = card.querySelector('.fleet-badge');
+  if (badge) {
+    badge.className = `fleet-badge ${st.cls}`;
+    badge.textContent = st.text;
+  }
+  const soc = d.soc_pct;
+  const socEl = card.querySelector('.fleet-soc-n');
+  if (socEl) socEl.textContent = soc != null && Number.isFinite(soc) ? String(Math.round(soc)) : '—';
+  const bar = card.querySelector('.fleet-bar-fill');
+  if (bar) {
+    const barW = soc != null && Number.isFinite(soc) ? Math.max(0, Math.min(100, soc)) : 0;
+    bar.style.width = `${barW}%`;
+  }
+  const wattsEl = card.querySelector('.fleet-watts');
+  if (wattsEl) {
+    const watts = [`☀ ${Math.round(d.solar_w || 0)}W`];
+    if ((d.ac_input_w || 0) > 0) watts.push(`⚡ ${Math.round(d.ac_input_w)}W`);
+    watts.push(`⌂ ${Math.round(d.output_w || 0)}W`);
+    wattsEl.textContent = watts.join(' · ');
+  }
+  const packsEl = card.querySelector('.fleet-packs');
+  if (packsEl) {
+    if (d.pack_count > 0) {
+      packsEl.hidden = false;
+      packsEl.textContent = `+${d.pack_count} pack${d.pack_count === 1 ? '' : 's'}`;
+    } else {
+      packsEl.hidden = true;
+      packsEl.textContent = '';
+    }
+  }
+}
+
+function renderFleet(overview, selectedId) {
+  const strip = $('fleet-strip');
+  if (!strip) return;
+  if (!overview || overview.length < 2) {
+    show(strip, false);
+    return;
+  }
+  show(strip, true);
+  const ids = overview.map(d => d.device_id).join('|');
+  if (strip.dataset.ids !== ids) {
+    strip.dataset.ids = ids;
+    strip.innerHTML = overview.map(d => fleetCardHtml(d, selectedId)).join('');
+    return;
+  }
+  for (const d of overview) updateFleetCard(strip, d, selectedId);
+}
+
+$('fleet-strip')?.addEventListener('click', (e) => {
+  const card = e.target.closest('[data-device-id]');
+  if (!card) return;
+  const id = card.dataset.deviceId;
+  if (!id) return;
+  if (String(lastStatus?.cloud?.selected_device_id) === String(id)) return;
+  selectViewDevice(id);
+});
 
 // ============================================================
 // RECONNECT
@@ -3921,6 +4034,8 @@ function applyStatus(s) {
     window._cachedNoPacks = false;
     window._systemSoc = null;
     window._mainSoc = null;
+    window._cachedMainCapacityWh = null;
+    window._cachedPackCapacityWh = null;
     renderBatteryPacks();
     // AC-charge button is per-device too — hide it eagerly so the
     // user doesn't see the old device's plug state for up to 30s
@@ -3960,6 +4075,7 @@ function applyStatus(s) {
   const selectedId = s.cloud?.selected_device_id;
   lastDevices = devices;
   renderDevicePicker(devices, selectedId);
+  renderFleet(s.cloud?.devices_overview, selectedId);
 
   // Source badges
   const srcLabel = s.source ? s.source.toUpperCase() : '—';
@@ -3984,6 +4100,11 @@ function applyStatus(s) {
     // it on single-unit devices where system_soc_pct is absent.
     const tempGroup = $('battery-temp-group');
     if (tempGroup) tempGroup.hidden = t.system_soc_pct != null;
+    // Model-aware pack/main Wh for the packs card overlay. Prefer the
+    // server's hints over the 5040 default so a 2000 Plus isn't sized
+    // as a 5000 Plus.
+    if (t.main_capacity_wh != null) window._cachedMainCapacityWh = t.main_capacity_wh;
+    if (t.pack_capacity_wh != null) window._cachedPackCapacityWh = t.pack_capacity_wh;
     // EOD pill follows live SOC drift so it doesn't go stale between refreshes.
     maybeRefitEodOnDrift(t.battery_percent);
     // Re-render the pack card with the live main % — pack values lag
@@ -6196,16 +6317,18 @@ async function fetchEodForecast() {
 // here and stashed on window for applyStatus to pick up:
 //   system_pct = (main_pct × main_wh + Σ pack_pct × pack_wh) / total_wh
 // 5000 Plus expansion packs are 5040 Wh — same as the main unit.
-// (The smaller 2042 Wh packs are for the older 1500/2000 series.)
-const PACK_NOMINAL_WH = 5040;       // 5000 Plus Battery Pack 5040
-const MAIN_DEFAULT_WH = 5040;       // 5000 Plus internal
+// Explorer 2000 Plus packs are 2042 Wh. Prefer the server's
+// main_capacity_wh / pack_capacity_wh over these last-resort
+// defaults so a 2000 Plus isn't sized as a 5000 Plus.
+const MAIN_DEFAULT_WH = 5040;       // last-resort main fallback
 
-function computeSystemSoc(mainPct, packs, mainWh) {
+function computeSystemSoc(mainPct, packs, mainWh, packWh) {
   if (mainPct == null || !packs.length || !mainWh) return null;
-  const totalWh = mainWh + packs.length * PACK_NOMINAL_WH;
+  const pWh = packWh || mainWh;
+  const totalWh = mainWh + packs.length * pWh;
   let stored = mainPct * mainWh / 100;
   for (const p of packs) {
-    if (p.rb != null) stored += p.rb * PACK_NOMINAL_WH / 100;
+    if (p.rb != null) stored += p.rb * pWh / 100;
   }
   const pct = (stored / totalWh) * 100;
   if (!Number.isFinite(pct)) return null;
@@ -6254,6 +6377,8 @@ async function fetchBatteryPacks() {
     window._cachedPacksMainSoc = j.main_soc_pct ?? null;
     window._cachedPacksError = j.error || null;
     window._cachedNoPacks = j.no_packs === true;
+    if (j.main_capacity_wh != null) window._cachedMainCapacityWh = j.main_capacity_wh;
+    if (j.pack_capacity_wh != null) window._cachedPackCapacityWh = j.pack_capacity_wh;
     renderBatteryPacks();
   } catch (e) {
     console.warn('battery packs fetch failed:', e);
@@ -6304,8 +6429,17 @@ function renderBatteryPacks() {
     window._cachedPacksMainSoc ??
     null;
   const mainTempC = window._lastStatus?.battery_temp_c ?? null;
-  const mainWh = window._capacityOverrideWh || MAIN_DEFAULT_WH;
-  const systemSoc = computeSystemSoc(mainPct, packs, mainWh);
+  const t = window._lastStatus || {};
+  const mainWh = window._cachedMainCapacityWh
+    || t.main_capacity_wh
+    || window._capacityOverrideWh
+    || MAIN_DEFAULT_WH;
+  const packWh = window._cachedPackCapacityWh
+    || t.pack_capacity_wh
+    || mainWh;
+  const systemSoc = t.system_soc_pct != null
+    ? t.system_soc_pct
+    : computeSystemSoc(mainPct, packs, mainWh, packWh);
   window._mainWh = mainWh;
   window._systemSoc = systemSoc;
   window._mainSoc = mainPct;
