@@ -1,11 +1,11 @@
 import { File, Paths } from "expo-file-system";
 import * as Sharing from "expo-sharing";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Text, View } from "react-native";
+import { Pressable, Text, View } from "react-native";
 import { activeSn, endpoints } from "../../../src/api/client";
-import type { DailyRow } from "../../../src/api/types";
+import type { DailyRow, EnergyTotals, EnergyWindow } from "../../../src/api/types";
 import { LineChart } from "../../../src/components/LineChart";
-import { Btn, Card, Eyebrow, Hint, Kpi, Screen, Segmented } from "../../../src/components/ui";
+import { Btn, Card, EnergyKpi, Eyebrow, Hint, Screen, Segmented } from "../../../src/components/ui";
 import { fmtKwh, money } from "../../../src/lib/format";
 import { useLive } from "../../../src/store/live";
 import { colors } from "../../../src/theme";
@@ -19,37 +19,92 @@ const RANGES = [
   { id: "8760", label: "1y" },
 ];
 
+const ALL = "all";
+
+type WindowKey = "today" | "last_7d" | "last_30d" | "lifetime";
+type HistPoint = {
+  ts?: number;
+  output_wh?: number;
+  input_wh?: number;
+  battery_pct?: number;
+  system_soc?: number;
+};
+
+function sumWindow(src: EnergyTotals[], key: WindowKey): EnergyWindow {
+  return {
+    output_wh: src.reduce((n, d) => n + Number(d[key]?.output_wh ?? 0), 0),
+    input_wh: src.reduce((n, d) => n + Number(d[key]?.input_wh ?? 0), 0),
+  };
+}
+
+function deviceLabel(d: EnergyTotals): string {
+  return String(d.name || d.device_sn || "Device").replace(/^Explorer\s+/i, "");
+}
+
+function mergeHistories(lists: HistPoint[][]): HistPoint[] {
+  const byTs = new Map<number, { output_wh: number; input_wh: number }>();
+  for (const list of lists) {
+    for (const p of list) {
+      const ts = Number(p.ts);
+      if (!Number.isFinite(ts)) continue;
+      const cur = byTs.get(ts) || { output_wh: 0, input_wh: 0 };
+      cur.output_wh += Number(p.output_wh ?? 0);
+      cur.input_wh += Number(p.input_wh ?? 0);
+      byTs.set(ts, cur);
+    }
+  }
+  return [...byTs.entries()]
+    .sort((a, b) => a[0] - b[0])
+    .map(([ts, v]) => ({ ts, ...v }));
+}
+
 export default function EnergyScreen() {
   const energy = useLive((s) => s.status?.energy);
   const [hours, setHours] = useState("24");
-  const [hist, setHist] = useState<{ ts?: number; output_wh?: number; input_wh?: number; battery_pct?: number }[]>([]);
-  const [devices, setDevices] = useState<{ device_sn: string; name?: string; totals?: Record<string, number> }[]>([]);
+  const [chartSn, setChartSn] = useState(ALL);
+  const [hist, setHist] = useState<HistPoint[]>([]);
+  const [devices, setDevices] = useState<EnergyTotals[]>([]);
   const [daily, setDaily] = useState<DailyRow[]>([]);
   const [dRange, setDRange] = useState("90");
 
   const load = useCallback(async () => {
-    const sn = activeSn();
+    let list: EnergyTotals[] = [];
     try {
-      const h = (await endpoints.energyHistory(Number(hours), sn)) as { history?: typeof hist };
-      setHist(h.history || (Array.isArray(h) ? (h as typeof hist) : []));
-    } catch {
-      setHist([]);
-    }
-    try {
-      const d = (await endpoints.energyDevices()) as { devices?: typeof devices };
-      setDevices(d.devices || []);
+      const d = (await endpoints.energyDevices()) as { devices?: EnergyTotals[] };
+      list = d.devices || [];
+      setDevices(list);
     } catch {
       /* ignore */
     }
-    if (sn) {
+
+    const viewed = activeSn();
+    const sns =
+      chartSn === ALL
+        ? list.map((d) => d.device_sn).filter((sn): sn is string => !!sn)
+        : [chartSn];
+    const fetchSns = sns.length ? sns : viewed ? [viewed] : [];
+    try {
+      const results = await Promise.all(
+        fetchSns.map(async (sn) => {
+          const h = (await endpoints.energyHistory(Number(hours), sn)) as { history?: HistPoint[] };
+          return h.history || [];
+        }),
+      );
+      setHist(results.length > 1 ? mergeHistories(results) : results[0] || []);
+    } catch {
+      setHist([]);
+    }
+
+    const dailySn = chartSn === ALL ? viewed : chartSn;
+    if (dailySn) {
       try {
-        const r = await endpoints.energyDaily(sn, 365);
+        const r = await endpoints.energyDaily(dailySn, 365);
         setDaily(r.daily || []);
       } catch {
         setDaily([]);
       }
     }
-  }, [hours]);
+  }, [hours, chartSn]);
 
   useEffect(() => {
     void load();
@@ -67,6 +122,28 @@ export default function EnergyScreen() {
     return { maxSolar, maxLoad };
   }, [daily]);
 
+  const totals = useMemo(() => {
+    const src = devices.length ? devices : energy ? [energy] : [];
+    return {
+      today: sumWindow(src, "today"),
+      last_7d: sumWindow(src, "last_7d"),
+      last_30d: sumWindow(src, "last_30d"),
+      lifetime: sumWindow(src, "lifetime"),
+    };
+  }, [devices, energy]);
+
+  const lifeNet =
+    devices.length <= 1 && energy?.lifetime_savings?.net_savings != null
+      ? `net ${money(energy.lifetime_savings.net_savings, energy.cost_plan?.currency)}`
+      : undefined;
+
+  const showDevicePicker = devices.length > 1;
+  const combined = chartSn === ALL;
+  const selectedName =
+    !combined ? devices.find((d) => d.device_sn === chartSn)?.name || chartSn : null;
+  const showBattery =
+    !combined && hist.some((h) => (h.system_soc ?? h.battery_pct) != null);
+
   async function exportCsv() {
     const header = "date,solar_kwh,consumed_kwh,charged_kwh,grid_kwh,diverted_kwh,peak_solar_w,peak_output_w,min_soc,max_soc";
     const rows = filteredDaily.map((r) =>
@@ -82,51 +159,109 @@ export default function EnergyScreen() {
     <Screen>
       <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
         <View style={{ flex: 1, minWidth: 150 }}>
-          <Kpi label="Today" value={fmtKwh(energy?.today_consumed_wh)} unit="kWh" sub={`charged ${fmtKwh(energy?.today_charged_wh)}`} />
+          <EnergyKpi label="Today" consumed={fmtKwh(totals.today.output_wh)} charged={fmtKwh(totals.today.input_wh)} />
         </View>
         <View style={{ flex: 1, minWidth: 150 }}>
-          <Kpi label="7 days" value={fmtKwh(energy?.d7_consumed_wh)} unit="kWh" sub={`charged ${fmtKwh(energy?.d7_charged_wh)}`} />
+          <EnergyKpi label="7 days" consumed={fmtKwh(totals.last_7d.output_wh)} charged={fmtKwh(totals.last_7d.input_wh)} />
         </View>
         <View style={{ flex: 1, minWidth: 150 }}>
-          <Kpi label="30 days" value={fmtKwh(energy?.d30_consumed_wh)} unit="kWh" sub={`charged ${fmtKwh(energy?.d30_charged_wh)}`} />
+          <EnergyKpi label="30 days" consumed={fmtKwh(totals.last_30d.output_wh)} charged={fmtKwh(totals.last_30d.input_wh)} />
         </View>
         <View style={{ flex: 1, minWidth: 150 }}>
-          <Kpi
+          <EnergyKpi
             label="Lifetime"
-            value={fmtKwh(energy?.life_consumed_wh)}
-            unit="kWh"
-            sub={energy?.life_net_savings != null ? `net ${money(energy.life_net_savings, energy.currency)}` : undefined}
+            consumed={fmtKwh(totals.lifetime.output_wh)}
+            charged={fmtKwh(totals.lifetime.input_wh)}
+            sub={lifeNet}
           />
         </View>
       </View>
 
       <Card>
         <Eyebrow>Energy history</Eyebrow>
+        {showDevicePicker ? (
+          <Segmented
+            options={[
+              { id: ALL, label: "All" },
+              ...devices.map((d) => ({ id: d.device_sn || deviceLabel(d), label: deviceLabel(d) })),
+            ]}
+            value={chartSn}
+            onChange={setChartSn}
+          />
+        ) : null}
         <Segmented options={RANGES} value={hours} onChange={setHours} />
+        <Hint>{combined ? "Combined across all devices" : selectedName}</Hint>
         <LineChart
           series={[
             {
               id: "out",
-              color: colors.accent,
+              label: "Consumed",
+              color: colors.grid,
+              unit: "Wh",
               values: hist.map((h, i) => ({ x: h.ts ?? i, y: Number(h.output_wh ?? 0) })),
             },
             {
               id: "in",
-              color: colors.accent2,
+              label: "Charged",
+              color: colors.accent,
+              unit: "Wh",
               values: hist.map((h, i) => ({ x: h.ts ?? i, y: Number(h.input_wh ?? 0) })),
             },
+            ...(showBattery
+              ? [
+                  {
+                    id: "soc",
+                    label: "Battery",
+                    color: colors.accent3,
+                    axis: "right" as const,
+                    dashed: true,
+                    unit: "%",
+                    min: 0,
+                    max: 100,
+                    values: hist.map((h, i) => ({
+                      x: h.ts ?? i,
+                      y: Number(h.system_soc ?? h.battery_pct ?? 0),
+                    })),
+                  },
+                ]
+              : []),
           ]}
         />
       </Card>
 
-      {devices.length > 1 ? (
+      {showDevicePicker ? (
         <Card>
           <Eyebrow>All devices</Eyebrow>
-          {devices.map((d) => (
-            <Hint key={d.device_sn}>
-              {d.name || d.device_sn} · today {fmtKwh(d.totals?.today_consumed_wh)} kWh
-            </Hint>
-          ))}
+          <Hint>Tap a device to filter the chart.</Hint>
+          {devices.map((d) => {
+            const sn = d.device_sn;
+            const on = Boolean(sn && chartSn === sn);
+            return (
+              <Pressable
+                key={sn}
+                onPress={() => setChartSn(on ? ALL : sn || ALL)}
+                style={{
+                  flexDirection: "row",
+                  justifyContent: "space-between",
+                  gap: 8,
+                  paddingVertical: 6,
+                  paddingHorizontal: 8,
+                  borderRadius: 10,
+                  borderWidth: 1,
+                  borderColor: on ? colors.accent : colors.border,
+                  backgroundColor: on ? "rgba(74,222,128,0.12)" : "transparent",
+                }}
+              >
+                <Hint>{d.name || sn}</Hint>
+                <Hint>
+                  <Text style={{ color: colors.grid }}>{fmtKwh(d.today?.output_wh)}</Text>
+                  {" / "}
+                  <Text style={{ color: colors.accent }}>{fmtKwh(d.today?.input_wh)}</Text>
+                  {" kWh"}
+                </Hint>
+              </Pressable>
+            );
+          })}
         </Card>
       ) : null}
 

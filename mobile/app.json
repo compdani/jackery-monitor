@@ -3,13 +3,13 @@
     "name": "Jackery Monitor",
     "slug": "jackery-monitor",
     "scheme": "jackery-monitor",
-    "version": "1.0.0",
+    "version": "0.1.0",
     "orientation": "portrait",
     "userInterfaceStyle": "dark",
     "icon": "./assets/icon.png",
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "app.jackery.monitor",
+      "bundleIdentifier": "com.cdani.monitor",
       "infoPlist": {
         "NSAppTransportSecurity": {
           "NSAllowsLocalNetworking": true,
@@ -20,7 +20,7 @@
       }
     },
     "android": {
-      "package": "app.jackery.monitor",
+      "package": "com.cdani.monitor",
       "adaptiveIcon": {
         "backgroundColor": "#0b0d10",
         "foregroundImage": "./assets/icon.png"

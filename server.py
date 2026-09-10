@@ -487,7 +487,7 @@ async def poll_loop() -> None:
                 # last LIVE_CHART_HOURS even immediately after a restart.
                 if dev_sn and not state.history_hydrated:
                     try:
-                        past = state.energy.history(
+                        past = _history_for_charts(
                             dev_sn,
                             hours=LIVE_CHART_HOURS,
                             bucket_s=LIVE_CHART_INTERVAL_S,
@@ -516,9 +516,13 @@ async def poll_loop() -> None:
                 # chart's x-axis spacing is stable (the bridge poll cadence
                 # is independent and faster).
                 if ts - state.last_history_ts >= LIVE_CHART_INTERVAL_S:
+                    hist_sn = state.device.device_sn if state.device else None
+                    hist_model = getattr(state.device, "model_code", None) if state.device else None
+                    main_pct = status_dict["battery_percent"]
                     state.history.append({
                         "ts": ts,
-                        "battery_percent": status_dict["battery_percent"],
+                        "battery_percent": round(
+                            _system_soc_pct(float(main_pct), hist_sn, hist_model), 1),
                         "input_power_w": status_dict["input_power_w"],
                         "output_power_w": status_dict["output_power_w"],
                     })
@@ -1014,13 +1018,28 @@ async def _refresh_packs_for(device_sn: str, ts: float) -> None:
             state.last_packs_db_ts_by_sn[device_sn] = ts
 
 
+def _history_for_charts(device_sn: str, hours: int, bucket_s: int) -> list[dict]:
+    """Energy-db history with system (main+packs) SOC when we know capacity."""
+    main_wh, pack_wh = _capacity_hints(device_sn)
+    return state.energy.history(
+        device_sn, hours=hours, bucket_s=bucket_s,
+        main_capacity_wh=main_wh, pack_capacity_wh=pack_wh,
+    )
+
+
 def _energy_db_row_to_chart_point(p: dict) -> dict:
     """Rename the energy_db.history columns into the live-chart shape
     the frontend expects. Used by both the startup hydrate path and
-    the per-view history fetch."""
+    the per-view history fetch.
+
+    Prefer capacity-weighted `system_soc` so a 2000 Plus + pack charts
+    the same combined % as the Live headline, not the main unit alone."""
+    soc = p.get("system_soc")
+    if soc is None:
+        soc = p.get("battery_pct") or 0
     return {
         "ts": p["ts"],
-        "battery_percent": p["battery_pct"] or 0,
+        "battery_percent": round(float(soc), 1),
         "input_power_w": p["input_w"] or 0,
         "output_power_w": p["output_w"] or 0,
     }
@@ -1040,7 +1059,7 @@ def _view_history(device_sn: str | None) -> list[dict]:
     if cached and now - cached[0] < _VIEW_HISTORY_TTL_S:
         return cached[1]
     try:
-        rows = state.energy.history(
+        rows = _history_for_charts(
             device_sn, hours=LIVE_CHART_HOURS, bucket_s=LIVE_CHART_INTERVAL_S,
         )
         out = [_energy_db_row_to_chart_point(p) for p in rows]
@@ -3215,7 +3234,7 @@ def api_energy_history(hours: int = 24, device_sn: str | None = None):
         "device_sn": device_sn,
         "hours": hours,
         "bucket_s": bucket_s,
-        "history": state.energy.history(device_sn, hours=hours, bucket_s=bucket_s),
+        "history": _history_for_charts(device_sn, hours=hours, bucket_s=bucket_s),
     }
 
 

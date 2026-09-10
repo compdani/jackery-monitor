@@ -5482,7 +5482,7 @@ function drawEnergyChart(j) {
     const hist = series[0].history || [];
     const out = hist.map(p => p.output_wh || 0);
     const inp = hist.map(p => p.input_wh || 0);
-    const bat = hist.map(p => (p.avg_battery_percent ?? p.battery_pct));
+    const bat = hist.map(p => (p.system_soc ?? p.avg_battery_percent ?? p.battery_pct));
     const barW = Math.max(1, Math.min(slot * 0.4, 16));
     for (let i = 0; i < n; i++) {
       const xCenter = xs(i);
@@ -5519,7 +5519,7 @@ function drawEnergyChart(j) {
     const bat = tsAxis.map((ts) => {
       const p = byTs.get(ts);
       if (!p) return null;
-      const v = p.avg_battery_percent ?? p.battery_pct;
+      const v = p.system_soc ?? p.avg_battery_percent ?? p.battery_pct;
       return v == null ? null : v;
     });
     if (_seriesVisible.energy.output) {

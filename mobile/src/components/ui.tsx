@@ -245,6 +245,44 @@ export function Kpi({
   );
 }
 
+export function EnergyKpi({
+  label,
+  consumed,
+  charged,
+  sub,
+  children,
+}: {
+  label: string;
+  consumed: string;
+  charged: string;
+  sub?: string;
+  children?: ReactNode;
+}) {
+  return (
+    <Card>
+      <Eyebrow>{label}</Eyebrow>
+      <View style={styles.energyKpiRow}>
+        <View style={styles.energyKpiCol}>
+          <View style={styles.kpiRow}>
+            <Text style={styles.kpiConsumed}>{consumed}</Text>
+            <Text style={styles.kpiUnit}>kWh</Text>
+          </View>
+          <Text style={styles.hint}>consumed</Text>
+        </View>
+        <View style={styles.energyKpiCol}>
+          <View style={styles.kpiRow}>
+            <Text style={styles.kpiCharged}>{charged}</Text>
+            <Text style={styles.kpiUnit}>kWh</Text>
+          </View>
+          <Text style={styles.hint}>charged</Text>
+        </View>
+      </View>
+      {sub ? <Text style={styles.hint}>{sub}</Text> : null}
+      {children}
+    </Card>
+  );
+}
+
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: colors.bg },
   screenContent: { paddingBottom: 40 },
@@ -302,4 +340,8 @@ const styles = StyleSheet.create({
   kpiRow: { flexDirection: "row", alignItems: "baseline", gap: 4 },
   kpiVal: { color: colors.text, fontSize: 28, fontWeight: "700" },
   kpiUnit: { color: colors.textDim, fontSize: 13 },
+  energyKpiRow: { flexDirection: "row", gap: 12 },
+  energyKpiCol: { flex: 1 },
+  kpiConsumed: { color: colors.grid, fontSize: 22, fontWeight: "700" },
+  kpiCharged: { color: colors.accent, fontSize: 22, fontWeight: "700" },
 });

@@ -134,21 +134,29 @@ export default function ForecastScreen() {
           height={200}
           series={[
             {
-              id: "soc",
-              color: colors.accent3,
-              min: 0,
-              max: 100,
-              values: hours.map((h, i) => ({ x: h.ts ?? i, y: Number(h.predicted_soc ?? 0) })),
-            },
-            {
               id: "solar",
+              label: "Solar",
               color: colors.solar,
+              unit: "W",
               values: hours.map((h, i) => ({ x: h.ts ?? i, y: Number(h.solar_w ?? 0) })),
             },
             {
               id: "load",
+              label: "Load",
               color: colors.accent,
+              unit: "W",
               values: hours.map((h, i) => ({ x: h.ts ?? i, y: Number(h.load_w ?? 0) })),
+            },
+            {
+              id: "soc",
+              label: "SOC",
+              color: colors.accent3,
+              axis: "right",
+              dashed: true,
+              unit: "%",
+              min: 0,
+              max: 100,
+              values: hours.map((h, i) => ({ x: h.ts ?? i, y: Number(h.predicted_soc ?? 0) })),
             },
           ]}
         />

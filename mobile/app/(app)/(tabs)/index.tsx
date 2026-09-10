@@ -4,8 +4,8 @@ import { endpoints } from "../../../src/api/client";
 import { reconnectLive } from "../../../src/api/ws";
 import { LineChart } from "../../../src/components/LineChart";
 import { PowerFlow } from "../../../src/components/PowerFlow";
-import { Btn, Card, Eyebrow, Hint, Pill, Screen } from "../../../src/components/ui";
-import { etaLabel, fmt, fmtKwh, fmtTemp, headlineSoc } from "../../../src/lib/format";
+import { Btn, Card, EnergyKpi, Eyebrow, Hint, Pill, Screen } from "../../../src/components/ui";
+import { etaLabel, fmtKwh, fmtTemp, headlineSoc } from "../../../src/lib/format";
 import { useLive } from "../../../src/store/live";
 import { usePrefs } from "../../../src/store/prefs";
 import { colors } from "../../../src/theme";
@@ -14,13 +14,85 @@ function portOn(v: unknown): boolean {
   return v === true || v === 1 || v === "1";
 }
 
+type Pack = {
+  rb?: number | null;
+  ip?: number | null;
+  op?: number | null;
+  it?: number | null;
+  deviceSn?: string;
+  deviceOrder?: number;
+  needUpgrade?: boolean;
+};
+
+function packFlow(p: Pack): string {
+  const ip = Math.round(Number(p.ip ?? 0));
+  const op = Math.round(Number(p.op ?? 0));
+  if (ip > 0) return `+${ip}W`;
+  if (op > 0) return `−${op}W`;
+  return "idle";
+}
+
+function PackRow({
+  idx,
+  soc,
+  meta,
+  isMain,
+}: {
+  idx: string;
+  soc: number | null;
+  meta?: string;
+  isMain?: boolean;
+}) {
+  const pct = soc == null || !Number.isFinite(soc) ? 0 : Math.max(0, Math.min(100, soc));
+  return (
+    <View style={{ gap: 4 }}>
+      <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+        <Text
+          style={{
+            color: isMain ? colors.accent2 : colors.textMute,
+            width: 28,
+            fontSize: 12,
+            fontWeight: "700",
+            textAlign: "center",
+          }}
+        >
+          {idx}
+        </Text>
+        <View
+          style={{
+            flex: 1,
+            height: 8,
+            borderRadius: 4,
+            backgroundColor: colors.border,
+            overflow: "hidden",
+          }}
+        >
+          <View
+            style={{
+              width: `${pct}%`,
+              height: "100%",
+              backgroundColor: colors.accent,
+              borderRadius: 4,
+            }}
+          />
+        </View>
+        <Text style={{ color: colors.text, fontWeight: "700", width: 44, textAlign: "right", fontSize: 14 }}>
+          {soc == null ? "—" : `${Math.round(soc)}%`}
+        </Text>
+      </View>
+      {meta ? (
+        <Text style={{ color: colors.textMute, fontSize: 11, paddingLeft: 36 }}>{meta}</Text>
+      ) : null}
+    </View>
+  );
+}
+
 export default function LiveScreen() {
   const status = useLive((s) => s.status);
   const connected = useLive((s) => s.connected);
   const alerts = useLive((s) => s.alerts);
   const tempUnit = usePrefs((s) => s.tempUnit);
   const [busyPort, setBusyPort] = useState<string | null>(null);
-  const [packsOpen, setPacksOpen] = useState(false);
   const [chargeHost, setChargeHost] = useState<string | null>(null);
   const [divertHost, setDivertHost] = useState<string | null>(null);
   const [chargeOn, setChargeOn] = useState<boolean | null>(null);
@@ -31,7 +103,7 @@ export default function LiveScreen() {
   const devices = status?.cloud?.devices_overview || [];
   const selected = status?.cloud?.selected_device_id;
   const energy = status?.energy;
-  const packs = status?.battery_packs || [];
+  const packs = (status?.battery_packs || []) as Pack[];
   const hist = status?.history || [];
   const conn = status?.connection_status || (connected ? "connected" : "disconnected");
   const sn = status?.device?.device_sn as string | undefined;
@@ -157,21 +229,20 @@ export default function LiveScreen() {
         <PowerFlow t={t} />
       </Card>
 
-      <Card>
-        <Eyebrow>Today</Eyebrow>
-        <Text style={{ color: colors.text, fontSize: 22, fontWeight: "700" }}>
-          {fmtKwh(energy?.today_consumed_wh)} kWh consumed
-        </Text>
-        <Hint>{fmtKwh(energy?.today_charged_wh)} kWh charged</Hint>
-        {(energy?.today_solar_wh || 0) > 0 && (energy?.today_grid_wh || 0) > 0 ? (
+      <EnergyKpi
+        label="Today"
+        consumed={fmtKwh(energy?.today?.output_wh)}
+        charged={fmtKwh(energy?.today?.input_wh)}
+      >
+        {(energy?.today?.solar_wh || 0) > 0 && (energy?.today?.ac_input_wh || 0) > 0 ? (
           <Hint>
-            ☀ {fmtKwh(energy?.today_solar_wh)} solar · ⚡ {fmtKwh(energy?.today_grid_wh)} AC
+            ☀ {fmtKwh(energy?.today?.solar_wh)} solar · ⚡ {fmtKwh(energy?.today?.ac_input_wh)} AC
           </Hint>
         ) : null}
-        {(energy?.today_diverted_wh || 0) > 0 ? (
-          <Hint>{fmtKwh(energy?.today_diverted_wh)} kWh diverted</Hint>
+        {(energy?.today?.solar_charge_diverted_wh || 0) > 0 ? (
+          <Hint>{fmtKwh(energy?.today?.solar_charge_diverted_wh)} kWh diverted</Hint>
         ) : null}
-      </Card>
+      </EnergyKpi>
 
       <Card>
         <View style={{ flexDirection: "row", justifyContent: "space-between" }}>
@@ -261,18 +332,40 @@ export default function LiveScreen() {
 
       {packs.length > 0 ? (
         <Card>
-          <Pressable onPress={() => setPacksOpen((v) => !v)}>
-            <Eyebrow>Battery packs · {packs.length}</Eyebrow>
-          </Pressable>
-          {packsOpen
-            ? packs.map((p, i) => (
-                <Hint key={i}>
-                  {String(p.alias || p.name || `Pack ${i + 1}`)} · SOC {fmt(p.rb as number, 0)}%
-                  {p.input_w != null ? ` · ${fmt(p.input_w as number, 0)} W` : ""}
-                  {p.temp != null ? ` · ${fmtTemp(p.temp as number, tempUnit)}` : ""}
-                </Hint>
-              ))
-            : null}
+          <Eyebrow>Battery packs</Eyebrow>
+          <Hint>
+            {packs.length} pack{packs.length === 1 ? "" : "s"}
+            {soc != null ? ` · system ${Math.round(soc)}%` : ""}
+          </Hint>
+          <PackRow
+            idx="★"
+            isMain
+            soc={t?.main_soc_pct ?? t?.battery_percent ?? null}
+            meta={[
+              t?.battery_temp_c != null ? fmtTemp(t.battery_temp_c, tempUnit) : null,
+              "Main",
+            ]
+              .filter(Boolean)
+              .join(" · ")}
+          />
+          {packs.map((p, i) => {
+            const order = typeof p.deviceOrder === "number" ? p.deviceOrder : i;
+            const sn = String(p.deviceSn || "");
+            return (
+              <PackRow
+                key={sn || i}
+                idx={String(order + 1)}
+                soc={p.rb ?? null}
+                meta={[
+                  packFlow(p),
+                  p.it != null ? fmtTemp(p.it, tempUnit) : null,
+                  sn ? `…${sn.slice(-6)}` : null,
+                ]
+                  .filter(Boolean)
+                  .join(" · ")}
+              />
+            );
+          })}
         </Card>
       ) : null}
 
@@ -281,21 +374,31 @@ export default function LiveScreen() {
         <LineChart
           series={[
             {
-              id: "soc",
-              color: colors.accent3,
-              min: 0,
-              max: 100,
-              values: hist.map((h, i) => ({ x: h.ts ?? i, y: Number(h.battery_percent ?? 0) })),
-            },
-            {
               id: "out",
-              color: colors.accent,
+              label: "Output",
+              color: colors.grid,
+              axis: "left",
+              unit: "W",
               values: hist.map((h, i) => ({ x: h.ts ?? i, y: Number(h.output_power_w ?? 0) })),
             },
             {
               id: "in",
-              color: colors.accent2,
+              label: "Input",
+              color: colors.accent,
+              axis: "left",
+              unit: "W",
               values: hist.map((h, i) => ({ x: h.ts ?? i, y: Number(h.input_power_w ?? 0) })),
+            },
+            {
+              id: "soc",
+              label: "Battery",
+              color: colors.accent3,
+              axis: "right",
+              dashed: true,
+              unit: "%",
+              min: 0,
+              max: 100,
+              values: hist.map((h, i) => ({ x: h.ts ?? i, y: Number(h.battery_percent ?? 0) })),
             },
           ]}
         />

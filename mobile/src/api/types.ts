@@ -58,26 +58,31 @@ export type HistoryPoint = {
   [key: string]: unknown;
 };
 
+export type EnergyWindow = {
+  input_wh?: number;
+  output_wh?: number;
+  solar_wh?: number;
+  ac_input_wh?: number;
+  solar_charge_diverted_wh?: number;
+  since?: number;
+};
+
+export type EnergySavings = {
+  solar_savings?: number;
+  grid_cost?: number;
+  net_savings?: number;
+};
+
 export type EnergyTotals = {
-  today_consumed_wh?: number;
-  today_charged_wh?: number;
-  today_solar_wh?: number;
-  today_grid_wh?: number;
-  today_diverted_wh?: number;
-  d7_consumed_wh?: number;
-  d7_charged_wh?: number;
-  d30_consumed_wh?: number;
-  d30_charged_wh?: number;
-  life_consumed_wh?: number;
-  life_charged_wh?: number;
-  today_solar_savings?: number;
-  today_grid_cost?: number;
-  today_net_savings?: number;
-  life_solar_savings?: number;
-  life_grid_cost?: number;
-  life_net_savings?: number;
-  currency?: string;
-  [key: string]: unknown;
+  device_sn?: string;
+  name?: string;
+  today?: EnergyWindow;
+  last_7d?: EnergyWindow;
+  last_30d?: EnergyWindow;
+  lifetime?: EnergyWindow;
+  today_savings?: EnergySavings;
+  lifetime_savings?: EnergySavings;
+  cost_plan?: { type?: string; currency?: string };
 };
 
 export type StatusPayload = {
