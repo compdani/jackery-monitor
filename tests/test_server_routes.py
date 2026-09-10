@@ -49,6 +49,7 @@ def app(isolated_data, monkeypatch, tmp_path):
         "auth", "settings", "automation", "location", "smart_charge",
         "cost", "anthropic_creds", "anthropic_prefs",
         "kasa_creds", "kasa_devices", "backup_creds", "energy_db",
+        "solar_array", "forecast_solar", "load_schedule",
     ):
         mod = importlib.import_module(name)
         importlib.reload(mod)
@@ -475,3 +476,111 @@ def test_energy_history_bucket_s_allow_list_and_coarsen(app, client):
     # Empty DB still returns the coarsened bucket; with data the series
     # would stay at/under the cap.
     assert len(jy["history"]) <= app._ENERGY_HISTORY_MAX_POINTS
+
+
+def test_solar_array_validation_and_roundtrip(app, client):
+    r = client.post("/api/forecast/solar_array",
+                    json={"declination": 20, "azimuth": 0, "kwp": 2.4})
+    assert r.status_code == 200
+    assert r.json()["declination"] == 20
+    g = client.get("/api/forecast/solar_array")
+    assert g.json()["array"]["kwp"] == 2.4
+    bad = client.post("/api/forecast/solar_array",
+                      json={"declination": 99, "azimuth": 0, "kwp": 2.4})
+    assert bad.status_code == 400
+
+
+def test_solar_array_infer_requires_location(client):
+    r = client.post("/api/forecast/solar_array/infer",
+                    params={"device_sn": "TEST-INFER"})
+    assert r.status_code == 400
+    assert "location" in r.json()["detail"]
+
+
+def test_solar_array_infer_empty_history_400(app, client, monkeypatch):
+    loc = client.post("/api/location",
+                      json={"latitude": 37.3, "longitude": -121.9})
+    assert loc.status_code == 200
+
+    async def no_wx(*_a, **_k):
+        return {"hourly": []}
+
+    monkeypatch.setattr(app.weather_client, "fetch_irradiance", no_wx)
+    r = client.post("/api/forecast/solar_array/infer",
+                    params={"device_sn": "TEST-INFER-EMPTY"})
+    assert r.status_code == 400
+    assert "not enough" in r.json()["detail"].lower()
+    assert client.get("/api/forecast/solar_array").json()["array"] is None
+
+
+def test_solar_array_infer_fills_without_saving(app, client):
+    import math
+    import time as _time
+
+    lat, lon = 37.3, -121.9
+    true_tilt, true_az = 20, -90
+    loc = client.post("/api/location",
+                      json={"latitude": lat, "longitude": lon})
+    assert loc.status_code == 200
+
+    sn = "TEST-INFER-EAST"
+    app.state.energy.upsert_device(sn, "Rig", 13, "Explorer 5000 Plus")
+    now_h = (int(_time.time()) // 3600) * 3600
+    weather = []
+    for day in range(1, 4):
+        for hour in range(13, 24):
+            ts = now_h - day * 86400 + hour * 3600
+            zen, _az = app.solar_array.solar_zenith_azimuth(lat, lon, ts)
+            if zen > 80:
+                continue
+            ghi = max(0.0, 900.0 * math.cos(math.radians(zen)))
+            if ghi < 80:
+                continue
+            poa = app.solar_array.poa_from_ghi(
+                ghi, lat, lon, ts, true_tilt, true_az)
+            solar_w = 2.0 * poa
+            if solar_w < 50:
+                continue
+            weather.append({"ts": ts, "ghi_w_m2": ghi, "cloud_cover_pct": 10})
+            with app.state.energy._conn() as c:
+                c.execute(
+                    """INSERT OR REPLACE INTO samples
+                           (device_sn, bucket, solar_wh, output_wh, input_wh,
+                            ac_input_wh, solar_charge_diverted_wh,
+                            last_solar_w, last_output_w, last_battery_pct,
+                            sample_count)
+                       VALUES (?, ?, ?, 0, 0, 0, 0, ?, 0, 50, 1)""",
+                    (sn, ts, solar_w, solar_w))
+    app.state.energy.upsert_weather_observations(weather)
+    assert len(weather) >= 12
+
+    r = client.post("/api/forecast/solar_array/infer",
+                    params={"device_sn": sn})
+    assert r.status_code == 200, r.text
+    j = r.json()
+    assert j["azimuth"] == true_az
+    assert abs(j["declination"] - true_tilt) <= 10
+    assert j["kwp"] >= 0.05
+    assert j["n_samples"] >= 12
+    # Preview only — Save is a separate POST.
+    assert client.get("/api/forecast/solar_array").json()["array"] is None
+
+
+def test_load_schedule_get_post(app, client):
+    sn = "TEST-LOAD-SCHED"
+    app.state.energy.upsert_device(sn, "Rig", 13, "Explorer 5000 Plus")
+    r = client.post("/api/forecast/load_schedule", json={
+        "device_sn": sn,
+        "mode": "scheduled",
+        "sleep_start": "23:00",
+        "sleep_end": "07:00",
+        "windows": [{"start": "18:00", "end": "22:00", "watts": 800, "days": "all"}],
+    })
+    assert r.status_code == 200, r.text
+    assert r.json()["mode"] == "scheduled"
+    g = client.get(f"/api/forecast/load_schedule?device_sn={sn}")
+    assert g.status_code == 200
+    j = g.json()
+    assert j["sleep_start"] == "23:00"
+    assert j["windows"][0]["watts"] == 800
+    assert "learned_profile" in j

@@ -32,6 +32,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+import load_schedule as _load_sched
+
 log = logging.getLogger("forecaster")
 
 
@@ -1567,6 +1569,7 @@ def expected_load_w(
     *,
     idle_overhead_w: float | None = None,
     inverter_overhead_pct: float | None = None,
+    utc_offset_seconds: int | None = None,
 ) -> float:
     """Look up the expected load for a forecast hour.
 
@@ -1594,9 +1597,8 @@ def expected_load_w(
     pct = (INVERTER_OVERHEAD_PCT if inverter_overhead_pct is None
            else float(inverter_overhead_pct))
     flat = float(idle_overhead_w or 0.0)
-    d = datetime.fromtimestamp(ts)
-    h = d.hour
-    w = 1 if d.weekday() >= 5 else 0
+    h, weekend, _minute = _load_sched.hour_parts(ts, utc_offset_seconds)
+    w = 1 if weekend else 0
 
     if (h, w) in profile:
         base = profile[(h, w)]
@@ -1888,6 +1890,11 @@ def build_forecast(
     car_load_w: float | None = None,
     pack_count: int = 0,
     utc_offset_seconds: int = 0,
+    fs_hourly: dict[int, float] | None = None,
+    load_mode: str = "historical",
+    load_windows: list[dict[str, Any]] | None = None,
+    sleep_start: str | None = None,
+    sleep_end: str | None = None,
 ) -> dict[str, Any]:
     """Glue: fit models + simulate. Returns a UI-ready dict.
 
@@ -1989,6 +1996,9 @@ def build_forecast(
     future = future[:horizon_hours]
 
     forecast_hours = []
+    fs_hours = 0
+    om_hours = 0
+    mode = load_mode if load_mode in ("historical", "scheduled") else "historical"
     for w in future:
         ts = int(w["ts"])
         ghi = float(w.get("ghi_w_m2") or 0)
@@ -1997,15 +2007,48 @@ def build_forecast(
         # is a no-op until the per-hour factors are learned from history.
         lhod = ((ts + int(utc_offset_seconds)) % 86400) // 3600
         shape_factor = diurnal_shape.get(lhod, 1.0)
-        solar_w_uncapped = max(0.0, k * ghi * shape_factor)
+        om_solar = max(0.0, k * ghi * shape_factor)
+        hour_ts = ts - (ts % 3600)
+        fs_w = None
+        if fs_hourly:
+            raw = fs_hourly.get(ts)
+            if raw is None:
+                raw = fs_hourly.get(hour_ts)
+            if raw is not None:
+                try:
+                    fs_w = max(0.0, float(raw))
+                except (TypeError, ValueError):
+                    fs_w = None
+        if fs_w is not None:
+            solar_w_uncapped = fs_w
+            hour_solar_src = "forecast_solar"
+            fs_hours += 1
+        else:
+            solar_w_uncapped = om_solar
+            hour_solar_src = "open_meteo"
+            om_hours += 1
         solar_w = solar_w_uncapped
         capped = False
         if solar_cap is not None and solar_w > solar_cap:
             solar_w = solar_cap
             capped = True
-        load_w = expected_load_w(profile, ts,
-                                  idle_overhead_w=effective_parasitic_w,
-                                  inverter_overhead_pct=overhead_pct)
+
+        hour, weekend, minute = _load_sched.hour_parts(ts, utc_offset_seconds)
+        asleep = _load_sched.in_sleep_window(minute, sleep_start, sleep_end)
+        if mode == "scheduled":
+            base = _load_sched.scheduled_load_w(load_windows or [], hour, weekend)
+            para = 0.0 if asleep else effective_parasitic_w
+            load_w = base * (1.0 + overhead_pct) + para
+        elif asleep:
+            # Unit is asleep: no AC output and no inverter idle / parasitic.
+            load_w = 0.0
+        else:
+            load_w = expected_load_w(
+                profile, ts,
+                idle_overhead_w=effective_parasitic_w,
+                inverter_overhead_pct=overhead_pct,
+                utc_offset_seconds=utc_offset_seconds,
+            )
         forecast_hours.append({
             "ts": ts,
             "solar_w": round(solar_w, 1),
@@ -2019,9 +2062,17 @@ def build_forecast(
             "ghi_w_m2": round(ghi, 1),
             "solar_w_uncapped": round(solar_w_uncapped, 1),
             "solar_capped": capped,
+            "solar_source": hour_solar_src,
             "load_w": round(load_w, 1),
             "cloud_cover_pct": round(float(w.get("cloud_cover_pct") or 0), 1),
         })
+
+    if fs_hours and om_hours:
+        solar_source = "mixed"
+    elif fs_hours:
+        solar_source = "forecast_solar"
+    else:
+        solar_source = "open_meteo"
 
     simulated = simulate_soc(
         starting_soc_pct, capacity_wh, forecast_hours,
@@ -2036,6 +2087,8 @@ def build_forecast(
         "readiness": readiness,
         "starting_soc_pct": round(starting_soc_pct, 1),
         "capacity_wh": capacity_wh,
+        "solar_source": solar_source,
+        "load_mode": mode,
         "solar_coefficient": round(k, 4),
         "fit_samples": n_fit,
         # Anchors the recent-peak solar cap. `solar_recent_peak_w` is

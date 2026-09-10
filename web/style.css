@@ -2850,7 +2850,18 @@ footer {
 .drange-btn:hover,
 .ebucket-btn:hover { color: var(--text); }
 .drange-btn.on,
-.ebucket-btn.on { background: var(--accent); color: #032012; }
+.ebucket-btn.on,
+.lmode-btn.on { background: var(--accent); color: #032012; }
+
+.lmode-btn {
+  background: transparent;
+  border: none;
+  color: var(--text-dim);
+  padding: 5px 12px;
+  font-size: 12px;
+  font-weight: 500;
+  border-radius: 6px;
+}
 
 /* Mobile: the table scrolls inside its wrapper, never the page.
    Vertical cap + sticky header keep a year of rows navigable. */

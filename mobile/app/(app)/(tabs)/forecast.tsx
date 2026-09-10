@@ -3,7 +3,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Text, View } from "react-native";
 import { activeSn, endpoints } from "../../../src/api/client";
 import { LineChart } from "../../../src/components/LineChart";
-import { Btn, Card, Eyebrow, Field, Hint, Kpi, Screen } from "../../../src/components/ui";
+import { Btn, Card, Eyebrow, Field, Hint, Kpi, Screen, Segmented } from "../../../src/components/ui";
 import { colors } from "../../../src/theme";
 
 type ForecastHour = {
@@ -13,14 +13,24 @@ type ForecastHour = {
   solar_w?: number;
 };
 
+type LoadWindow = {
+  id?: string;
+  label?: string;
+  start?: string;
+  end?: string;
+  watts?: number;
+  days?: string;
+};
+
 export default function ForecastScreen() {
   const [loc, setLoc] = useState<{ latitude?: number; longitude?: number; label?: string } | null>(null);
   const [fc, setFc] = useState<{
     ready?: boolean;
     forecast?: ForecastHour[];
     capacity_wh?: number;
-    solar_coeff?: number;
-    avg_load_w?: number;
+    solar_coefficient?: number;
+    overall_load_w?: number;
+    solar_source?: string;
     configured?: boolean;
     today_budget?: {
       solar_kwh?: number;
@@ -35,6 +45,18 @@ export default function ForecastScreen() {
   const [lat, setLat] = useState("");
   const [lon, setLon] = useState("");
   const [msg, setMsg] = useState<string | null>(null);
+  const [dec, setDec] = useState("20");
+  const [az, setAz] = useState("0");
+  const [kwp, setKwp] = useState("");
+  const [fsKey, setFsKey] = useState("");
+  const [hasFsKey, setHasFsKey] = useState(false);
+  const [loadMode, setLoadMode] = useState("historical");
+  const [sleepStart, setSleepStart] = useState("");
+  const [sleepEnd, setSleepEnd] = useState("");
+  const [windows, setWindows] = useState<LoadWindow[]>([]);
+  const [wStart, setWStart] = useState("18:00");
+  const [wEnd, setWEnd] = useState("22:00");
+  const [wWatts, setWWatts] = useState("800");
 
   const load = useCallback(async () => {
     try {
@@ -54,6 +76,29 @@ export default function ForecastScreen() {
       setAcc(a);
     } catch {
       setAcc(null);
+    }
+    try {
+      const s = (await endpoints.solarArray()) as { array?: { declination?: number; azimuth?: number; kwp?: number }; has_key?: boolean };
+      if (s.array?.declination != null) setDec(String(s.array.declination));
+      if (s.array?.azimuth != null) setAz(String(s.array.azimuth));
+      if (s.array?.kwp != null) setKwp(String(s.array.kwp));
+      setHasFsKey(!!s.has_key);
+    } catch {
+      /* ignore */
+    }
+    try {
+      const ls = (await endpoints.loadSchedule(activeSn())) as {
+        mode?: string;
+        sleep_start?: string | null;
+        sleep_end?: string | null;
+        windows?: LoadWindow[];
+      };
+      setLoadMode(ls.mode === "scheduled" ? "scheduled" : "historical");
+      setSleepStart(ls.sleep_start || "");
+      setSleepEnd(ls.sleep_end || "");
+      setWindows(ls.windows || []);
+    } catch {
+      /* ignore */
     }
   }, []);
 
@@ -93,7 +138,7 @@ export default function ForecastScreen() {
         <Card>
           <Eyebrow>Allow location to enable forecasts</Eyebrow>
           <Hint>
-            Open-Meteo solar irradiance needs an approximate location. Use GPS or search by city.
+            Open-Meteo + Forecast.Solar need an approximate location. Use GPS or search by city.
           </Hint>
           <Btn title="Use my location" onPress={() => void useGps()} />
         </Card>
@@ -126,6 +171,140 @@ export default function ForecastScreen() {
         </View>
         <Btn title="Save coordinates" kind="ghost" onPress={() => void saveCoords()} />
       </Card>
+
+      {configured ? (
+        <Card>
+          <Eyebrow>Solar array (Forecast.Solar)</Eyebrow>
+          <Hint>Tilt 0–90°, azimuth −180…180 (0 = south). Open-Meteo fills days the estimate plan does not cover.</Hint>
+          <View style={{ flexDirection: "row", gap: 8 }}>
+            <View style={{ flex: 1 }}>
+              <Field label="Tilt" value={dec} onChangeText={setDec} keyboardType="number-pad" />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Field label="Azimuth" value={az} onChangeText={setAz} keyboardType="numbers-and-punctuation" />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Field label="kWp" value={kwp} onChangeText={setKwp} keyboardType="decimal-pad" />
+            </View>
+          </View>
+          <Btn
+            title="Infer from history"
+            kind="ghost"
+            onPress={() =>
+              void endpoints.inferSolarArray(activeSn()).then((j: {
+                declination?: number;
+                azimuth?: number;
+                kwp?: number;
+                notes?: string;
+              }) => {
+                if (j.declination != null) setDec(String(j.declination));
+                if (j.azimuth != null) setAz(String(j.azimuth));
+                if (j.kwp != null) setKwp(String(j.kwp));
+                setMsg(j.notes || "Filled from history — save to apply.");
+              }).catch((e: unknown) => {
+                setMsg(e instanceof Error ? e.message : "Infer failed");
+              })
+            }
+          />
+          <Btn
+            title="Save array"
+            onPress={() =>
+              void endpoints.setSolarArray(Number(dec), Number(az), Number(kwp)).then(load)
+            }
+          />
+          <Field label="API key (optional)" value={fsKey} onChangeText={setFsKey} />
+          <Hint>{hasFsKey ? "Key saved" : "Public estimate URL (no key)"}</Hint>
+          <Btn
+            title="Save key"
+            kind="ghost"
+            onPress={() =>
+              void endpoints.setSolarKey(fsKey).then(() => {
+                setFsKey("");
+                void load();
+              })
+            }
+          />
+        </Card>
+      ) : null}
+
+      {configured ? (
+        <Card>
+          <Eyebrow>Expected load</Eyebrow>
+          <Segmented
+            options={[
+              { id: "historical", label: "Historical" },
+              { id: "scheduled", label: "Scheduled" },
+            ]}
+            value={loadMode}
+            onChange={setLoadMode}
+          />
+          <Hint>Sleep window zeros inverter parasitic. Scheduled windows still apply.</Hint>
+          <View style={{ flexDirection: "row", gap: 8 }}>
+            <View style={{ flex: 1 }}>
+              <Field label="Sleep start" value={sleepStart} onChangeText={setSleepStart} placeholder="23:00" />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Field label="Sleep end" value={sleepEnd} onChangeText={setSleepEnd} placeholder="07:00" />
+            </View>
+          </View>
+          {windows.map((w, i) => (
+            <Hint key={w.id || i}>
+              {w.start}–{w.end} · {w.watts} W · {w.days || "all"}
+            </Hint>
+          ))}
+          <View style={{ flexDirection: "row", gap: 8 }}>
+            <View style={{ flex: 1 }}>
+              <Field label="Start" value={wStart} onChangeText={setWStart} />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Field label="End" value={wEnd} onChangeText={setWEnd} />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Field label="W" value={wWatts} onChangeText={setWWatts} keyboardType="number-pad" />
+            </View>
+          </View>
+          <Btn
+            title="Add window"
+            kind="ghost"
+            onPress={() =>
+              setWindows((prev) => [
+                ...prev,
+                { start: wStart, end: wEnd, watts: Number(wWatts) || 0, days: "all" },
+              ])
+            }
+          />
+          <Btn
+            title="Save load settings"
+            onPress={() =>
+              void endpoints
+                .setLoadSchedule({
+                  device_sn: activeSn(),
+                  mode: loadMode,
+                  sleep_start: sleepStart || null,
+                  sleep_end: sleepEnd || null,
+                  windows,
+                })
+                .then(load)
+            }
+          />
+          <Btn
+            title="Copy learned profile into schedule"
+            kind="ghost"
+            onPress={() =>
+              void endpoints
+                .setLoadSchedule(
+                  {
+                    device_sn: activeSn(),
+                    sleep_start: sleepStart || null,
+                    sleep_end: sleepEnd || null,
+                  },
+                  true,
+                )
+                .then(load)
+            }
+          />
+        </Card>
+      ) : null}
 
       <Card>
         <Eyebrow>State of charge — next 5 days</Eyebrow>
@@ -163,8 +342,12 @@ export default function ForecastScreen() {
       </Card>
 
       <Kpi label="Battery capacity" value={fc?.capacity_wh != null ? String(Math.round(fc.capacity_wh)) : "—"} unit="Wh" />
-      <Kpi label="Solar coefficient" value={fc?.solar_coeff != null ? fc.solar_coeff.toFixed(3) : "—"} sub="W per W/m²" />
-      <Kpi label="Avg load" value={fc?.avg_load_w != null ? String(Math.round(fc.avg_load_w)) : "—"} unit="W" />
+      <Kpi
+        label="Solar coefficient"
+        value={fc?.solar_coefficient != null ? fc.solar_coefficient.toFixed(3) : "—"}
+        sub={fc?.solar_source === "forecast_solar" ? "Forecast.Solar" : fc?.solar_source === "mixed" ? "Forecast.Solar + Open-Meteo" : "W per W/m²"}
+      />
+      <Kpi label="Avg load" value={fc?.overall_load_w != null ? String(Math.round(fc.overall_load_w)) : "—"} unit="W" />
 
       {fc?.today_budget ? (
         <Card>

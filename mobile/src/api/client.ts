@@ -216,6 +216,22 @@ export const endpoints = {
   forecast: (device_sn?: string | null) =>
     api("/api/forecast", { query: { device_sn } }),
   forecastAccuracy: () => api("/api/forecast/accuracy"),
+  solarArray: () => api("/api/forecast/solar_array"),
+  setSolarArray: (declination: number, azimuth: number, kwp: number) =>
+    api("/api/forecast/solar_array", { method: "POST", body: { declination, azimuth, kwp } }),
+  inferSolarArray: (device_sn?: string | null) =>
+    api("/api/forecast/solar_array/infer", { method: "POST", query: { device_sn } }),
+  setSolarKey: (api_key: string) =>
+    api("/api/forecast/solar_key", { method: "POST", body: { api_key } }),
+  clearSolarKey: () => api("/api/forecast/solar_key", { method: "DELETE" }),
+  loadSchedule: (device_sn?: string | null) =>
+    api("/api/forecast/load_schedule", { query: { device_sn } }),
+  setLoadSchedule: (body: Record<string, unknown>, copyLearned = false) =>
+    api("/api/forecast/load_schedule", {
+      method: "POST",
+      query: copyLearned ? { copy_learned: 1 } : undefined,
+      body,
+    }),
   dailySummary: (days?: number) => api("/api/daily_summary", { query: { days } }),
   location: () => api("/api/location"),
   setLocation: (latitude: number, longitude: number, label?: string) =>

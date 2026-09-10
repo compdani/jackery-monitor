@@ -45,14 +45,17 @@ import backup_creds
 import backup_discover
 import cost as cost_module
 import energy_db
+import forecast_solar
 import forecaster
 import inverter_watchdog
 import kasa_client
 import kasa_creds
+import load_schedule
 import location as device_location
 import rescue
 import settings as user_settings
 import smart_charge
+import solar_array
 import solar_charge
 import weather_client
 from automation import AutomationEngine, AutomationError
@@ -3343,6 +3346,30 @@ async def _build_and_record_forecast(device_sn: str | None) -> dict:
                 "error_detail": str(weather["error"]),
                 "configured": True}
 
+    utc_off = int(weather.get("utc_offset_seconds")
+                  or device_location.get_tz_offset() or 0)
+
+    fs_hourly: dict[int, float] = {}
+    fs_meta: dict = {"configured": False}
+    plane = solar_array.get()
+    if plane:
+        fs_meta["configured"] = True
+        fs = await forecast_solar.fetch_estimate(
+            loc["latitude"], loc["longitude"],
+            plane["declination"], plane["azimuth"], plane["kwp"],
+            utc_offset_seconds=utc_off,
+            api_key=forecast_solar.load_key(),
+        )
+        fs_meta["error"] = fs.get("error")
+        fs_meta["stale"] = bool(fs.get("stale"))
+        for row in fs.get("hourly") or []:
+            try:
+                fs_hourly[int(row["ts"])] = float(row["watts"])
+            except (TypeError, ValueError, KeyError):
+                continue
+
+    sched = load_schedule.get(device_sn)
+
     result = forecaster.build_forecast(
         energy_history=energy_hist,
         weather_hourly=weather["hourly"],
@@ -3351,8 +3378,12 @@ async def _build_and_record_forecast(device_sn: str | None) -> dict:
         ac_charge_floor_pct=_smart_charge_floor_pct(device_sn),
         car_load_w=_car_load_w(device_sn),
         pack_count=_pack_count_for(device_sn),
-        utc_offset_seconds=int(weather.get("utc_offset_seconds")
-                               or device_location.get_tz_offset() or 0),
+        utc_offset_seconds=utc_off,
+        fs_hourly=fs_hourly or None,
+        load_mode=sched.get("mode") or "historical",
+        load_windows=sched.get("windows") or [],
+        sleep_start=sched.get("sleep_start"),
+        sleep_end=sched.get("sleep_end"),
     )
     # Only persist when the forecast is actually fit — recording an
     # empty placeholder would corrupt prediction-accuracy analytics.
@@ -3380,6 +3411,10 @@ async def _build_and_record_forecast(device_sn: str | None) -> dict:
         # fallback (live weather API unreachable) so the UI can note it.
         "weather_synthetic": bool(weather.get("synthetic")),
         "weather_stale": bool(weather.get("stale")),
+        "forecast_solar": fs_meta,
+        "solar_array": plane,
+        "forecast_solar_has_key": forecast_solar.has_key(),
+        "load_schedule": sched,
         **result,
         "configured": True,
     }
@@ -4501,7 +4536,142 @@ async def api_location_set(req: Request):
                             detail="latitude/longitude out of range")
     # Bust the weather cache so the next forecast pulls for the new coords.
     weather_client.clear_cache()
+    forecast_solar.clear_cache()
     return record
+
+
+@app.get("/api/forecast/solar_array")
+def api_solar_array_get():
+    """Plane geometry for Forecast.Solar + whether an API key is saved."""
+    return {
+        "array": solar_array.get(),
+        "has_key": forecast_solar.has_key(),
+    }
+
+
+@app.post("/api/forecast/solar_array")
+async def api_solar_array_set(body: dict):
+    """Save tilt / azimuth / kWp. 0° azimuth = south (Forecast.Solar)."""
+    rec = solar_array.set(
+        (body or {}).get("declination"),
+        (body or {}).get("azimuth"),
+        (body or {}).get("kwp"),
+    )
+    if rec is None:
+        raise HTTPException(
+            400,
+            "declination 0-90, azimuth -180-180 (0=south), kwp 0.01-100",
+        )
+    forecast_solar.clear_cache()
+    return rec
+
+
+@app.post("/api/forecast/solar_array/infer")
+async def api_solar_array_infer(device_sn: str | None = None):
+    """Guess tilt / azimuth / kWp from 14d solar_w × GHI. Does not save."""
+    loc = device_location.get()
+    if not loc:
+        raise HTTPException(400, "location not set")
+    if not device_sn:
+        device_sn = state.device.device_sn if state.device else None
+    if not device_sn:
+        raise HTTPException(400, "device_sn required")
+    main_wh, pack_wh = _capacity_hints(device_sn)
+    hist = state.energy.history(
+        device_sn, hours=14 * 24, bucket_s=3600,
+        main_capacity_wh=main_wh, pack_capacity_wh=pack_wh,
+    )
+    wx = state.energy.list_weather_observations(
+        since_ts=int(time.time()) - 14 * 86400, limit=14 * 24,
+    )
+    has_solar = any(float(r.get("solar_w") or 0) >= 50 for r in hist)
+    if len(wx) < 12 and has_solar:
+        try:
+            fetched = await weather_client.fetch_irradiance(
+                loc["latitude"], loc["longitude"])
+            wx = fetched.get("hourly") or wx
+        except Exception as e:
+            log.warning("infer: irradiance fetch failed: %s", e)
+    out = solar_array.infer_plane(
+        hist, wx, loc["latitude"], loc["longitude"])
+    if out.get("error") and "declination" not in out:
+        raise HTTPException(400, out["error"])
+    return out
+
+
+@app.get("/api/forecast/solar_key")
+def api_forecast_solar_key_status():
+    return {"has_key": forecast_solar.has_key()}
+
+
+@app.post("/api/forecast/solar_key")
+async def api_forecast_solar_key_save(body: dict):
+    api_key = ((body or {}).get("api_key") or "").strip()
+    if not api_key:
+        raise HTTPException(400, "api_key required")
+    if not forecast_solar.save_key(api_key):
+        raise HTTPException(500, "failed to save key")
+    forecast_solar.clear_cache()
+    return {"ok": True}
+
+
+@app.delete("/api/forecast/solar_key")
+def api_forecast_solar_key_clear():
+    forecast_solar.clear_key()
+    forecast_solar.clear_cache()
+    return {"ok": True}
+
+
+@app.get("/api/forecast/load_schedule")
+def api_load_schedule_get(device_sn: str | None = None):
+    """Current load mode / sleep / windows plus the learned hourly profile."""
+    if not device_sn:
+        device_sn = state.device.device_sn if state.device else None
+    if not device_sn:
+        raise HTTPException(400, "device_sn required")
+    sched = load_schedule.get(device_sn)
+    learned: list[dict] = []
+    try:
+        main_wh, pack_wh = _capacity_hints(device_sn)
+        hist = state.energy.history(
+            device_sn, hours=14 * 24, bucket_s=3600,
+            main_capacity_wh=main_wh, pack_capacity_wh=pack_wh,
+        )
+        profile = forecaster.fit_load_profile(
+            hist, car_load_w=_car_load_w(device_sn))
+        learned = load_schedule.serialize_learned_profile(profile)
+    except Exception as e:
+        log.debug("learned load profile failed for %s: %s", device_sn, e)
+    return {"device_sn": device_sn, **sched, "learned_profile": learned}
+
+
+@app.post("/api/forecast/load_schedule")
+async def api_load_schedule_set(body: dict, copy_learned: int = 0):
+    """Save historical/scheduled mode, sleep window, and watt/time rows.
+
+    `copy_learned=1` replaces windows with 1h slots from the fitted
+    14-day profile (then still saves mode/sleep from the body)."""
+    device_sn = ((body or {}).get("device_sn")
+                 or (state.device.device_sn if state.device else None))
+    if not device_sn:
+        raise HTTPException(400, "device_sn required")
+    payload = dict(body or {})
+    if copy_learned:
+        try:
+            main_wh, pack_wh = _capacity_hints(device_sn)
+            hist = state.energy.history(
+                device_sn, hours=14 * 24, bucket_s=3600,
+                main_capacity_wh=main_wh, pack_capacity_wh=pack_wh,
+            )
+            profile = forecaster.fit_load_profile(
+                hist, car_load_w=_car_load_w(device_sn))
+            payload["windows"] = load_schedule.windows_from_learned_profile(
+                profile)
+            payload["mode"] = "scheduled"
+        except Exception as e:
+            raise HTTPException(400, f"could not copy learned profile: {e}")
+    rec = load_schedule.set(device_sn, payload)
+    return {"device_sn": device_sn, **rec}
 
 
 @app.get("/api/auth/status")

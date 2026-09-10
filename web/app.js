@@ -462,7 +462,7 @@ function switchTab(name, opts = {}) {
   document.querySelectorAll('.tab-panel').forEach(p => p.toggleAttribute('hidden', p.id !== `tab-${name}`));
   if (name === 'live')     { drawLiveChart(lastStatus); }
   if (name === 'energy')   { renderEnergyComparePicker(); fetchEnergyHistory(); fetchEnergyAllDevices(); fetchEnergyDaily(); }
-  if (name === 'forecast') { fetchForecast(); }
+  if (name === 'forecast') { fetchForecast(); loadForecastConfigPanels(); }
   if (name === 'settings') { loadSettings(); loadCostPlan(); initKeepAwakeToggle(); loadAnthropicKeyStatus(); loadAnthropicModelPickers(); loadAIProvider(); loadOpenAIKeyStatus(); loadOpenAIModelPickers(); loadBackupAll(); restoreSettingsSubtab(); }
   if (name === 'logs')     { loadLogs(); }
   if (name === 'automation') {
@@ -5640,11 +5640,15 @@ async function fetchForecast() {
         `Once enough data accumulates, the forecast will appear here ` +
         `automatically — no action required.`
       );
+      if ($('forecast-array')) $('forecast-array').hidden = false;
+      if ($('forecast-load')) $('forecast-load').hidden = false;
       return;
     }
     needsConfig.hidden = true;
     content.hidden = false;
     stats.hidden = false;
+    if ($('forecast-array')) $('forecast-array').hidden = false;
+    if ($('forecast-load')) $('forecast-load').hidden = false;
     forecastCache = j;
     // Show the location these forecasts are based on. Async, fires its
     // own /api/location request — doesn't block the chart render.
@@ -5664,7 +5668,10 @@ async function fetchForecast() {
         : j.weather_stale
           ? ' · ⚠ last-good forecast (weather service offline)'
           : '';
-      title.textContent = base + wxNote;
+      const src = j.solar_source === 'forecast_solar' ? ' · Forecast.Solar'
+        : j.solar_source === 'mixed' ? ' · Forecast.Solar + Open-Meteo'
+        : '';
+      title.textContent = base + wxNote + src;
     }
     setText('forecast-capacity', j.capacity_wh);
     setText('forecast-coeff',    j.solar_coefficient, 2);
@@ -5698,6 +5705,249 @@ async function fetchForecast() {
       console.warn('daily accuracy render failed', err));
   } catch (e) { console.warn('forecast fetch failed', e); }
 }
+
+let _loadMode = 'historical';
+let _loadWindows = [];
+
+function setLoadMode(mode) {
+  _loadMode = mode === 'scheduled' ? 'scheduled' : 'historical';
+  document.querySelectorAll('.lmode-btn').forEach((b) => {
+    b.classList.toggle('on', b.dataset.mode === _loadMode);
+  });
+  const learned = $('load-learned-wrap');
+  const wins = $('load-windows-wrap');
+  if (learned) learned.hidden = _loadMode !== 'historical';
+  if (wins) wins.hidden = _loadMode !== 'scheduled';
+}
+
+function renderLearnedProfile(rows) {
+  const body = $('load-learned-body');
+  if (!body) return;
+  const byHour = {};
+  for (const r of rows || []) {
+    const h = Number(r.hour);
+    if (!byHour[h]) byHour[h] = { hour: h, weekday: '—', weekend: '—' };
+    if (r.weekend) byHour[h].weekend = Math.round(r.watts);
+    else byHour[h].weekday = Math.round(r.watts);
+  }
+  const hours = Object.keys(byHour).map(Number).sort((a, b) => a - b);
+  if (!hours.length) {
+    body.innerHTML = '<tr><td colspan="3">No learned profile yet — keep the monitor running.</td></tr>';
+    return;
+  }
+  body.innerHTML = hours.map((h) => {
+    const r = byHour[h];
+    return `<tr><td>${String(h).padStart(2, '0')}:00</td><td>${r.weekday}</td><td>${r.weekend}</td></tr>`;
+  }).join('');
+}
+
+function renderLoadWindows() {
+  const body = $('load-windows-body');
+  if (!body) return;
+  if (!_loadWindows.length) {
+    body.innerHTML = '<tr><td colspan="6">No windows — add one, or copy the learned profile.</td></tr>';
+    return;
+  }
+  body.innerHTML = _loadWindows.map((w, i) => `
+    <tr>
+      <td><input data-i="${i}" data-k="label" class="lw-field device-select" value="${escapeHtml(w.label || '')}" style="width:110px" /></td>
+      <td><input data-i="${i}" data-k="start" type="time" class="lw-field device-select" value="${w.start || '18:00'}" /></td>
+      <td><input data-i="${i}" data-k="end" type="time" class="lw-field device-select" value="${w.end || '22:00'}" /></td>
+      <td><input data-i="${i}" data-k="watts" type="number" min="0" class="lw-field device-select" value="${w.watts || 0}" style="width:80px" /></td>
+      <td>
+        <select data-i="${i}" data-k="days" class="lw-field device-select">
+          <option value="all" ${w.days === 'all' ? 'selected' : ''}>all</option>
+          <option value="weekday" ${w.days === 'weekday' ? 'selected' : ''}>weekday</option>
+          <option value="weekend" ${w.days === 'weekend' ? 'selected' : ''}>weekend</option>
+        </select>
+      </td>
+      <td><button type="button" class="btn btn-ghost btn-tiny lw-del" data-i="${i}">×</button></td>
+    </tr>`).join('');
+}
+
+function harvestLoadWindows() {
+  document.querySelectorAll('.lw-field').forEach((el) => {
+    const i = parseInt(el.dataset.i, 10);
+    const k = el.dataset.k;
+    if (!_loadWindows[i] || !k) return;
+    _loadWindows[i][k] = k === 'watts' ? Number(el.value) : el.value;
+  });
+}
+
+async function loadForecastConfigPanels() {
+  const locR = await fetch('/api/location').catch(() => null);
+  let hasLoc = false;
+  if (locR && locR.ok) {
+    const loc = await locR.json();
+    hasLoc = loc.latitude != null && loc.longitude != null;
+  }
+  if ($('forecast-array')) $('forecast-array').hidden = !hasLoc;
+  if ($('forecast-load')) $('forecast-load').hidden = !hasLoc;
+  if (!hasLoc) return;
+
+  try {
+    const r = await fetch('/api/forecast/solar_array');
+    if (r.ok) {
+      const j = await r.json();
+      const a = j.array || {};
+      if ($('fs-dec') && a.declination != null) $('fs-dec').value = a.declination;
+      if ($('fs-az') && a.azimuth != null) $('fs-az').value = a.azimuth;
+      if ($('fs-kwp') && a.kwp != null) $('fs-kwp').value = a.kwp;
+      if ($('fs-key-status')) $('fs-key-status').textContent = j.has_key ? 'key saved' : 'no key';
+    }
+  } catch (e) { console.warn('solar array fetch failed', e); }
+
+  const sn = activeJackeryDevice()?.device_sn;
+  if (!sn) return;
+  try {
+    const r = await fetch(`/api/forecast/load_schedule?device_sn=${encodeURIComponent(sn)}`);
+    if (!r.ok) return;
+    const j = await r.json();
+    setLoadMode(j.mode || 'historical');
+    if ($('load-sleep-start')) $('load-sleep-start').value = j.sleep_start || '';
+    if ($('load-sleep-end')) $('load-sleep-end').value = j.sleep_end || '';
+    _loadWindows = Array.isArray(j.windows) ? j.windows.map((w) => ({ ...w })) : [];
+    renderLoadWindows();
+    renderLearnedProfile(j.learned_profile || []);
+  } catch (e) { console.warn('load schedule fetch failed', e); }
+}
+
+document.querySelectorAll('.lmode-btn').forEach((btn) => {
+  btn.addEventListener('click', () => setLoadMode(btn.dataset.mode));
+});
+
+$('fs-array-infer')?.addEventListener('click', async () => {
+  const hint = $('fs-array-hint');
+  const sn = activeJackeryDevice()?.device_sn;
+  const q = sn ? `?device_sn=${encodeURIComponent(sn)}` : '';
+  try {
+    const r = await fetch(`/api/forecast/solar_array/infer${q}`, { method: 'POST' });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) {
+      if (hint) hint.textContent = j.detail || 'Infer failed';
+      return;
+    }
+    if ($('fs-dec') && j.declination != null) $('fs-dec').value = j.declination;
+    if ($('fs-az') && j.azimuth != null) $('fs-az').value = j.azimuth;
+    if ($('fs-kwp') && j.kwp != null) $('fs-kwp').value = j.kwp;
+    const bits = [];
+    if (j.confidence) bits.push(`${j.confidence} confidence`);
+    if (j.correlation != null) bits.push(`r=${j.correlation}`);
+    if (j.n_samples != null) bits.push(`${j.n_samples} hours`);
+    if (hint) hint.textContent = (j.notes || 'Filled from history') + (bits.length ? ` (${bits.join(' · ')})` : '') + ' — Save to apply.';
+  } catch (e) {
+    if (hint) hint.textContent = String(e);
+  }
+});
+
+$('fs-array-save')?.addEventListener('click', async () => {
+  const hint = $('fs-array-hint');
+  try {
+    const r = await fetch('/api/forecast/solar_array', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        declination: Number($('fs-dec')?.value),
+        azimuth: Number($('fs-az')?.value),
+        kwp: Number($('fs-kwp')?.value),
+      }),
+    });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) {
+      if (hint) hint.textContent = j.detail || 'Save failed';
+      return;
+    }
+    if (hint) hint.textContent = `Saved · tilt ${j.declination}° · az ${j.azimuth}° · ${j.kwp} kWp`;
+    fetchForecast();
+  } catch (e) {
+    if (hint) hint.textContent = String(e);
+  }
+});
+
+$('fs-key-save')?.addEventListener('click', async () => {
+  const key = ($('fs-key')?.value || '').trim();
+  if (!key) return;
+  const r = await fetch('/api/forecast/solar_key', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ api_key: key }),
+  });
+  if ($('fs-key')) $('fs-key').value = '';
+  if ($('fs-key-status')) $('fs-key-status').textContent = r.ok ? 'key saved' : 'save failed';
+  if (r.ok) fetchForecast();
+});
+
+$('fs-key-clear')?.addEventListener('click', async () => {
+  await fetch('/api/forecast/solar_key', { method: 'DELETE' });
+  if ($('fs-key-status')) $('fs-key-status').textContent = 'no key';
+  fetchForecast();
+});
+
+$('load-add-window')?.addEventListener('click', () => {
+  harvestLoadWindows();
+  _loadWindows.push({ label: '', start: '18:00', end: '22:00', watts: 800, days: 'all' });
+  renderLoadWindows();
+});
+
+$('load-windows-body')?.addEventListener('click', (e) => {
+  const btn = e.target.closest('.lw-del');
+  if (!btn) return;
+  harvestLoadWindows();
+  _loadWindows.splice(parseInt(btn.dataset.i, 10), 1);
+  renderLoadWindows();
+});
+
+$('load-copy-learned')?.addEventListener('click', async () => {
+  const sn = activeJackeryDevice()?.device_sn;
+  if (!sn) return;
+  const hint = $('load-save-hint');
+  harvestLoadWindows();
+  const r = await fetch(`/api/forecast/load_schedule?copy_learned=1`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      device_sn: sn,
+      mode: 'scheduled',
+      sleep_start: $('load-sleep-start')?.value || null,
+      sleep_end: $('load-sleep-end')?.value || null,
+    }),
+  });
+  if (!r.ok) {
+    if (hint) hint.textContent = 'Copy failed';
+    return;
+  }
+  await loadForecastConfigPanels();
+  if (hint) hint.textContent = 'Copied learned hours into the schedule.';
+  fetchForecast();
+});
+
+$('load-save')?.addEventListener('click', async () => {
+  const sn = activeJackeryDevice()?.device_sn;
+  const hint = $('load-save-hint');
+  if (!sn) {
+    if (hint) hint.textContent = 'No device selected';
+    return;
+  }
+  harvestLoadWindows();
+  const r = await fetch('/api/forecast/load_schedule', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      device_sn: sn,
+      mode: _loadMode,
+      sleep_start: $('load-sleep-start')?.value || null,
+      sleep_end: $('load-sleep-end')?.value || null,
+      windows: _loadWindows,
+    }),
+  });
+  if (!r.ok) {
+    const j = await r.json().catch(() => ({}));
+    if (hint) hint.textContent = j.detail || 'Save failed';
+    return;
+  }
+  if (hint) hint.textContent = 'Saved';
+  fetchForecast();
+});
 
 // ============================================================
 // Per-day strip above the forecast chart — one compact tile per

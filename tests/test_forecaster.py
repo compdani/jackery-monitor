@@ -755,6 +755,119 @@ def test_build_forecast_glues_pieces_together():
     assert peak >= 50.0
 
 
+def _ready_history_and_weather(now: int):
+    """14d of history + future weather so build_forecast is ready."""
+    weather = []
+    for i in range(-14 * 24, 24 * 5):
+        ts = now + i * 3600
+        hour_of_day = (ts // 3600) % 24
+        ghi = 800 if 8 <= hour_of_day <= 16 else 0
+        weather.append({"ts": ts, "ghi_w_m2": ghi, "cloud_cover_pct": 0})
+
+    def _synth_soc(ts: int) -> int:
+        h = (ts // 3600) % 24
+        if 8 <= h <= 16:
+            return 90
+        hours_after_sunset = (h - 16) % 24
+        return max(60, 90 - hours_after_sunset * 5)
+
+    energy = [{"ts": w["ts"], "solar_w": int(2.0 * w["ghi_w_m2"]),
+               "solar_wh": int(2.0 * w["ghi_w_m2"]),
+               "output_w": 400, "output_wh": 400,
+               "ac_input_wh": 0, "ac_input_w": 0,
+               "battery_pct": _synth_soc(w["ts"])}
+              for w in weather if w["ts"] < now]
+    return energy, weather
+
+
+def test_build_forecast_forecast_solar_hours_win_rest_open_meteo():
+    from datetime import datetime, timezone
+    now = int(datetime(2024, 7, 1, 12, 0, tzinfo=timezone.utc).timestamp())
+    energy, weather = _ready_history_and_weather(now)
+    future = [w for w in weather if w["ts"] >= now]
+    first = future[0]["ts"]
+    second = future[1]["ts"]
+    fs_hourly = {first: 9999.0, second: 8888.0}
+    res = forecaster.build_forecast(
+        energy_history=energy,
+        weather_hourly=weather,
+        starting_soc_pct=50.0,
+        capacity_wh=5040,
+        now_ts=now,
+        horizon_hours=48,
+        utc_offset_seconds=0,
+        fs_hourly=fs_hourly,
+    )
+    assert res["ready"] is True
+    assert res["solar_source"] == "mixed"
+    by_ts = {h["ts"]: h for h in res["forecast"]}
+    # Recent-peak cap is 2x observed solar; 9999 may be capped but source stays FS.
+    assert by_ts[first]["solar_source"] == "forecast_solar"
+    assert by_ts[second]["solar_source"] == "forecast_solar"
+    later = [h for h in res["forecast"] if h["ts"] not in fs_hourly]
+    assert later and all(h["solar_source"] == "open_meteo" for h in later)
+
+
+def test_build_forecast_scheduled_window_and_sleep_zeros_parasitic():
+    from datetime import datetime, timezone
+    now = int(datetime(2024, 7, 1, 12, 0, tzinfo=timezone.utc).timestamp())
+    energy, weather = _ready_history_and_weather(now)
+    res = forecaster.build_forecast(
+        energy_history=energy,
+        weather_hourly=weather,
+        starting_soc_pct=50.0,
+        capacity_wh=5040,
+        now_ts=now,
+        horizon_hours=24,
+        utc_offset_seconds=0,
+        load_mode="scheduled",
+        load_windows=[{
+            "start": "18:00", "end": "22:00", "watts": 800, "days": "all",
+        }],
+        sleep_start="23:00",
+        sleep_end="07:00",
+    )
+    assert res["load_mode"] == "scheduled"
+    eighteen = [h for h in res["forecast"]
+                if ((h["ts"] // 3600) % 24) == 18]
+    midnight = [h for h in res["forecast"]
+                if ((h["ts"] // 3600) % 24) == 0]
+    assert eighteen
+    assert eighteen[0]["load_w"] >= 800
+    assert midnight
+    assert midnight[0]["load_w"] == 0.0
+
+
+def test_build_forecast_historical_sleep_zeros_overnight_load():
+    from datetime import datetime, timezone
+    now = int(datetime(2024, 7, 1, 12, 0, tzinfo=timezone.utc).timestamp())
+    energy, weather = _ready_history_and_weather(now)
+    awake = forecaster.build_forecast(
+        energy_history=energy,
+        weather_hourly=weather,
+        starting_soc_pct=50.0,
+        capacity_wh=5040,
+        now_ts=now,
+        horizon_hours=24,
+        utc_offset_seconds=0,
+    )
+    asleep = forecaster.build_forecast(
+        energy_history=energy,
+        weather_hourly=weather,
+        starting_soc_pct=50.0,
+        capacity_wh=5040,
+        now_ts=now,
+        horizon_hours=24,
+        utc_offset_seconds=0,
+        sleep_start="00:00",
+        sleep_end="23:59",
+    )
+    night = [h for h in asleep["forecast"] if ((h["ts"] // 3600) % 24) == 2]
+    night_awake = [h for h in awake["forecast"] if ((h["ts"] // 3600) % 24) == 2]
+    assert night and night[0]["load_w"] == 0.0
+    assert night_awake and night_awake[0]["load_w"] > 0
+
+
 # ---------- fit_idle_overhead_w ----------
 
 def _discharge_window(ts0: int, soc0: int, soc1: int, out_w: int):

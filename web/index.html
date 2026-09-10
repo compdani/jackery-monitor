@@ -473,7 +473,7 @@
     <section id="tab-forecast" class="tab-panel" hidden>
       <section id="forecast-needs-config" class="card" hidden>
         <h2>Allow location to enable forecasts</h2>
-        <p class="hint">The forecaster pulls solar irradiance + cloud cover from Open-Meteo (free, no API key) and combines it with your historical solar production to predict the next ~5 days of battery state of charge. It needs your approximate location to know which weather to fetch.</p>
+        <p class="hint">The forecaster needs your approximate location, then pulls solar from Forecast.Solar (tilt / azimuth / kWp) with Open-Meteo filling days the account plan does not cover. Load is learned from your history, or from a watts+time schedule you set.</p>
         <div class="forecast-geo-actions">
           <button id="forecast-geo-btn" type="button" class="btn btn-primary">Use my location</button>
           <button id="forecast-manual-btn" type="button" class="btn btn-ghost">Set manually</button>
@@ -526,6 +526,108 @@
           <p class="hint">Decimal degrees. Tip: right-click a spot on Google Maps to copy lat/lon.</p>
           <p id="manual-loc-coords-hint" class="hint"></p>
         </div>
+      </section>
+
+      <section id="forecast-array" class="card" hidden>
+        <div class="card-header">
+          <h2>Solar array</h2>
+          <span class="hint" id="forecast-array-status">Forecast.Solar estimate · 0° azimuth = south</span>
+        </div>
+        <p class="hint" style="margin:0 0 12px">
+          Public estimate covers today + 1 day (12 calls/hour). A personal API key extends the horizon.
+          Remaining hours of the 5-day chart still use Open-Meteo × learned k.
+          Infer from history guesses tilt, azimuth, and kWp from your last 14 days of solar vs GHI — check the numbers before saving.
+        </p>
+        <div class="settings-row">
+          <label class="settings-label" for="fs-dec">
+            <span class="settings-label-text">Tilt (declination)</span>
+            <span class="settings-hint">0 = flat, 90 = vertical, degrees from the ground.</span>
+          </label>
+          <div class="settings-control">
+            <input id="fs-dec" type="number" min="0" max="90" step="1" class="device-select" style="width:100px" />
+          </div>
+        </div>
+        <div class="settings-row">
+          <label class="settings-label" for="fs-az">
+            <span class="settings-label-text">Azimuth</span>
+            <span class="settings-hint">Forecast.Solar: −180…180. 0 = south, −90 = east, 90 = west.</span>
+          </label>
+          <div class="settings-control">
+            <input id="fs-az" type="number" min="-180" max="180" step="1" class="device-select" style="width:100px" />
+          </div>
+        </div>
+        <div class="settings-row">
+          <label class="settings-label" for="fs-kwp">
+            <span class="settings-label-text">Array size (kWp)</span>
+            <span class="settings-hint">Installed DC capacity feeding this Jackery.</span>
+          </label>
+          <div class="settings-control">
+            <input id="fs-kwp" type="number" min="0.01" max="100" step="0.01" class="device-select" style="width:100px" />
+          </div>
+        </div>
+        <div class="settings-row">
+          <label class="settings-label" for="fs-key">
+            <span class="settings-label-text">Forecast.Solar API key</span>
+            <span class="settings-hint">Optional. Leave blank to use the public estimate URL.</span>
+          </label>
+          <div class="settings-control" style="display:flex; gap:8px; flex-wrap:wrap; align-items:center">
+            <input id="fs-key" type="password" autocomplete="off" class="device-select" placeholder="optional" style="width:220px" />
+            <span class="hint" id="fs-key-status">no key</span>
+            <button type="button" id="fs-key-save" class="btn btn-small">Save key</button>
+            <button type="button" id="fs-key-clear" class="btn btn-ghost btn-tiny">Clear</button>
+          </div>
+        </div>
+        <button type="button" id="fs-array-infer" class="btn btn-ghost">Infer from history</button>
+        <button type="button" id="fs-array-save" class="btn btn-primary">Save array</button>
+        <p class="hint" id="fs-array-hint"></p>
+      </section>
+
+      <section id="forecast-load" class="card" hidden>
+        <div class="card-header">
+          <h2>Expected load</h2>
+          <div class="range-picker" role="tablist" aria-label="Load source">
+            <button type="button" class="lmode-btn on" data-mode="historical">Historical</button>
+            <button type="button" class="lmode-btn" data-mode="scheduled">Scheduled</button>
+          </div>
+        </div>
+        <p class="hint" style="margin:0 0 12px">
+          Historical extrapolates the last 14 days by hour and weekday/weekend.
+          Scheduled uses only the watt windows below (uncovered hours are 0).
+          Sleep hours drop inverter parasitic so a bedtime shutdown does not drain the forecast.
+        </p>
+        <div class="settings-row">
+          <label class="settings-label">
+            <span class="settings-label-text">Sleep window</span>
+            <span class="settings-hint">Local time. Parasitic / inverter idle is zeroed in this range. Scheduled windows still apply.</span>
+          </label>
+          <div class="settings-control" style="display:flex; gap:8px; align-items:center; flex-wrap:wrap">
+            <input id="load-sleep-start" type="time" class="device-select" />
+            <span class="hint">to</span>
+            <input id="load-sleep-end" type="time" class="device-select" />
+          </div>
+        </div>
+        <div id="load-learned-wrap">
+          <h3 class="settings-label-text" style="margin:12px 0 6px">Learned from history</h3>
+          <div class="table-scroll">
+            <table class="data-table" id="load-learned-table">
+              <thead><tr><th>Hour</th><th>Weekday W</th><th>Weekend W</th></tr></thead>
+              <tbody id="load-learned-body"></tbody>
+            </table>
+          </div>
+          <button type="button" id="load-copy-learned" class="btn btn-ghost btn-small">Copy learned profile into schedule</button>
+        </div>
+        <div id="load-windows-wrap" hidden>
+          <h3 class="settings-label-text" style="margin:12px 0 6px">Schedule</h3>
+          <div class="table-scroll">
+            <table class="data-table">
+              <thead><tr><th>Label</th><th>Start</th><th>End</th><th>Watts</th><th>Days</th><th></th></tr></thead>
+              <tbody id="load-windows-body"></tbody>
+            </table>
+          </div>
+          <button type="button" id="load-add-window" class="btn btn-ghost btn-small">Add window</button>
+        </div>
+        <button type="button" id="load-save" class="btn btn-primary" style="margin-top:12px">Save load settings</button>
+        <p class="hint" id="load-save-hint"></p>
       </section>
 
       <section id="forecast-content" class="card" hidden>
