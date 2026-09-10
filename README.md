@@ -1,5 +1,10 @@
 # Jackery Monitor
 
+The Go/PocketBase + Svelte replacement is available as an **early preview**.
+See [the preview guide](docs/pocketbase-preview.md) for setup and migration status.
+The Python stack below remains the production runtime. New Go feature routes use
+`/japi/*`; PocketBase keeps `/api/*`.
+
 [![CI](https://github.com/YanivErel-code/jackery-monitor/actions/workflows/ci.yml/badge.svg)](https://github.com/YanivErel-code/jackery-monitor/actions/workflows/ci.yml)
 [![Docker image](https://github.com/YanivErel-code/jackery-monitor/actions/workflows/docker-publish.yml/badge.svg)](https://github.com/YanivErel-code/jackery-monitor/actions/workflows/docker-publish.yml)
 [![License](https://img.shields.io/github/license/YanivErel-code/jackery-monitor)](LICENSE)

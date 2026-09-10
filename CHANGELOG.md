@@ -1,5 +1,42 @@
 # Changelog
 
+## Unreleased — PocketBase preview
+
+- Port solar/load forecasting, pack-aware drain and charge fits, hourly prediction
+  recording, accuracy, and daily sunrise/sunset summaries to Go under `/japi`.
+- Add encrypted location settings, Open-Meteo city search and durable weather
+  fallback, flat/seasonal TOU electricity plans, and streamed savings calculations.
+- Add the Svelte Forecast tab, location controls, electricity-plan editor, and
+  Energy savings display. Verify core predictions against Python reference vectors.
+
+- Add durable minute energy integration, totals/history/daily APIs, capacity
+  overrides, HTTP/MQTT battery packs, and weighted system SOC. The Svelte Energy
+  and Device tabs now display persisted data and the Live chart survives restarts.
+- Add transactional read-only legacy SQLite import with row/energy verification,
+  WAL support, idempotence, and config/username migration. Original files remain
+  untouched; unsupported schemas and nonempty destinations stop the import.
+
+- Add the Go Jackery HTTP/MQTT live runtime, contention backoff, per-device
+  snapshots and output commands, pause/resume, and `--mock` / `JACKERY_MOCK=1`.
+- Add authenticated `/ws` with account-token revocation and `/japi` live/control
+  routes, plus a Svelte Live tab with fleet selection, power flow, output buttons,
+  recent in-memory charts, and connection/staleness indicators.
+- Add encrypted cloud-account management compatible with Python's AES-GCM files.
+  Broker certificate verification is enabled by default, with CA-file and explicit
+  legacy TLS compatibility options.
+
+- Add a pinned PocketBase 0.36.0 Go application with single-owner username
+  authentication, transactional first-run administrator creation, and owner
+  password changes. Custom feature routes use `/japi/*`; built-in PocketBase
+  routes remain under `/api/*`.
+- Add `/japi/settings`, backed by PocketBase, preserving the tunable schema,
+  environment defaults, and clamped partial updates.
+- Add the Svelte 5 dashboard shell, SDK auth, setup, Settings, and public-shell
+  service worker. Other tabs explicitly show their pending migration state.
+- Add standalone preview Docker/Compose packaging and Go/Svelte CI. Production
+  Python, Expo auth, publishing, and legacy data remain unchanged until cutover.
+
+
 All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),

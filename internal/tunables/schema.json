@@ -1,0 +1,74 @@
+{
+  "poll_interval_s": {
+    "env": "POLL_INTERVAL_S",
+    "default": 2,
+    "type": "int",
+    "min": 1,
+    "max": 300,
+    "label": "Server poll interval (s)",
+    "hint": "How often the dashboard polls the runtime. The runtime has MQTT push from the device, so 1-2s is fine for snappy UI."
+  },
+  "cloud_poll_interval_s": {
+    "env": "CLOUD_POLL_INTERVAL_S",
+    "default": 60,
+    "type": "int",
+    "min": 5,
+    "max": 600,
+    "label": "Cloud poll interval (s)",
+    "hint": "How often the runtime polls the Jackery cloud. Lower = fresher data on fields not covered by MQTT (battery %, port states, AC/car input split), but more API calls. Tokens are JWTs valid ~30 days; a single login serves many polls, so this knob is purely a freshness-vs-API-load tradeoff. MQTT pushes update ip/op/temp every 2-3s independent of this, so the live power flow stays fresh regardless."
+  },
+  "session_contested_cooldown_s": {
+    "env": "SESSION_CONTESTED_COOLDOWN_S",
+    "default": 60,
+    "type": "int",
+    "min": 10,
+    "max": 600,
+    "label": "Session-contested cooldown (s)",
+    "hint": "How long the runtime waits before reclaiming the session after the phone app logs in."
+  },
+  "inverter_trip_recovery_min_w": {
+    "env": "INVERTER_TRIP_RECOVERY_MIN_W",
+    "default": 0,
+    "type": "int",
+    "min": 0,
+    "max": 2000,
+    "label": "Inverter trip-recovery floor (W)",
+    "hint": "0 disables. Set BELOW your 24/7 base load (e.g. 100 on a rig that never idles under 450W): if AC output collapses to/below this while the port still reports ON, the watchdog treats it as a hardware trip and cycles AC off/on (max 2x per episode). Leave 0 unless your rig always has load on the inverter \u2014 on a rig where ~0W output is normal this would cause false power cycles."
+  },
+  "low_battery_threshold": {
+    "env": "LOW_BATTERY_THRESHOLD",
+    "default": 20,
+    "type": "int",
+    "min": 1,
+    "max": 99,
+    "label": "Low-battery alert threshold (%)",
+    "hint": "Battery percentage below which the dashboard fires a low-battery alert."
+  },
+  "advisor_trigger_hour": {
+    "env": "JACKERY_ADVISOR_HOUR",
+    "default": 8,
+    "type": "int",
+    "min": 0,
+    "max": 23,
+    "label": "AI advisor daily-review hour",
+    "hint": "Local hour (0-23) when the AI advisor reviews yesterday's data per device. 8 = 8 AM local. Requires an API key for the active AI provider (Settings \u2192 AI provider); runs once per device per day."
+  },
+  "backup_schedule_hour": {
+    "env": "JACKERY_BACKUP_HOUR",
+    "default": 3,
+    "type": "int",
+    "min": 0,
+    "max": 23,
+    "label": "Backup daily-run hour",
+    "hint": "Local hour (0-23) when the daily SMB backup to the remote NAS runs. 3 = 3 AM local. Configure the remote target on the Settings page \u2192 Backup & Restore section before this fires for the first time."
+  },
+  "backup_keep_count": {
+    "env": "JACKERY_BACKUP_KEEP",
+    "default": 30,
+    "type": "int",
+    "min": 1,
+    "max": 3650,
+    "label": "Snapshots to keep",
+    "hint": "How many of the most recent successful snapshots to keep on the NAS. Older ones are deleted after each successful run. Set to 365 for a year of dailies; very large values approximate 'keep forever'. Only directories matching our YYYY-MM-DD_HHMMSS naming are pruned \u2014 manual files alongside are untouched."
+  }
+}

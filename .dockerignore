@@ -10,3 +10,14 @@ run.sh
 run-bridge.sh
 com.jackery.bridge.plist
 README.md
+ui/node_modules
+pb_public
+pb_data
+data
+.cursor
+mobile/android
+mobile/node_modules
+jackery
+*.db
+*.db-shm
+*.db-wal

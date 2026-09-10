@@ -1,0 +1,23 @@
+# Standalone preview: docker compose -f docker-compose.pocketbase.yml up --build -d
+# The production compose stays in place while the remaining domain features are ported.
+name: jackery-pocketbase-preview
+services:
+  jackery-monitor:
+    image: jackerymonitor:latest
+    pull_policy: never
+    build:
+      context: .
+      dockerfile: Dockerfile.pocketbase
+    network_mode: host
+    restart: unless-stopped
+    environment:
+      JACKERY_DATA_DIR: /data
+      JACKERY_MOCK: ${JACKERY_MOCK:-0}
+      JACKERY_MQTT_INSECURE: ${JACKERY_MQTT_INSECURE:-0}
+      JACKERY_MQTT_CA_FILE: ${JACKERY_MQTT_CA_FILE:-}
+      PORT: ${JACKERY_PREVIEW_PORT:-8124}
+      TZ: ${TZ:-America/Chicago}
+    volumes:
+      - jackery-preview-data:/data
+volumes:
+  jackery-preview-data:

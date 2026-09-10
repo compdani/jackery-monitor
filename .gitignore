@@ -55,3 +55,9 @@ Thumbs.db
 .env
 .env.local
 *.local.plist
+
+# Unified PocketBase preview
+/jackery
+/pb_public/
+/pb_data/
+/ui/node_modules/
