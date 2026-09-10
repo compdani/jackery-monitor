@@ -382,21 +382,28 @@
       <section class="card">
         <div class="card-header">
           <h2>Energy history</h2>
-          <div class="range-picker" role="tablist">
-            <button class="range-btn on"  data-hours="6">6h</button>
-            <button class="range-btn"     data-hours="24">24h</button>
-            <button class="range-btn"     data-hours="168">7d</button>
-            <button class="range-btn"     data-hours="720">30d</button>
-            <button class="range-btn"     data-hours="2160">90d</button>
-            <button class="range-btn"     data-hours="4320">180d</button>
-            <button class="range-btn"     data-hours="8760">1y</button>
+          <div class="energy-history-controls">
+            <div class="range-picker" role="tablist" aria-label="Time range">
+              <button class="range-btn on"  data-hours="6">6h</button>
+              <button class="range-btn"     data-hours="24">24h</button>
+              <button class="range-btn"     data-hours="168">7d</button>
+              <button class="range-btn"     data-hours="720">30d</button>
+              <button class="range-btn"     data-hours="2160">90d</button>
+              <button class="range-btn"     data-hours="4320">180d</button>
+              <button class="range-btn"     data-hours="8760">1y</button>
+            </div>
+            <div class="range-picker" role="tablist" aria-label="Bar interval">
+              <button type="button" class="ebucket-btn on" data-bucket="900">15m</button>
+              <button type="button" class="ebucket-btn" data-bucket="1800">30m</button>
+              <button type="button" class="ebucket-btn" data-bucket="3600">1h</button>
+            </div>
           </div>
         </div>
         <div id="energy-compare" class="energy-compare" hidden></div>
         <canvas id="chart-energy" class="chart chart-tall"></canvas>
         <div class="legend energy-legend" data-chart="energy">
-          <button type="button" class="legend-item" data-series="output"><i class="lg-out"></i> Consumed (Wh per bucket)</button>
-          <button type="button" class="legend-item" data-series="input"><i class="lg-in"></i> Charged (Wh per bucket)</button>
+          <button type="button" class="legend-item" data-series="output"><i class="lg-out"></i> Consumed (<span id="e-legend-out-unit">Wh per 15 min</span>)</button>
+          <button type="button" class="legend-item" data-series="input"><i class="lg-in"></i> Charged (<span id="e-legend-in-unit">Wh per 15 min</span>)</button>
           <button type="button" class="legend-item" data-series="battery"><i class="lg-bat"></i> Battery %</button>
         </div>
       </section>

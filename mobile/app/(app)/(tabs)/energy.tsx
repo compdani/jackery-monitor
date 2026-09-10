@@ -8,6 +8,7 @@ import { LineChart } from "../../../src/components/LineChart";
 import { Btn, Card, EnergyKpi, Eyebrow, Hint, Screen, Segmented } from "../../../src/components/ui";
 import { fmtKwh, money } from "../../../src/lib/format";
 import { useLive } from "../../../src/store/live";
+import { type EnergyBucketS, usePrefs } from "../../../src/store/prefs";
 import { colors } from "../../../src/theme";
 
 const RANGES = [
@@ -17,6 +18,12 @@ const RANGES = [
   { id: "720", label: "30d" },
   { id: "2160", label: "90d" },
   { id: "8760", label: "1y" },
+];
+
+const INTERVALS = [
+  { id: "900", label: "15m" },
+  { id: "1800", label: "30m" },
+  { id: "3600", label: "1h" },
 ];
 
 const ALL = "all";
@@ -60,6 +67,7 @@ function mergeHistories(lists: HistPoint[][]): HistPoint[] {
 
 export default function EnergyScreen() {
   const energy = useLive((s) => s.status?.energy);
+  const energyBucketS = usePrefs((s) => s.energyBucketS);
   const [hours, setHours] = useState("24");
   const [chartSn, setChartSn] = useState(ALL);
   const [hist, setHist] = useState<HistPoint[]>([]);
@@ -86,7 +94,7 @@ export default function EnergyScreen() {
     try {
       const results = await Promise.all(
         fetchSns.map(async (sn) => {
-          const h = (await endpoints.energyHistory(Number(hours), sn)) as { history?: HistPoint[] };
+          const h = (await endpoints.energyHistory(Number(hours), sn, energyBucketS)) as { history?: HistPoint[] };
           return h.history || [];
         }),
       );
@@ -104,7 +112,7 @@ export default function EnergyScreen() {
         setDaily([]);
       }
     }
-  }, [hours, chartSn]);
+  }, [hours, chartSn, energyBucketS]);
 
   useEffect(() => {
     void load();
@@ -190,6 +198,11 @@ export default function EnergyScreen() {
           />
         ) : null}
         <Segmented options={RANGES} value={hours} onChange={setHours} />
+        <Segmented
+          options={INTERVALS}
+          value={String(energyBucketS)}
+          onChange={(id) => void usePrefs.getState().setEnergyBucketS(Number(id) as EnergyBucketS)}
+        />
         <Hint>{combined ? "Combined across all devices" : selectedName}</Hint>
         <LineChart
           series={[

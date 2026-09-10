@@ -205,8 +205,8 @@ export const endpoints = {
     api("/api/pause_polling", { method: "POST", body: { seconds } }),
   resumePolling: () => api("/api/resume_polling", { method: "POST" }),
 
-  energyHistory: (hours: number, device_sn?: string | null) =>
-    api("/api/energy/history", { query: { hours, device_sn } }),
+  energyHistory: (hours: number, device_sn?: string | null, bucket_s?: number) =>
+    api("/api/energy/history", { query: { hours, device_sn, bucket_s } }),
   energyDevices: () => api("/api/energy/devices"),
   energyDaily: (device_sn: string | undefined, days = 365) =>
     api<{ device_sn: string; days: number; daily: import("./types").DailyRow[] }>("/api/energy/daily", {

@@ -3219,17 +3219,36 @@ async def api_cost_set(req: Request):
     return {"plan": saved}
 
 
+_ENERGY_HISTORY_BUCKETS = {900, 1800, 3600}  # 15m / 30m / 1h
+_ENERGY_HISTORY_DEFAULT_BUCKET_S = 900
+_ENERGY_HISTORY_MAX_POINTS = 1500
+
+
+def _energy_history_bucket_s(hours: int, bucket_s: int | None) -> int:
+    """Resolve chart bucket size from the Energy-tab interval picker.
+
+    Allowed values are 15m / 30m / 1h. Anything else (or omitted) falls
+    back to 15m. Long windows are coarsened so the series stays near
+    _ENERGY_HISTORY_MAX_POINTS and the canvas/line chart stays usable.
+    """
+    requested = (bucket_s if bucket_s in _ENERGY_HISTORY_BUCKETS
+                 else _ENERGY_HISTORY_DEFAULT_BUCKET_S)
+    return max(requested, (hours * 3600) // _ENERGY_HISTORY_MAX_POINTS)
+
+
 @app.get("/api/energy/history")
-def api_energy_history(hours: int = 24, device_sn: str | None = None):
+def api_energy_history(hours: int = 24, device_sn: str | None = None,
+                       bucket_s: int | None = None):
     """Time-series energy history for a device.
-       hours: 6, 24, 168 (=7d), 720 (=30d). Bucket size auto-scales."""
+       hours: 6, 24, 168 (=7d), 720 (=30d).
+       bucket_s: 900 (15m), 1800 (30m), 3600 (1h). Coarsened if the
+       window would exceed ~1500 points."""
     if not device_sn:
         device_sn = state.device.device_sn if state.device else None
     if not device_sn:
         return {"device_sn": None, "history": []}
     hours = max(1, min(hours, 24 * 365))
-    # Auto-pick a sensible bucket size: ~120 points across the window
-    bucket_s = max(60, (hours * 3600) // 120)
+    bucket_s = _energy_history_bucket_s(hours, bucket_s)
     return {
         "device_sn": device_sn,
         "hours": hours,

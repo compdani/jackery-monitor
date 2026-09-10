@@ -2815,6 +2815,7 @@ footer {
 }
 
 /* Header controls: range picker + search + export on one wrapping row. */
+.energy-history-controls,
 .daily-controls {
   display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
 }
@@ -2835,7 +2836,8 @@ footer {
 
 /* Same look as .range-btn, but a separate class so the energy-history
    chart's global .range-btn click handler can't grab these buttons. */
-.drange-btn {
+.drange-btn,
+.ebucket-btn {
   background: transparent;
   border: none;
   color: var(--text-dim);
@@ -2845,8 +2847,10 @@ footer {
   border-radius: 6px;
   transition: background .15s, color .15s;
 }
-.drange-btn:hover { color: var(--text); }
-.drange-btn.on { background: var(--accent); color: #032012; }
+.drange-btn:hover,
+.ebucket-btn:hover { color: var(--text); }
+.drange-btn.on,
+.ebucket-btn.on { background: var(--accent); color: #032012; }
 
 /* Mobile: the table scrolls inside its wrapper, never the page.
    Vertical cap + sticky header keep a year of rows navigable. */

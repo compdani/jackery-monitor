@@ -240,6 +240,26 @@ The dashboard login is the in-app username/password. After that, if the
 server has no Jackery cloud credentials yet, the app prompts for the
 Jackery account (same modal as the web UI).
 
+### iOS home-screen widget
+
+A glanceable **Jackery** widget (small and medium) shows the selected
+unit’s SOC, solar watts, and load. It is **not available in Expo Go** —
+build a development binary:
+
+```bash
+cd mobile
+npx expo run:ios
+```
+
+Then long-press the home screen → **Edit / +** → search **Jackery Monitor**
+→ add **Jackery**. The widget updates from live telemetry while the app
+is open (debounced so WidgetKit is not spammed). After you leave the
+app it keeps the last snapshot until you open the app again.
+
+Tapping the widget opens the app. For a physical device / TestFlight
+build, create the App Group `group.com.cdani.monitor` on the Apple
+Developer team that signs `com.cdani.monitor`.
+
 ---
 
 ## Authentication

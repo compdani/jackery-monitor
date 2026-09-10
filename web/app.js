@@ -28,6 +28,16 @@ function escapeHtml(s) {
 let lastStatus = null;
 let lastDevices = [];
 let energyRangeHours = 6;     // current Energy tab range selection
+const ENERGY_BUCKET_KEY = 'energyBucketS';
+const ENERGY_BUCKETS = new Set([900, 1800, 3600]); // 15m / 30m / 1h
+function readEnergyBucketS() {
+  try {
+    const v = parseInt(localStorage.getItem(ENERGY_BUCKET_KEY), 10);
+    if (ENERGY_BUCKETS.has(v)) return v;
+  } catch (_) {}
+  return 900;
+}
+let energyBucketS = readEnergyBucketS();
 let energyHistoryCache = null; // last fetched series for the energy tab
 let energyDailyCache = null;
 // Serials ticked on the Energy history compare chips. Empty until the
@@ -4837,6 +4847,28 @@ $('energy-compare')?.addEventListener('click', (e) => {
   fetchEnergyHistory();
 });
 
+function energyBucketLabel(bucketS) {
+  if (bucketS >= 3600 && bucketS % 3600 === 0) {
+    const h = bucketS / 3600;
+    return h === 1 ? '1 hour' : `${h} hours`;
+  }
+  return `${Math.round(bucketS / 60)} min`;
+}
+
+function syncEnergyBucketPills() {
+  document.querySelectorAll('.ebucket-btn').forEach((b) => {
+    b.classList.toggle('on', parseInt(b.dataset.bucket, 10) === energyBucketS);
+  });
+}
+
+function syncEnergyBucketLegend(bucketS) {
+  const label = `Wh per ${energyBucketLabel(bucketS)}`;
+  const out = $('e-legend-out-unit');
+  const inn = $('e-legend-in-unit');
+  if (out) out.textContent = label;
+  if (inn) inn.textContent = label;
+}
+
 document.querySelectorAll('.range-btn').forEach((btn) => {
   btn.addEventListener('click', () => {
     document.querySelectorAll('.range-btn').forEach(b => b.classList.remove('on'));
@@ -4845,6 +4877,20 @@ document.querySelectorAll('.range-btn').forEach((btn) => {
     fetchEnergyHistory();
   });
 });
+
+document.querySelectorAll('.ebucket-btn').forEach((btn) => {
+  btn.addEventListener('click', () => {
+    const v = parseInt(btn.dataset.bucket, 10);
+    if (!ENERGY_BUCKETS.has(v)) return;
+    energyBucketS = v;
+    try { localStorage.setItem(ENERGY_BUCKET_KEY, String(v)); } catch (_) {}
+    syncEnergyBucketPills();
+    syncEnergyBucketLegend(v);
+    fetchEnergyHistory();
+  });
+});
+syncEnergyBucketPills();
+syncEnergyBucketLegend(energyBucketS);
 
 async function fetchEnergyHistory() {
   const viewedSn = activeJackeryDevice()?.device_sn;
@@ -4856,11 +4902,12 @@ async function fetchEnergyHistory() {
     drawEnergyChart(energyHistoryCache);
     return;
   }
-  const sig = `${energyRangeHours}|${fallback.join(',')}`;
+  const sig = `${energyRangeHours}|${energyBucketS}|${fallback.join(',')}`;
   _energyHistoryLoadSig = sig;
   try {
     const results = await Promise.all(fallback.map(async (sn) => {
       const r = await fetch(`/api/energy/history?hours=${energyRangeHours}`
+        + `&bucket_s=${energyBucketS}`
         + `&device_sn=${encodeURIComponent(sn)}`);
       if (!r.ok) return { device_sn: sn, name: energyDeviceName(sn), history: [] };
       const j = await r.json();
@@ -4868,9 +4915,12 @@ async function fetchEnergyHistory() {
         device_sn: sn,
         name: energyDeviceName(sn),
         history: j.history || [],
+        bucket_s: j.bucket_s,
       };
     }));
     if (_energyHistoryLoadSig !== sig) return;
+    const actualBucket = results.find((s) => s.bucket_s)?.bucket_s || energyBucketS;
+    syncEnergyBucketLegend(actualBucket);
     energyHistoryCache = { hours: energyRangeHours, series: results };
     drawEnergyChart(energyHistoryCache);
   } catch (e) { console.warn('energy history fetch failed', e); }

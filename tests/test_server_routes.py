@@ -437,3 +437,41 @@ def test_energy_daily_requires_auth(unauth_client):
     unauth_client.post("/api/auth/logout")
     r = unauth_client.get("/api/energy/daily")
     assert r.status_code == 401
+
+
+# ---------- energy history bucket size ----------
+
+def test_energy_history_bucket_s_allow_list_and_coarsen(app, client):
+    """/api/energy/history honors 15m/30m/1h, falls back on junk, and
+    coarsens a 1y+15m request so the series stays near the point cap."""
+    sn = "TEST-HIST-BUCKET"
+    app.state.energy.upsert_device(sn, "Rig", 13, "Explorer 5000 Plus")
+
+    r = client.get(f"/api/energy/history?hours=24&bucket_s=900&device_sn={sn}")
+    assert r.status_code == 200
+    j = r.json()
+    assert j["hours"] == 24
+    assert j["bucket_s"] == 900
+
+    r30 = client.get(f"/api/energy/history?hours=24&bucket_s=1800&device_sn={sn}")
+    assert r30.json()["bucket_s"] == 1800
+
+    r1h = client.get(f"/api/energy/history?hours=24&bucket_s=3600&device_sn={sn}")
+    assert r1h.json()["bucket_s"] == 3600
+
+    r_bad = client.get(f"/api/energy/history?hours=24&bucket_s=123&device_sn={sn}")
+    assert r_bad.json()["bucket_s"] == 900
+
+    r_omit = client.get(f"/api/energy/history?hours=24&device_sn={sn}")
+    assert r_omit.json()["bucket_s"] == 900
+
+    r_year = client.get(
+        f"/api/energy/history?hours=8760&bucket_s=900&device_sn={sn}")
+    jy = r_year.json()
+    expected = app._energy_history_bucket_s(8760, 900)
+    assert expected > 900
+    assert jy["bucket_s"] == expected
+    assert jy["hours"] == 8760
+    # Empty DB still returns the coarsened bucket; with data the series
+    # would stay at/under the cap.
+    assert len(jy["history"]) <= app._ENERGY_HISTORY_MAX_POINTS

@@ -10,6 +10,9 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.cdani.monitor",
+      "entitlements": {
+        "com.apple.security.application-groups": ["group.com.cdani.monitor"]
+      },
       "infoPlist": {
         "NSAppTransportSecurity": {
           "NSAllowsLocalNetworking": true,
@@ -39,7 +42,8 @@
         "expo-splash-screen",
         {
           "backgroundColor": "#0b0d10",
-          "resizeMode": "contain"
+          "resizeMode": "contain",
+          "image": "./assets/icon.png"
         }
       ],
       [
@@ -50,7 +54,24 @@
           }
         }
       ],
-      "expo-asset"
+      "expo-asset",
+      [
+        "expo-widgets",
+        {
+          "bundleIdentifier": "com.cdani.monitor.widgets",
+          "groupIdentifier": "group.com.cdani.monitor",
+          "widgets": [
+            {
+              "name": "StatusWidget",
+              "displayName": "Jackery",
+              "description": "State of charge, solar, and load for the selected power station.",
+              "contentMarginsDisabled": true,
+              "supportedFamilies": ["systemSmall", "systemMedium"]
+            }
+          ]
+        }
+      ],
+      "./plugins/withWidgetContainerBackground.js"
     ]
   }
 }

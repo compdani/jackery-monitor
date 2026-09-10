@@ -1,5 +1,6 @@
 import * as SecureStore from "expo-secure-store";
 import { create } from "zustand";
+import { clearWidgetSnapshot } from "../lib/widgetSync";
 
 const TOKEN_KEY = "jackery.sessionToken";
 const USER_KEY = "jackery.username";
@@ -42,5 +43,6 @@ export const useSession = create<SessionState>((set) => ({
     await SecureStore.deleteItemAsync(TOKEN_KEY);
     await SecureStore.deleteItemAsync(USER_KEY);
     set({ token: null, username: null });
+    clearWidgetSnapshot();
   },
 }));
