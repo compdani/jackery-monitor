@@ -1728,7 +1728,8 @@ main {
 .settings-label-text { font-weight: 500; color: var(--text); font-size: 14px; }
 .settings-hint { font-size: 12px; color: var(--text-dim); }
 .settings-control { display: flex; align-items: center; gap: 8px; }
-.settings-control input[type="number"] {
+.settings-control input[type="number"],
+.settings-control input[type="time"] {
   width: 90px; padding: 8px 10px;
   background: var(--bg);
   border: 1px solid var(--border);
@@ -1737,6 +1738,11 @@ main {
   font-family: var(--font-mono);
   font-size: 14px;
   text-align: right;
+}
+.settings-control input[type="time"] {
+  width: auto;
+  min-width: 8.5em;
+  color-scheme: dark;
 }
 .settings-control input[type="number"]:focus { outline: 1px solid var(--accent); }
 .settings-control input[type="number"]:disabled {

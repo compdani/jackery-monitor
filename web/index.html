@@ -528,7 +528,7 @@
         </div>
       </section>
 
-      <section id="forecast-array" class="card" hidden>
+      <section id="forecast-array" class="card">
         <div class="card-header">
           <h2>Solar array</h2>
           <span class="hint" id="forecast-array-status">Forecast.Solar estimate · 0° azimuth = south</span>
@@ -582,7 +582,7 @@
         <p class="hint" id="fs-array-hint"></p>
       </section>
 
-      <section id="forecast-load" class="card" hidden>
+      <section id="forecast-load" class="card">
         <div class="card-header">
           <h2>Expected load</h2>
           <div class="range-picker" role="tablist" aria-label="Load source">
@@ -621,7 +621,9 @@
           <div class="table-scroll">
             <table class="data-table">
               <thead><tr><th>Label</th><th>Start</th><th>End</th><th>Watts</th><th>Days</th><th></th></tr></thead>
-              <tbody id="load-windows-body"></tbody>
+              <tbody id="load-windows-body">
+                <tr><td colspan="6">No windows yet — click Add window, or copy the learned profile.</td></tr>
+              </tbody>
             </table>
           </div>
           <button type="button" id="load-add-window" class="btn btn-ghost btn-small">Add window</button>

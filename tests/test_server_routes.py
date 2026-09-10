@@ -487,13 +487,16 @@ def test_shell_sends_no_cache_and_forecast_load_markup(client):
     html = r.text
     assert 'id="forecast-array"' in html
     assert 'id="forecast-load"' in html
+    assert 'id="forecast-load" hidden' not in html
+    assert 'id="forecast-array" hidden' not in html
     assert 'id="load-add-window"' in html
+    assert 'id="load-sleep-start"' in html
     assert 'id="load-windows-wrap"' in html
     assert 'id="load-windows-wrap" hidden' not in html
     sw = client.get("/sw.js")
     assert sw.status_code == 200
     assert "no-cache" in (sw.headers.get("cache-control") or "").lower()
-    assert "jackery-shell-v5" in sw.text
+    assert "jackery-shell-v6" in sw.text
 
 
 def test_solar_array_validation_and_roundtrip(app, client):

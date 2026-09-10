@@ -5773,15 +5773,13 @@ function harvestLoadWindows() {
 }
 
 async function loadForecastConfigPanels() {
-  const locR = await fetch('/api/location').catch(() => null);
-  let hasLoc = false;
-  if (locR && locR.ok) {
-    const loc = await locR.json();
-    hasLoc = loc.latitude != null && loc.longitude != null;
-  }
-  if ($('forecast-array')) $('forecast-array').hidden = !hasLoc;
-  if ($('forecast-load')) $('forecast-load').hidden = !hasLoc;
-  if (!hasLoc) return;
+  // Always visible on the Forecast tab — do not gate on /api/location.
+  // A failed or slow location fetch used to leave these cards `hidden`
+  // even when a forecast chart was already on screen.
+  if ($('forecast-array')) $('forecast-array').hidden = false;
+  if ($('forecast-load')) $('forecast-load').hidden = false;
+  setLoadMode(_loadMode);
+  renderLoadWindows();
 
   try {
     const r = await fetch('/api/forecast/solar_array');
