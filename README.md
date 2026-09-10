@@ -209,6 +209,39 @@ URL (see Authentication below) and Add to Home Screen there.
 
 ---
 
+## Native app (Expo)
+
+A React Native client lives in [`mobile/`](mobile/). It talks to the same
+FastAPI server; you set the base URL on first launch (LAN IP or tunnel
+hostname). Sessions use the HMAC token returned by `/api/auth/login` as
+`Authorization: Bearer` (and `?token=` on the WebSocket) so the phone
+does not need cookies.
+
+```bash
+cd mobile
+npm install
+npx expo start
+```
+
+Then scan the QR code with Expo Go, or press `i` / `a` for the iOS /
+Android simulator.
+
+| Where you run the app | Server URL to enter |
+|---|---|
+| iOS Simulator | `http://localhost:8000` (dev) or `http://localhost:8123` |
+| Android emulator | `http://10.0.2.2:8000` |
+| Physical phone on the same Wi‑Fi | `http://<nas-or-mac-lan-ip>:8123` |
+| Away from home | Cloudflare Tunnel `https://…` hostname |
+
+iOS and Android are configured to allow **cleartext HTTP on the LAN**.
+Use HTTPS (tunnel / reverse proxy) if the phone is off your network.
+
+The dashboard login is the in-app username/password. After that, if the
+server has no Jackery cloud credentials yet, the app prompts for the
+Jackery account (same modal as the web UI).
+
+---
+
 ## Authentication
 
 Two layers, use either or both:
@@ -229,7 +262,9 @@ Visit the public URL → email-OTP login → you're in.
 First visit auto-redirects to `/setup` where you pick a username and
 password. From then on, `/login` is required. Sign-out button in the
 top bar. Password is hashed with PBKDF2-SHA256, session is an
-HMAC-signed cookie (HttpOnly, SameSite=Lax, 30-day TTL).
+HMAC-signed cookie (HttpOnly, SameSite=Lax, 30-day TTL). Native clients
+also receive that same token in the login/setup JSON body and send it as
+`Authorization: Bearer` (WebSocket: `?token=`).
 
 The two layers compose: Cloudflare Access at the edge plus app login
 gives you defense in depth.
@@ -392,6 +427,7 @@ jackery-monitor/
 │   ├── manifest.webmanifest  PWA manifest
 │   ├── sw.js                 Service worker
 │   └── icon.svg              PWA / favicon icon
+├── mobile/                   Expo (iOS + Android) client
 │
 ├── docker-compose.yml        Synology / Linux prod (GHCR pull + Watchtower)
 ├── docker-compose.build.yml  Build locally on the NAS instead of pulling

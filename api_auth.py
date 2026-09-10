@@ -2,8 +2,9 @@
 
 Optional layer. The first time the app starts with no /data/auth.json,
 a one-time /setup flow lets the operator pick a username/password. After
-that, every request must carry a valid session cookie (HMAC-signed) or
-it gets a 401 + redirect to /login.
+that, every request must carry a valid session (HMAC-signed cookie, or
+the same token as Authorization: Bearer / WS ?token=) or it gets a 401
++ redirect to /login.
 
 Routes exempt from auth: /login, /setup, /static/*, /manifest.webmanifest,
 /sw.js, /api/auth/* (the auth endpoints themselves), and /ws (handled
@@ -60,9 +61,15 @@ def set_app_cookie(response: Response, name: str, value: str,
     )
 
 
+def mint_session(response: Response, username: str) -> str:
+    """Issue a session cookie and return the same HMAC token for native clients."""
+    token = auth.make_session(username)
+    set_app_cookie(response, auth.COOKIE_NAME, token, auth.SESSION_TTL_S)
+    return token
+
+
 def _set_session_cookie(response: Response, username: str) -> None:
-    set_app_cookie(response, auth.COOKIE_NAME,
-                   auth.make_session(username), auth.SESSION_TTL_S)
+    mint_session(response, username)
 
 
 def install(app: FastAPI, web_dir: Path,
@@ -82,8 +89,8 @@ def install(app: FastAPI, web_dir: Path,
         if any(path == p or path.startswith(p) for p in public_prefixes):
             return await call_next(request)
 
-        # 1. Valid app-session cookie → fast path (local HMAC check).
-        if auth.verify_session(request.cookies.get(auth.COOKIE_NAME)):
+        # 1. Valid app-session (Bearer, ?token=, or cookie) → fast path.
+        if auth.verify_session(auth.token_from_request(request)):
             return await call_next(request)
 
         # 2. Valid Cloudflare Access assertion → authenticated at the
@@ -121,8 +128,8 @@ def install(app: FastAPI, web_dir: Path,
             raise HTTPException(400, "username and password (>=6 chars) required")
         if not auth.save_user(username, password):
             raise HTTPException(500, "failed to save user")
-        _set_session_cookie(response, username)
-        return {"ok": True, "username": username}
+        token = mint_session(response, username)
+        return {"ok": True, "username": username, "token": token}
 
     @app.post("/api/auth/login")
     async def api_auth_login(body: dict, response: Response):
@@ -134,8 +141,8 @@ def install(app: FastAPI, web_dir: Path,
         if not user or username != user.get("username") or \
            not auth.verify_password(password, user.get("password_hash", "")):
             raise HTTPException(401, "invalid credentials")
-        _set_session_cookie(response, username)
-        return {"ok": True, "username": username}
+        token = mint_session(response, username)
+        return {"ok": True, "username": username, "token": token}
 
     @app.post("/api/auth/logout")
     async def api_auth_logout(response: Response):
@@ -144,14 +151,14 @@ def install(app: FastAPI, web_dir: Path,
 
     @app.get("/api/auth/me")
     async def api_auth_me(request: Request):
-        payload = auth.verify_session(request.cookies.get(auth.COOKIE_NAME))
+        payload = auth.verify_session(auth.token_from_request(request))
         if not payload:
             raise HTTPException(401, "auth_required")
         return {"username": payload.get("u")}
 
     @app.post("/api/auth/change_password")
     async def api_auth_change_password(body: dict, request: Request):
-        payload = auth.verify_session(request.cookies.get(auth.COOKIE_NAME))
+        payload = auth.verify_session(auth.token_from_request(request))
         if not payload:
             raise HTTPException(401, "auth_required")
         user = auth.load_user()

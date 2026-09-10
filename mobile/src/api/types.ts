@@ -1,0 +1,131 @@
+export type Json = Record<string, unknown>;
+
+export type Telemetry = {
+  battery_percent?: number | null;
+  system_soc_pct?: number | null;
+  main_soc_pct?: number | null;
+  battery_temp_c?: number | null;
+  input_power_w?: number | null;
+  output_power_w?: number | null;
+  ac_input_w?: number | null;
+  car_input_w?: number | null;
+  solar_input_w?: number | null;
+  ac_output_v?: number | null;
+  ac_output_hz?: number | null;
+  ac_on?: boolean | number | null;
+  dc_on?: boolean | number | null;
+  usb_on?: boolean | number | null;
+  car_on?: boolean | number | null;
+  ups_on?: boolean | number | null;
+  super_charge_on?: boolean | number | null;
+  error_code?: number | string | null;
+  time_to_full_h?: number | null;
+  time_remaining_h?: number | null;
+  battery_status?: number | null;
+  capacity_wh?: number | null;
+  main_capacity_wh?: number | null;
+  pack_capacity_wh?: number | null;
+  [key: string]: unknown;
+};
+
+export type DeviceInfo = {
+  name?: string | null;
+  model_code?: number | string | null;
+  model_name?: string | null;
+  device_sn?: string | null;
+  device_id?: string | null;
+  address?: string | null;
+  [key: string]: unknown;
+};
+
+export type DeviceOverview = {
+  device_id: string;
+  device_sn?: string;
+  name?: string;
+  model_name?: string;
+  soc_pct?: number | null;
+  solar_w?: number | null;
+  output_w?: number | null;
+  pack_count?: number;
+  battery_status?: number | null;
+};
+
+export type HistoryPoint = {
+  ts?: number;
+  battery_percent?: number | null;
+  input_power_w?: number | null;
+  output_power_w?: number | null;
+  [key: string]: unknown;
+};
+
+export type EnergyTotals = {
+  today_consumed_wh?: number;
+  today_charged_wh?: number;
+  today_solar_wh?: number;
+  today_grid_wh?: number;
+  today_diverted_wh?: number;
+  d7_consumed_wh?: number;
+  d7_charged_wh?: number;
+  d30_consumed_wh?: number;
+  d30_charged_wh?: number;
+  life_consumed_wh?: number;
+  life_charged_wh?: number;
+  today_solar_savings?: number;
+  today_grid_cost?: number;
+  today_net_savings?: number;
+  life_solar_savings?: number;
+  life_grid_cost?: number;
+  life_net_savings?: number;
+  currency?: string;
+  [key: string]: unknown;
+};
+
+export type StatusPayload = {
+  connection_status?: string;
+  connection_error?: string | null;
+  device?: DeviceInfo | null;
+  last_update_ts?: number | null;
+  telemetry?: Telemetry | null;
+  battery_packs?: Record<string, unknown>[] | null;
+  history?: HistoryPoint[];
+  mock_mode?: boolean;
+  backend?: string;
+  source?: string | null;
+  cloud?: {
+    selected_device_id?: string | null;
+    devices?: DeviceInfo[];
+    devices_overview?: DeviceOverview[];
+    [key: string]: unknown;
+  };
+  energy?: EnergyTotals | null;
+  inverter_watchdog?: Json | null;
+  [key: string]: unknown;
+};
+
+export type DailyRow = {
+  date: string;
+  solar_kwh: number;
+  consumed_kwh: number;
+  charged_kwh: number;
+  grid_kwh: number;
+  diverted_kwh: number;
+  peak_solar_w: number;
+  peak_output_w: number;
+  min_soc: number;
+  max_soc: number;
+};
+
+export type SettingSpec = {
+  key: string;
+  label: string;
+  hint: string;
+  min: number;
+  max: number;
+  value: number;
+};
+
+export type ProbeResult =
+  | { kind: "setup" }
+  | { kind: "login" }
+  | { kind: "ok"; status: StatusPayload }
+  | { kind: "unreachable"; error: string };

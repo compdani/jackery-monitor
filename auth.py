@@ -157,6 +157,41 @@ def make_session(username: str, ttl: int = SESSION_TTL_S) -> str:
     return body + "." + _b64u_encode(sig)
 
 
+def bearer_token(authorization: str | None) -> str | None:
+    """Extract the token from an `Authorization: Bearer …` header."""
+    if not authorization:
+        return None
+    scheme, _, rest = authorization.partition(" ")
+    if scheme.lower() != "bearer":
+        return None
+    token = rest.strip()
+    return token or None
+
+
+def token_from_request(request) -> str | None:
+    """Session token for HTTP or WebSocket: Bearer, then `?token=`, then cookie.
+
+    Native clients (React Native) cannot reliably attach HttpOnly cookies
+    to fetch/WebSocket, so they send the same HMAC session as
+    `Authorization: Bearer` or a WS query param. The browser dashboard
+    keeps using the cookie. `request` is a Starlette Request or WebSocket.
+    """
+    headers = getattr(request, "headers", None)
+    if headers is not None:
+        token = bearer_token(headers.get("authorization"))
+        if token:
+            return token
+    query = getattr(request, "query_params", None)
+    if query is not None:
+        token = (query.get("token") or "").strip()
+        if token:
+            return token
+    cookies = getattr(request, "cookies", None)
+    if cookies:
+        return cookies.get(COOKIE_NAME)
+    return None
+
+
 def verify_session(token: str | None) -> dict | None:
     if not token or "." not in token:
         return None

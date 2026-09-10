@@ -2966,8 +2966,10 @@ advisor_routes.install(app, state, _advisor_helpers)
 
 
 @app.get("/api/status")
-def api_status(request: Request):
-    view_id = request.cookies.get(VIEW_DEVICE_COOKIE)
+def api_status(request: Request, view_device_id: str | None = None):
+    # Native clients pass the per-app view as a query param; the browser
+    # dashboard still uses the view_device_id cookie.
+    view_id = (view_device_id or "").strip() or request.cookies.get(VIEW_DEVICE_COOKIE)
     return serialize_status(view_device_id=view_id)
 
 
@@ -5244,7 +5246,7 @@ async def api_view_select_device(body: dict, request: Request, response: Respons
     # on the other screen: the WS pushed the wrong-bumped view while
     # the safety-net /api/status poll continued to read its actual
     # cookie and snapped back.
-    request_auth = request.cookies.get(auth.COOKIE_NAME)
+    request_auth = auth.token_from_request(request)
     new_id = str(device_id)
     for _ws, info in state.ws_clients.items():
         # Only bump the requester's own session. If auth isn't enabled
@@ -5289,19 +5291,20 @@ async def force_poll():
 @app.websocket("/ws")
 async def websocket_endpoint(ws: WebSocket):
     # Mirror the HTTP-side auth gate. WS doesn't go through the FastAPI
-    # http middleware, so we have to check the same session cookie here.
+    # http middleware, so we have to check the same session here.
+    # Native clients send ?token= (cookies on WS are unreliable); the
+    # browser dashboard still uses the jackery_session cookie.
     auth_token: str | None = None
     if auth.has_user():
-        auth_token = ws.cookies.get(auth.COOKIE_NAME)
+        auth_token = auth.token_from_request(ws)
         if not auth.verify_session(auth_token):
             await ws.close(code=1008)  # policy violation
             return
-    # Stash both the per-browser view selection AND the auth session
-    # token from the cookie. The auth token uniquely identifies a
-    # browser session — used by /api/view/select_device to bump only
-    # this browser's WSes when the cookie changes, instead of
-    # spuriously dragging other browsers along.
-    view_id = ws.cookies.get(VIEW_DEVICE_COOKIE) or None
+    # Stash both the per-client view selection AND the auth session
+    # token. The auth token uniquely identifies a session — used by
+    # /api/view/select_device to bump only this client's WSes.
+    view_id = (ws.query_params.get("view_device_id") or "").strip() \
+        or ws.cookies.get(VIEW_DEVICE_COOKIE) or None
     await ws.accept()
     state.ws_clients[ws] = {"view_id": view_id, "auth_token": auth_token}
     try:

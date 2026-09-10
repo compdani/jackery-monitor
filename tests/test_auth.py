@@ -123,3 +123,44 @@ def test_session_rejects_missing_or_garbage(isolated_data):
     assert auth.verify_session("") is None
     assert auth.verify_session("nope") is None
     assert auth.verify_session("a.b.c") is None  # too many dots
+
+
+class _FakeRequest:
+    def __init__(self, *, authorization=None, token_q=None, cookie=None):
+        self.headers = {}
+        if authorization is not None:
+            self.headers["authorization"] = authorization
+        self.query_params = {}
+        if token_q is not None:
+            self.query_params["token"] = token_q
+        self.cookies = {}
+        if cookie is not None:
+            self.cookies["jackery_session"] = cookie
+
+
+def test_token_from_request_prefers_bearer_then_query_then_cookie(isolated_data):
+    import auth
+    import crypto_util
+    importlib.reload(crypto_util)
+    importlib.reload(auth)
+
+    bearer = auth.make_session("bearer-user")
+    query = auth.make_session("query-user")
+    cookie = auth.make_session("cookie-user")
+
+    picked = auth.token_from_request(_FakeRequest(
+        authorization=f"Bearer {bearer}", token_q=query, cookie=cookie,
+    ))
+    assert picked == bearer
+    assert auth.verify_session(picked)["u"] == "bearer-user"
+
+    picked = auth.token_from_request(_FakeRequest(token_q=query, cookie=cookie))
+    assert picked == query
+
+    picked = auth.token_from_request(_FakeRequest(cookie=cookie))
+    assert picked == cookie
+
+    assert auth.bearer_token("Bearer abc") == "abc"
+    assert auth.bearer_token("bearer abc") == "abc"
+    assert auth.bearer_token("Basic abc") is None
+    assert auth.bearer_token("") is None

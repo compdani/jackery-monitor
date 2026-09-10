@@ -101,7 +101,10 @@ def test_auth_setup_creates_user_and_sets_cookie(unauth_client):
         json={"username": "alice", "password": "verysecret"},
     )
     assert r.status_code == 200
-    assert r.json() == {"ok": True, "username": "alice"}
+    body = r.json()
+    assert body["ok"] is True
+    assert body["username"] == "alice"
+    assert body["token"] and "." in body["token"]
     # Subsequent setup attempts are 403.
     r2 = unauth_client.post(
         "/api/auth/setup",
@@ -165,6 +168,64 @@ def test_auth_login_logout_round_trip(client):
     r = client.get("/api/auth/me")
     assert r.status_code == 200
     assert r.json()["username"] == "smoke"
+
+
+def test_bearer_token_authenticates_without_cookie(app, unauth_client):
+    """Native clients store the JSON token and send Authorization: Bearer.
+    A fresh client with no cookie jar must still reach /api/status."""
+    r = unauth_client.post(
+        "/api/auth/setup",
+        json={"username": "alice", "password": "verysecret"},
+    )
+    token = r.json()["token"]
+    with TestClient(app.app) as c:
+        denied = c.get("/api/status")
+        assert denied.status_code == 401
+        ok = c.get("/api/status", headers={"Authorization": f"Bearer {token}"})
+        assert ok.status_code == 200
+        me = c.get("/api/auth/me", headers={"Authorization": f"Bearer {token}"})
+        assert me.status_code == 200
+        assert me.json()["username"] == "alice"
+        bad = c.get("/api/status", headers={"Authorization": "Bearer not.a.token"})
+        assert bad.status_code == 401
+
+
+def test_status_accepts_view_device_id_query(client):
+    """Unknown view id falls back to the bridge-active device (same as
+    a missing cookie). The query param is what native clients use."""
+    r = client.get("/api/status", params={"view_device_id": "id-DOES-NOT-EXIST"})
+    assert r.status_code == 200
+    assert "device" in r.json()
+
+
+def test_ws_accepts_query_token(app, unauth_client):
+    r = unauth_client.post(
+        "/api/auth/setup",
+        json={"username": "alice", "password": "verysecret"},
+    )
+    token = r.json()["token"]
+    with TestClient(app.app) as c:
+        with c.websocket_connect(f"/ws?token={token}") as ws:
+            msg = ws.receive_json()
+            assert msg["type"] == "snapshot"
+            assert "data" in msg
+
+
+def test_ws_rejects_invalid_query_token(app, unauth_client):
+    unauth_client.post(
+        "/api/auth/setup",
+        json={"username": "alice", "password": "verysecret"},
+    )
+    with TestClient(app.app) as c:
+        with pytest.raises(Exception):
+            with c.websocket_connect("/ws?token=not.a.token") as ws:
+                ws.receive_json()
+
+
+def test_ws_cookie_still_works(client):
+    with client.websocket_connect("/ws") as ws:
+        msg = ws.receive_json()
+        assert msg["type"] == "snapshot"
 
 
 def test_auth_login_rejects_wrong_password(client):
