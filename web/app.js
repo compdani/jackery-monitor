@@ -439,6 +439,15 @@ document.querySelectorAll('.tab').forEach((tab) => {
   tab.addEventListener('click', () => switchTab(tab.dataset.tab));
 });
 
+// Forecast array/load actions — delegated so a later top-level throw
+// cannot skip getElementById().addEventListener bindings, and so
+// re-rendered window rows (delete ×) keep working.
+document.addEventListener('click', (e) => {
+  const btn = e.target.closest('#tab-forecast button');
+  if (!btn || typeof handleForecastConfigClick !== 'function') return;
+  handleForecastConfigClick(btn);
+});
+
 function switchTab(name, opts = {}) {
   if (!VALID_TABS.has(name)) return;
   activeTab = name;
@@ -5710,12 +5719,35 @@ function setLoadMode(mode) {
   document.querySelectorAll('.lmode-btn').forEach((b) => {
     b.classList.toggle('on', b.dataset.mode === _loadMode);
   });
-  // Learned table and watt windows stay visible in both modes — the
-  // toggle only picks which source the forecast uses.
   const learned = $('load-learned-wrap');
   const wins = $('load-windows-wrap');
   if (learned) learned.hidden = false;
   if (wins) wins.hidden = false;
+  updateForecastConfigSummaries();
+}
+
+function updateForecastConfigSummaries() {
+  const arrayStatus = $('forecast-array-status');
+  if (arrayStatus) {
+    const dec = $('fs-dec')?.value;
+    const az = $('fs-az')?.value;
+    const kwp = $('fs-kwp')?.value;
+    if (dec !== '' && az !== '' && kwp !== '') {
+      arrayStatus.textContent = `tilt ${dec}° · az ${az}° · ${kwp} kWp`;
+    } else {
+      arrayStatus.textContent = 'tilt / azimuth / kWp — click to edit';
+    }
+  }
+  const loadStatus = $('forecast-load-status');
+  if (loadStatus) {
+    const start = $('load-sleep-start')?.value;
+    const end = $('load-sleep-end')?.value;
+    const sleep = (start && end) ? ` · sleep ${start}–${end}` : '';
+    const n = _loadWindows.length;
+    const win = n ? ` · ${n} window${n === 1 ? '' : 's'}` : '';
+    const mode = _loadMode === 'scheduled' ? 'Scheduled' : 'Historical';
+    loadStatus.textContent = mode + win + sleep;
+  }
 }
 
 function renderLearnedProfile(rows) {
@@ -5748,12 +5780,12 @@ function renderLoadWindows() {
   }
   body.innerHTML = _loadWindows.map((w, i) => `
     <tr>
-      <td><input data-i="${i}" data-k="label" class="lw-field device-select" value="${escapeHtml(w.label || '')}" style="width:110px" /></td>
-      <td><input data-i="${i}" data-k="start" type="time" class="lw-field device-select" value="${w.start || '18:00'}" /></td>
-      <td><input data-i="${i}" data-k="end" type="time" class="lw-field device-select" value="${w.end || '22:00'}" /></td>
-      <td><input data-i="${i}" data-k="watts" type="number" min="0" class="lw-field device-select" value="${w.watts || 0}" style="width:80px" /></td>
+      <td><input data-i="${i}" data-k="label" class="lw-field forecast-input" value="${escapeHtml(w.label || '')}" style="width:110px" /></td>
+      <td><input data-i="${i}" data-k="start" type="time" class="lw-field forecast-input" value="${w.start || '18:00'}" /></td>
+      <td><input data-i="${i}" data-k="end" type="time" class="lw-field forecast-input" value="${w.end || '22:00'}" /></td>
+      <td><input data-i="${i}" data-k="watts" type="number" min="0" class="lw-field forecast-input" value="${w.watts || 0}" style="width:80px" /></td>
       <td>
-        <select data-i="${i}" data-k="days" class="lw-field device-select">
+        <select data-i="${i}" data-k="days" class="lw-field forecast-input">
           <option value="all" ${w.days === 'all' ? 'selected' : ''}>all</option>
           <option value="weekday" ${w.days === 'weekday' ? 'selected' : ''}>weekday</option>
           <option value="weekend" ${w.days === 'weekend' ? 'selected' : ''}>weekend</option>
@@ -5794,28 +5826,57 @@ async function loadForecastConfigPanels() {
   } catch (e) { console.warn('solar array fetch failed', e); }
 
   const sn = activeJackeryDevice()?.device_sn;
-  if (!sn) return;
-  try {
-    const r = await fetch(`/api/forecast/load_schedule?device_sn=${encodeURIComponent(sn)}`);
-    if (!r.ok) return;
-    const j = await r.json();
-    setLoadMode(j.mode || 'historical');
-    if ($('load-sleep-start')) $('load-sleep-start').value = j.sleep_start || '';
-    if ($('load-sleep-end')) $('load-sleep-end').value = j.sleep_end || '';
-    _loadWindows = Array.isArray(j.windows) ? j.windows.map((w) => ({ ...w })) : [];
-    renderLoadWindows();
-    renderLearnedProfile(j.learned_profile || []);
-  } catch (e) { console.warn('load schedule fetch failed', e); }
+  if (sn) {
+    try {
+      const r = await fetch(`/api/forecast/load_schedule?device_sn=${encodeURIComponent(sn)}`);
+      if (r.ok) {
+        const j = await r.json();
+        setLoadMode(j.mode || 'historical');
+        if ($('load-sleep-start')) $('load-sleep-start').value = j.sleep_start || '';
+        if ($('load-sleep-end')) $('load-sleep-end').value = j.sleep_end || '';
+        _loadWindows = Array.isArray(j.windows) ? j.windows.map((w) => ({ ...w })) : [];
+        renderLoadWindows();
+        renderLearnedProfile(j.learned_profile || []);
+      }
+    } catch (e) { console.warn('load schedule fetch failed', e); }
+  }
+  updateForecastConfigSummaries();
 }
 
-document.querySelectorAll('.lmode-btn').forEach((btn) => {
-  btn.addEventListener('click', () => setLoadMode(btn.dataset.mode));
-});
+function handleForecastConfigClick(btn) {
+  if (btn.classList.contains('lmode-btn')) {
+    setLoadMode(btn.dataset.mode);
+    return;
+  }
+  if (btn.classList.contains('lw-del')) {
+    harvestLoadWindows();
+    _loadWindows.splice(parseInt(btn.dataset.i, 10), 1);
+    renderLoadWindows();
+    updateForecastConfigSummaries();
+    return;
+  }
+  switch (btn.id) {
+    case 'fs-array-infer': void inferSolarArray(); break;
+    case 'fs-array-save': void saveSolarArray(); break;
+    case 'fs-key-save': void saveSolarKey(); break;
+    case 'fs-key-clear': void clearSolarKey(); break;
+    case 'load-add-window':
+      harvestLoadWindows();
+      _loadWindows.push({ label: '', start: '18:00', end: '22:00', watts: 800, days: 'all' });
+      renderLoadWindows();
+      updateForecastConfigSummaries();
+      break;
+    case 'load-copy-learned': void copyLearnedLoadProfile(); break;
+    case 'load-save': void saveLoadSchedule(); break;
+    default: break;
+  }
+}
 
-$('fs-array-infer')?.addEventListener('click', async () => {
+async function inferSolarArray() {
   const hint = $('fs-array-hint');
   const sn = activeJackeryDevice()?.device_sn;
   const q = sn ? `?device_sn=${encodeURIComponent(sn)}` : '';
+  if (hint) hint.textContent = 'Inferring…';
   try {
     const r = await fetch(`/api/forecast/solar_array/infer${q}`, { method: 'POST' });
     const j = await r.json().catch(() => ({}));
@@ -5830,23 +5891,32 @@ $('fs-array-infer')?.addEventListener('click', async () => {
     if (j.confidence) bits.push(`${j.confidence} confidence`);
     if (j.correlation != null) bits.push(`r=${j.correlation}`);
     if (j.n_samples != null) bits.push(`${j.n_samples} hours`);
-    if (hint) hint.textContent = (j.notes || 'Filled from history') + (bits.length ? ` (${bits.join(' · ')})` : '') + ' — Save to apply.';
+    if (hint) {
+      hint.textContent = (j.notes || 'Filled from history')
+        + (bits.length ? ` (${bits.join(' · ')})` : '')
+        + ' — Save to apply.';
+    }
+    updateForecastConfigSummaries();
   } catch (e) {
     if (hint) hint.textContent = String(e);
   }
-});
+}
 
-$('fs-array-save')?.addEventListener('click', async () => {
+async function saveSolarArray() {
   const hint = $('fs-array-hint');
+  const declination = Number($('fs-dec')?.value);
+  const azimuth = Number($('fs-az')?.value);
+  const kwp = Number($('fs-kwp')?.value);
+  if (![declination, azimuth, kwp].every(Number.isFinite) || kwp <= 0) {
+    if (hint) hint.textContent = 'Enter tilt (0–90), azimuth (−180…180), and kWp.';
+    return;
+  }
+  if (hint) hint.textContent = 'Saving…';
   try {
     const r = await fetch('/api/forecast/solar_array', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        declination: Number($('fs-dec')?.value),
-        azimuth: Number($('fs-az')?.value),
-        kwp: Number($('fs-kwp')?.value),
-      }),
+      body: JSON.stringify({ declination, azimuth, kwp }),
     });
     const j = await r.json().catch(() => ({}));
     if (!r.ok) {
@@ -5854,15 +5924,20 @@ $('fs-array-save')?.addEventListener('click', async () => {
       return;
     }
     if (hint) hint.textContent = `Saved · tilt ${j.declination}° · az ${j.azimuth}° · ${j.kwp} kWp`;
+    updateForecastConfigSummaries();
     fetchForecast();
   } catch (e) {
     if (hint) hint.textContent = String(e);
   }
-});
+}
 
-$('fs-key-save')?.addEventListener('click', async () => {
+async function saveSolarKey() {
+  const hint = $('fs-array-hint');
   const key = ($('fs-key')?.value || '').trim();
-  if (!key) return;
+  if (!key) {
+    if (hint) hint.textContent = 'Paste an API key first.';
+    return;
+  }
   const r = await fetch('/api/forecast/solar_key', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -5870,34 +5945,27 @@ $('fs-key-save')?.addEventListener('click', async () => {
   });
   if ($('fs-key')) $('fs-key').value = '';
   if ($('fs-key-status')) $('fs-key-status').textContent = r.ok ? 'key saved' : 'save failed';
+  if (hint) hint.textContent = r.ok ? 'API key saved.' : 'Could not save key.';
   if (r.ok) fetchForecast();
-});
+}
 
-$('fs-key-clear')?.addEventListener('click', async () => {
+async function clearSolarKey() {
   await fetch('/api/forecast/solar_key', { method: 'DELETE' });
   if ($('fs-key-status')) $('fs-key-status').textContent = 'no key';
+  const hint = $('fs-array-hint');
+  if (hint) hint.textContent = 'API key cleared.';
   fetchForecast();
-});
+}
 
-$('load-add-window')?.addEventListener('click', () => {
-  harvestLoadWindows();
-  _loadWindows.push({ label: '', start: '18:00', end: '22:00', watts: 800, days: 'all' });
-  renderLoadWindows();
-});
-
-$('load-windows-body')?.addEventListener('click', (e) => {
-  const btn = e.target.closest('.lw-del');
-  if (!btn) return;
-  harvestLoadWindows();
-  _loadWindows.splice(parseInt(btn.dataset.i, 10), 1);
-  renderLoadWindows();
-});
-
-$('load-copy-learned')?.addEventListener('click', async () => {
+async function copyLearnedLoadProfile() {
   const sn = activeJackeryDevice()?.device_sn;
-  if (!sn) return;
   const hint = $('load-save-hint');
+  if (!sn) {
+    if (hint) hint.textContent = 'No device selected';
+    return;
+  }
   harvestLoadWindows();
+  if (hint) hint.textContent = 'Copying…';
   const r = await fetch(`/api/forecast/load_schedule?copy_learned=1`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -5915,9 +5983,9 @@ $('load-copy-learned')?.addEventListener('click', async () => {
   await loadForecastConfigPanels();
   if (hint) hint.textContent = 'Copied learned hours into the schedule.';
   fetchForecast();
-});
+}
 
-$('load-save')?.addEventListener('click', async () => {
+async function saveLoadSchedule() {
   const sn = activeJackeryDevice()?.device_sn;
   const hint = $('load-save-hint');
   if (!sn) {
@@ -5925,6 +5993,7 @@ $('load-save')?.addEventListener('click', async () => {
     return;
   }
   harvestLoadWindows();
+  if (hint) hint.textContent = 'Saving…';
   const r = await fetch('/api/forecast/load_schedule', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -5942,8 +6011,9 @@ $('load-save')?.addEventListener('click', async () => {
     return;
   }
   if (hint) hint.textContent = 'Saved';
+  updateForecastConfigSummaries();
   fetchForecast();
-});
+}
 
 // ============================================================
 // Per-day strip above the forecast chart — one compact tile per

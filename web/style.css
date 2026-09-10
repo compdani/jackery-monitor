@@ -959,6 +959,37 @@ main {
 }
 .card-header .hint { font-size: 12px; color: var(--text-mute); }
 
+.forecast-input {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
+  font-family: var(--font-mono);
+  font-size: 14px;
+  color-scheme: dark;
+  min-width: 6em;
+}
+.forecast-input:focus {
+  outline: 1px solid var(--accent);
+  border-color: var(--accent);
+}
+input.forecast-input[type="time"] { min-width: 8.5em; }
+input.forecast-input[type="password"] { min-width: 12em; flex: 1; }
+.forecast-config-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+  align-items: center;
+}
+.forecast-key-row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
 /* Collapsible card: only the header is visible by default; clicking
    it expands. Summary stays in the header always. Used by the
    Battery packs card so the live tab isn't dominated by a stack of
@@ -2856,8 +2887,7 @@ footer {
 .drange-btn:hover,
 .ebucket-btn:hover { color: var(--text); }
 .drange-btn.on,
-.ebucket-btn.on,
-.lmode-btn.on { background: var(--accent); color: #032012; }
+.ebucket-btn.on { background: var(--accent); color: #032012; }
 
 .lmode-btn {
   background: transparent;
@@ -2867,7 +2897,10 @@ footer {
   font-size: 12px;
   font-weight: 500;
   border-radius: 6px;
+  cursor: pointer;
 }
+.lmode-btn:hover { color: var(--text); }
+.lmode-btn.on { background: var(--accent); color: #032012; }
 
 /* Mobile: the table scrolls inside its wrapper, never the page.
    Vertical cap + sticky header keep a year of rows navigable. */

@@ -528,11 +528,15 @@
         </div>
       </section>
 
-      <section id="forecast-array" class="card">
-        <div class="card-header">
+      <section id="forecast-array" class="card collapsible" data-collapse-key="forecast-array">
+        <div class="card-header collapsible-header"
+             role="button" tabindex="0" aria-expanded="true"
+             aria-controls="forecast-array-body">
           <h2>Solar array</h2>
-          <span class="hint" id="forecast-array-status">Forecast.Solar estimate · 0° azimuth = south</span>
+          <span class="hint" id="forecast-array-status">tilt / azimuth / kWp — click to edit</span>
+          <span class="collapsible-chevron" aria-hidden="true">▾</span>
         </div>
+        <div id="forecast-array-body">
         <p class="hint" style="margin:0 0 12px">
           Public estimate covers today + 1 day (12 calls/hour). A personal API key extends the horizon.
           Remaining hours of the 5-day chart still use Open-Meteo × learned k.
@@ -544,7 +548,7 @@
             <span class="settings-hint">0 = flat, 90 = vertical, degrees from the ground.</span>
           </label>
           <div class="settings-control">
-            <input id="fs-dec" type="number" min="0" max="90" step="1" class="device-select" style="width:100px" />
+            <input id="fs-dec" type="number" min="0" max="90" step="1" class="forecast-input" />
           </div>
         </div>
         <div class="settings-row">
@@ -553,7 +557,7 @@
             <span class="settings-hint">Forecast.Solar: −180…180. 0 = south, −90 = east, 90 = west.</span>
           </label>
           <div class="settings-control">
-            <input id="fs-az" type="number" min="-180" max="180" step="1" class="device-select" style="width:100px" />
+            <input id="fs-az" type="number" min="-180" max="180" step="1" class="forecast-input" />
           </div>
         </div>
         <div class="settings-row">
@@ -562,7 +566,7 @@
             <span class="settings-hint">Installed DC capacity feeding this Jackery.</span>
           </label>
           <div class="settings-control">
-            <input id="fs-kwp" type="number" min="0.01" max="100" step="0.01" class="device-select" style="width:100px" />
+            <input id="fs-kwp" type="number" min="0.01" max="100" step="0.01" class="forecast-input" />
           </div>
         </div>
         <div class="settings-row">
@@ -570,27 +574,37 @@
             <span class="settings-label-text">Forecast.Solar API key</span>
             <span class="settings-hint">Optional. Leave blank to use the public estimate URL.</span>
           </label>
-          <div class="settings-control" style="display:flex; gap:8px; flex-wrap:wrap; align-items:center">
-            <input id="fs-key" type="password" autocomplete="off" class="device-select" placeholder="optional" style="width:220px" />
+          <div class="settings-control forecast-key-row">
+            <input id="fs-key" type="password" autocomplete="off" class="forecast-input" placeholder="optional" />
             <span class="hint" id="fs-key-status">no key</span>
-            <button type="button" id="fs-key-save" class="btn btn-small">Save key</button>
-            <button type="button" id="fs-key-clear" class="btn btn-ghost btn-tiny">Clear</button>
+            <button type="button" id="fs-key-save" class="btn btn-ghost btn-small">Save key</button>
+            <button type="button" id="fs-key-clear" class="btn btn-ghost btn-small">Clear</button>
           </div>
         </div>
-        <button type="button" id="fs-array-infer" class="btn btn-ghost">Infer from history</button>
-        <button type="button" id="fs-array-save" class="btn btn-primary">Save array</button>
+        <div class="forecast-config-actions">
+          <button type="button" id="fs-array-infer" class="btn btn-ghost">Infer from history</button>
+          <button type="button" id="fs-array-save" class="btn btn-primary">Save array</button>
+        </div>
         <p class="hint" id="fs-array-hint"></p>
+        </div>
       </section>
 
-      <section id="forecast-load" class="card">
-        <div class="card-header">
+      <section id="forecast-load" class="card collapsible" data-collapse-key="forecast-load">
+        <div class="card-header collapsible-header"
+             role="button" tabindex="0" aria-expanded="true"
+             aria-controls="forecast-load-body">
           <h2>Expected load</h2>
+          <span class="hint" id="forecast-load-status">Historical</span>
+          <span class="collapsible-chevron" aria-hidden="true">▾</span>
+        </div>
+        <div id="forecast-load-body">
+        <div class="forecast-config-actions" style="margin-top:0">
           <div class="range-picker" role="tablist" aria-label="Load source">
             <button type="button" class="lmode-btn on" data-mode="historical">Historical</button>
             <button type="button" class="lmode-btn" data-mode="scheduled">Scheduled</button>
           </div>
         </div>
-        <p class="hint" style="margin:0 0 12px">
+        <p class="hint" style="margin:8px 0 12px">
           Historical uses the learned table (last 14 days by hour and weekday/weekend).
           Scheduled uses only the watt windows below (uncovered hours are 0).
           Sleep hours drop inverter parasitic so a bedtime shutdown does not drain the forecast.
@@ -601,9 +615,9 @@
             <span class="settings-hint">Local time. Parasitic / inverter idle is zeroed in this range. Scheduled windows still apply.</span>
           </label>
           <div class="settings-control" style="display:flex; gap:8px; align-items:center; flex-wrap:wrap">
-            <input id="load-sleep-start" type="time" class="device-select" />
+            <input id="load-sleep-start" type="time" class="forecast-input" />
             <span class="hint">to</span>
-            <input id="load-sleep-end" type="time" class="device-select" />
+            <input id="load-sleep-end" type="time" class="forecast-input" />
           </div>
         </div>
         <div id="load-learned-wrap">
@@ -628,8 +642,11 @@
           </div>
           <button type="button" id="load-add-window" class="btn btn-ghost btn-small">Add window</button>
         </div>
-        <button type="button" id="load-save" class="btn btn-primary" style="margin-top:12px">Save load settings</button>
+        <div class="forecast-config-actions">
+          <button type="button" id="load-save" class="btn btn-primary">Save load settings</button>
+        </div>
         <p class="hint" id="load-save-hint"></p>
+        </div>
       </section>
 
       <section id="forecast-content" class="card" hidden>
