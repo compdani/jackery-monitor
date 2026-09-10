@@ -5820,10 +5820,14 @@ async def api_backup_setup_restore_run(body: dict):
     return result
 
 
-# Static UI
+# Static UI. no-cache so Cloudflare / the PWA SW revalidate the shell
+# instead of serving a stale Forecast tab after a deploy.
 @app.get("/")
 def index():
-    return FileResponse(WEB_DIR / "index.html")
+    return FileResponse(
+        WEB_DIR / "index.html",
+        headers={"Cache-Control": "no-cache"},
+    )
 
 
 # PWA manifest + service worker MUST live at the site root for the browser
@@ -5837,9 +5841,14 @@ def manifest():
 
 @app.get("/sw.js")
 def service_worker():
-    return FileResponse(WEB_DIR / "sw.js",
-                        media_type="application/javascript",
-                        headers={"Service-Worker-Allowed": "/"})
+    return FileResponse(
+        WEB_DIR / "sw.js",
+        media_type="application/javascript",
+        headers={
+            "Service-Worker-Allowed": "/",
+            "Cache-Control": "no-cache",
+        },
+    )
 
 
 # Wrap StaticFiles to send `Cache-Control: no-cache` so caching CDNs (e.g.

@@ -478,6 +478,24 @@ def test_energy_history_bucket_s_allow_list_and_coarsen(app, client):
     assert len(jy["history"]) <= app._ENERGY_HISTORY_MAX_POINTS
 
 
+def test_shell_sends_no_cache_and_forecast_load_markup(client):
+    """Forecast array/load cards must ship in the HTML shell, and / + /sw.js
+    revalidate so a PWA/CDN cannot keep an old Forecast tab after deploy."""
+    r = client.get("/")
+    assert r.status_code == 200
+    assert "no-cache" in (r.headers.get("cache-control") or "").lower()
+    html = r.text
+    assert 'id="forecast-array"' in html
+    assert 'id="forecast-load"' in html
+    assert 'id="load-add-window"' in html
+    assert 'id="load-windows-wrap"' in html
+    assert 'id="load-windows-wrap" hidden' not in html
+    sw = client.get("/sw.js")
+    assert sw.status_code == 200
+    assert "no-cache" in (sw.headers.get("cache-control") or "").lower()
+    assert "jackery-shell-v5" in sw.text
+
+
 def test_solar_array_validation_and_roundtrip(app, client):
     r = client.post("/api/forecast/solar_array",
                     json={"declination": 20, "azimuth": 0, "kwp": 2.4})

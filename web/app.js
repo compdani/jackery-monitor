@@ -5640,15 +5640,11 @@ async function fetchForecast() {
         `Once enough data accumulates, the forecast will appear here ` +
         `automatically — no action required.`
       );
-      if ($('forecast-array')) $('forecast-array').hidden = false;
-      if ($('forecast-load')) $('forecast-load').hidden = false;
       return;
     }
     needsConfig.hidden = true;
     content.hidden = false;
     stats.hidden = false;
-    if ($('forecast-array')) $('forecast-array').hidden = false;
-    if ($('forecast-load')) $('forecast-load').hidden = false;
     forecastCache = j;
     // Show the location these forecasts are based on. Async, fires its
     // own /api/location request — doesn't block the chart render.
@@ -5714,10 +5710,12 @@ function setLoadMode(mode) {
   document.querySelectorAll('.lmode-btn').forEach((b) => {
     b.classList.toggle('on', b.dataset.mode === _loadMode);
   });
+  // Learned table and watt windows stay visible in both modes — the
+  // toggle only picks which source the forecast uses.
   const learned = $('load-learned-wrap');
   const wins = $('load-windows-wrap');
-  if (learned) learned.hidden = _loadMode !== 'historical';
-  if (wins) wins.hidden = _loadMode !== 'scheduled';
+  if (learned) learned.hidden = false;
+  if (wins) wins.hidden = false;
 }
 
 function renderLearnedProfile(rows) {
@@ -6395,8 +6393,11 @@ async function maybePromptLocationOnBoot() {
     localStorage.setItem('jackery-location-denied', '1');
   } else if (result.ok) {
     // Location just saved — populate the EOD badge right away rather than
-    // waiting for the hourly tick.
+    // waiting for the hourly tick. Config panels (array + load) unhide
+    // as soon as /api/location has coords.
     fetchEodForecast();
+    loadForecastConfigPanels();
+    if (activeTab === 'forecast') fetchForecast();
   }
 }
 
@@ -6469,6 +6470,7 @@ document.addEventListener('click', async (e) => {
   const result = await requestAndSaveGeolocation();
   if (result.ok) {
     fetchForecast();
+    loadForecastConfigPanels();
     fetchEodForecast();
   }
 });
@@ -6683,6 +6685,7 @@ async function _saveManualLocation(lat, lon, label, opts) {
     // pull fresh GHI for the new coords.
     setTimeout(() => _showManualLoc(false), 800);
     fetchForecast();
+    loadForecastConfigPanels();
     fetchEodForecast();
     // Update the "Forecasting for: …" line immediately so the user sees
     // the new place name before fetchForecast() finishes its round-trip.
