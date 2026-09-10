@@ -73,11 +73,20 @@ small { color: var(--text-dim); font-weight: 400; font-size: 12px; margin-left: 
 button { font-family: inherit; cursor: pointer; }
 a { color: var(--accent-2); }
 
+/* Breakpoints
+   Phone:  max-width 720px — all portrait phones and small-phone landscape
+           (e.g. iPhone SE landscape 667px). Stacks grids, wraps chrome.
+   Tablet: max-width 900px — 2-col hero/energy, 3-col forecast strip.
+   Wide:   min-width 2000px / 3000px — main max-width tiers.
+   Do not set overflow-x: hidden on body (it breaks the sticky topbar);
+   contain overflow on chrome and dense rows instead. */
+
 /* ============== Top bar ============== */
 .topbar {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 10px;
   padding: 14px 22px;
   border-bottom: 1px solid var(--border-soft);
   background: linear-gradient(180deg, var(--bg-elev) 0%, var(--bg) 100%);
@@ -94,7 +103,12 @@ a.brand:hover .logo-dot { transform: scale(1.15); transition: transform .15s; }
   background: var(--accent);
   box-shadow: 0 0 12px rgba(74,222,128,.6);
 }
-.topbar-right { display: flex; align-items: center; gap: 10px; }
+.topbar-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
 
 /* ============== Pills ============== */
 .pill {
@@ -195,8 +209,10 @@ a.brand:hover .logo-dot { transform: scale(1.15); transition: transform .15s; }
   border: 1px solid var(--border);
   border-radius: 8px;
   padding: 4px 4px 4px 12px;
+  min-width: 0;
+  max-width: 100%;
 }
-.dp-label { font-size: 11px; color: var(--text-dim); text-transform: uppercase; letter-spacing: .05em; }
+.dp-label { font-size: 11px; color: var(--text-dim); text-transform: uppercase; letter-spacing: .05em; flex-shrink: 0; }
 .device-select {
   background: transparent;
   border: none;
@@ -207,8 +223,27 @@ a.brand:hover .logo-dot { transform: scale(1.15); transition: transform .15s; }
   padding: 5px 8px;
   outline: none;
   cursor: pointer;
+  min-width: 0;
+  max-width: 100%;
 }
 .device-select option { background: var(--bg-elev); color: var(--text); }
+
+@media (max-width: 720px) {
+  .topbar {
+    flex-wrap: wrap;
+    padding: 10px 12px;
+  }
+  .brand { flex-shrink: 0; }
+  .brand h1 { display: none; }
+  .topbar-right {
+    flex: 1 1 auto;
+    flex-wrap: wrap;
+    justify-content: flex-start;
+  }
+  .dp-label { display: none; }
+  .device-picker { flex: 1 1 auto; overflow: hidden; }
+  main { padding: 12px; }
+}
 
 /* ============== Live fleet strip (multi-device glance) ============== */
 .fleet-strip {
@@ -294,7 +329,7 @@ a.brand:hover .logo-dot { transform: scale(1.15); transition: transform .15s; }
   font-variant-numeric: tabular-nums;
 }
 .fleet-packs { color: var(--text-mute); }
-@media (max-width: 600px) {
+@media (max-width: 720px) {
   .fleet-strip { grid-template-columns: 1fr; }
 }
 
@@ -321,9 +356,15 @@ main {
   main { max-width: min(90vw, 2400px); padding: 32px; }
 }
 .tabs {
-  display: flex; gap: 4px;
+  display: flex;
+  gap: 4px;
   border-bottom: 1px solid var(--border-soft);
   margin-bottom: 22px;
+  overflow-x: auto;
+  flex-wrap: nowrap;
+  max-width: 100%;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: thin;
 }
 
 /* Sub-tabs inside the Settings panel — visually distinct from the
@@ -362,7 +403,7 @@ main {
   background: var(--accent);
   border-color: var(--accent);
 }
-@media (max-width: 600px) {
+@media (max-width: 720px) {
   .settings-subtabs { padding: 3px; gap: 3px; }
   .settings-subtab { font-size: 12px; padding: 7px 12px; }
 }
@@ -402,7 +443,7 @@ main {
   background: var(--accent);
   border-color: var(--accent);
 }
-@media (max-width: 600px) {
+@media (max-width: 720px) {
   .automation-subtabs { padding: 3px; gap: 3px; }
   .automation-subtab { font-size: 12px; padding: 7px 12px; }
 }
@@ -551,11 +592,12 @@ main {
   border-radius: 6px;
 }
 
-@media (max-width: 600px) {
+@media (max-width: 720px) {
   #settings-search { font-size: 13px; padding: 9px 12px; }
   .settings-search-result { padding: 9px 12px; }
 }
 .tab {
+  flex: 0 0 auto;
   background: transparent;
   border: none;
   color: var(--text-dim);
@@ -678,7 +720,7 @@ main {
   .hero-grid > [data-card="power-flow"] { grid-column: 1 / -1; grid-row: 2; }
   .energy-grid { grid-template-columns: 1fr 1fr; }
 }
-@media (max-width: 600px) {
+@media (max-width: 720px) {
   .hero-grid {
     grid-template-columns: 1fr;
   }
@@ -875,7 +917,7 @@ main {
 }
 .flow-eta.charging    { fill: #4ade80; }
 .flow-eta.discharging { fill: #fbbf24; }
-@media (max-width: 600px) {
+@media (max-width: 720px) {
   /* Same scale-up logic as the rest of the diagram (viewBox 1000x300
      at iPhone width ≈340 → content scale ~0.34). 22 SVG units ≈ 7.5
      CSS px, just enough to read the timer below the SOC numeral. */
@@ -891,7 +933,7 @@ main {
    all clearly readable without redesigning the diagram. The icons
    get the same treatment so they read as proper symbols, not dots.
    Bumps stay below the gap between nodes/labels so nothing collides. */
-@media (max-width: 600px) {
+@media (max-width: 720px) {
   .flow-label { font-size: 22px; }
   .flow-w    { font-size: 30px; font-weight: 600; }
   .flow-soc  { font-size: 48px; }
@@ -1079,7 +1121,7 @@ main {
 .eod-forecast.calibrating .eod-row { font-size: 13px; font-weight: 500; color: var(--text-dim); }
 .eod-forecast.calibrating .eod-row small { display: none; }
 .eod-forecast.calibrating { border-style: dashed; }
-@media (max-width: 600px) {
+@media (max-width: 720px) {
   .eod-forecast { top: 60px; right: 12px; min-width: 84px; padding: 6px 10px; }
   .eod-row { font-size: 18px; }
 }
@@ -1186,6 +1228,18 @@ main {
   border-bottom: 1px dotted currentColor;
 }
 .pack-sn { color: var(--text-mute); font-size: 11px; text-align: right; }
+@media (max-width: 720px) {
+  /* 6 fixed columns (~350px min) overflow a phone card. Collapse to
+     a 3-col grid that wraps: idx | bar | soc, then flow / temp / sn. */
+  .pack-row {
+    grid-template-columns: 24px minmax(0, 1fr) auto;
+    gap: 6px 8px;
+  }
+  .pack-bar { min-width: 0; }
+  .pack-flow { grid-column: 2; text-align: left; font-size: 11px; }
+  .pack-temp { grid-column: 3; font-size: 11px; }
+  .pack-sn { grid-column: 2 / -1; text-align: left; }
+}
 
 /* Smart-charge: current plan card + decision history. Compact, mono
    for numbers so the columns line up. */
@@ -1287,7 +1341,7 @@ main {
 }
 .dd-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(280px, 100%), 1fr));
   gap: 4px 16px;
 }
 .dd-field {
@@ -1862,7 +1916,7 @@ main {
   gap: 8px;
 }
 .auto-enabled { display: flex; gap: 8px; align-items: center; font-size: 13px; color: var(--text-dim); }
-@media (max-width: 600px) {
+@media (max-width: 720px) {
   .auto-condition { flex-wrap: wrap; }
   .auto-kasa-row { grid-template-columns: 1fr; }
   .auto-rule { grid-template-columns: 1fr; }
@@ -1934,13 +1988,13 @@ main {
   color: var(--text-mute);
   font-family: var(--font-sans);
 }
-@media (max-width: 600px) {
+@media (max-width: 720px) {
   .logs-row { grid-template-columns: 80px 50px 1fr; }
   .logs-row .lr-cat { display: none; }
   .logs-controls { flex-wrap: wrap; }
 }
 .settings-range { font-size: 11px; color: var(--text-dim); font-family: var(--font-mono); }
-@media (max-width: 600px) {
+@media (max-width: 720px) {
   .settings-row { grid-template-columns: 1fr; }
   .settings-control { justify-content: flex-start; }
 }
@@ -2196,6 +2250,12 @@ main {
 .device-param-source-user { color: var(--accent); }
 .device-param-source-fit { color: var(--accent-2); }
 .device-param-source-unknown { color: #f59e0b; }
+.device-param-edit {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  flex-wrap: wrap;
+}
 .device-param-edit input {
   width: 110px;
   padding: 4px 8px;
@@ -2206,6 +2266,13 @@ main {
   font-family: var(--font-mono);
   font-size: 13px;
   text-align: right;
+}
+@media (max-width: 720px) {
+  .device-param-row {
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+  .device-param-value { white-space: normal; }
 }
 
 .device-card dl {
@@ -2231,6 +2298,11 @@ main {
 }
 .device-card dt { border-bottom: 1px solid var(--border-soft); }
 .device-card dl > :nth-last-child(-n+2) { border-bottom: none; }
+@media (max-width: 720px) {
+  .device-card dl { grid-template-columns: 1fr; }
+  .device-card dt { padding-bottom: 0; border-bottom: none; }
+  .device-card dd { padding-top: 0; }
+}
 
 /* ============== Alerts ============== */
 .alert {
@@ -2527,7 +2599,7 @@ footer {
 @media (max-width: 900px) {
   .forecast-day-strip { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }
-@media (max-width: 540px) {
+@media (max-width: 720px) {
   .forecast-day-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 .forecast-day-tile {
@@ -2723,7 +2795,7 @@ footer {
   color: var(--text-dim);
   margin-top: 2px;
 }
-@media (max-width: 600px) {
+@media (max-width: 720px) {
   .acc-summary { grid-template-columns: 1fr; }
 }
 
