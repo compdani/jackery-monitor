@@ -1469,9 +1469,14 @@ class EnergyDB(ForecastTablesMixin, AutomationTablesMixin):
             # energy over the bucket (≈ mean W at bucket_s=3600); recover
             # watts from it so the solar-coefficient fit isn't stuck at 0.
             hours = bucket_s / 3600.0
-            if hours > 0 and row["solar_w"] <= 0:
+            if hours > 0:
+                # Prefer energy-derived mean watts over AVG(last_solar_w).
+                # Minute-end snapshots are often near 0 (NULL column, or
+                # the last reading of the minute is idle) while solar_wh
+                # still holds the hour's production — that used to feed
+                # the coefficient fit a pile of <50W hours and lock k at 0.
                 mean_solar_w = (r[3] or 0) / hours
-                if mean_solar_w > 0:
+                if mean_solar_w > row["solar_w"]:
                     row["solar_w"] = int(round(mean_solar_w))
             if ts_sorted and row["battery_pct"] is not None:
                 row["system_soc"] = _capacity_weighted_soc(

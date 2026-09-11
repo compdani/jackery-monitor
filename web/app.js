@@ -112,6 +112,24 @@ if ('serviceWorker' in navigator) {
 }
 
 // ---------- helpers ----------
+function apiDetail(j, fallback) {
+  const d = j && j.detail;
+  if (typeof d === 'string' && d) return d;
+  if (Array.isArray(d) && d.length) {
+    return d.map((x) => (x && (x.msg || x.message)) || JSON.stringify(x)).join('; ');
+  }
+  if (d && typeof d === 'object') return d.msg || d.message || JSON.stringify(d);
+  return (j && (j.error || j.message)) || fallback;
+}
+
+function fillSolarArrayForm(a) {
+  if (!a) return false;
+  let filled = false;
+  if ($('fs-dec') && a.declination != null) { $('fs-dec').value = a.declination; filled = true; }
+  if ($('fs-az') && a.azimuth != null) { $('fs-az').value = a.azimuth; filled = true; }
+  if ($('fs-kwp') && a.kwp != null) { $('fs-kwp').value = a.kwp; filled = true; }
+  return filled;
+}
 function fmt(n, digits = 0) {
   if (n === null || n === undefined || Number.isNaN(n)) return '—';
   return Number(n).toFixed(digits);
@@ -5980,10 +5998,7 @@ async function loadForecastConfigPanels() {
     const r = await fetch('/api/forecast/solar_array');
     if (r.ok) {
       const j = await r.json();
-      const a = j.array || {};
-      if ($('fs-dec') && a.declination != null) $('fs-dec').value = a.declination;
-      if ($('fs-az') && a.azimuth != null) $('fs-az').value = a.azimuth;
-      if ($('fs-kwp') && a.kwp != null) $('fs-kwp').value = a.kwp;
+      fillSolarArrayForm(j.array);
       if ($('fs-key-status')) $('fs-key-status').textContent = j.has_key ? 'key saved' : 'no key';
     }
   } catch (e) { console.warn('solar array fetch failed', e); }
@@ -6036,19 +6051,23 @@ function handleForecastConfigClick(btn) {
 
 async function inferSolarArray() {
   const hint = $('fs-array-hint');
+  const status = $('forecast-array-status');
+  const btn = $('fs-array-infer');
   const sn = activeJackeryDevice()?.device_sn;
   const q = sn ? `?device_sn=${encodeURIComponent(sn)}` : '';
-  if (hint) hint.textContent = 'Inferring…';
+  if (hint) hint.textContent = 'Inferring from last 14 days of solar vs GHI…';
+  if (status) status.textContent = 'inferring…';
+  if (btn) btn.disabled = true;
   try {
     const r = await fetch(`/api/forecast/solar_array/infer${q}`, { method: 'POST' });
     const j = await r.json().catch(() => ({}));
     if (!r.ok) {
-      if (hint) hint.textContent = j.detail || 'Infer failed';
+      const msg = apiDetail(j, 'Infer failed');
+      if (hint) hint.textContent = msg;
+      if (status) status.textContent = 'infer failed';
       return;
     }
-    if ($('fs-dec') && j.declination != null) $('fs-dec').value = j.declination;
-    if ($('fs-az') && j.azimuth != null) $('fs-az').value = j.azimuth;
-    if ($('fs-kwp') && j.kwp != null) $('fs-kwp').value = j.kwp;
+    fillSolarArrayForm(j);
     const bits = [];
     if (j.confidence) bits.push(`${j.confidence} confidence`);
     if (j.correlation != null) bits.push(`r=${j.correlation}`);
@@ -6061,6 +6080,9 @@ async function inferSolarArray() {
     updateForecastConfigSummaries();
   } catch (e) {
     if (hint) hint.textContent = String(e);
+    if (status) status.textContent = 'infer failed';
+  } finally {
+    if (btn) btn.disabled = false;
   }
 }
 
@@ -6082,7 +6104,7 @@ async function saveSolarArray() {
     });
     const j = await r.json().catch(() => ({}));
     if (!r.ok) {
-      if (hint) hint.textContent = j.detail || 'Save failed';
+      if (hint) hint.textContent = apiDetail(j, 'Save failed');
       return;
     }
     if (hint) hint.textContent = `Saved · tilt ${j.declination}° · az ${j.azimuth}° · ${j.kwp} kWp`;

@@ -536,7 +536,7 @@ def test_solar_array_infer_empty_history_400(app, client, monkeypatch):
     assert client.get("/api/forecast/solar_array").json()["array"] is None
 
 
-def test_solar_array_infer_fills_without_saving(app, client):
+def test_solar_array_infer_fills_without_saving(app, client, monkeypatch):
     import math
     import time as _time
 
@@ -548,10 +548,10 @@ def test_solar_array_infer_fills_without_saving(app, client):
 
     sn = "TEST-INFER-EAST"
     app.state.energy.upsert_device(sn, "Rig", 13, "Explorer 5000 Plus")
-    now_h = (int(_time.time()) // 3600) * 3600
+    now_h = (int(_time.time()) // 86400) * 86400  # UTC midnight, not "current hour"
     weather = []
     for day in range(1, 4):
-        for hour in range(13, 24):
+        for hour in range(18, 23):  # 18:00-22:00 UTC ≈ late morning PDT
             ts = now_h - day * 86400 + hour * 3600
             zen, _az = app.solar_array.solar_zenith_azimuth(lat, lon, ts)
             if zen > 80:
@@ -576,6 +576,10 @@ def test_solar_array_infer_fills_without_saving(app, client):
                     (sn, ts, solar_w, solar_w))
     app.state.energy.upsert_weather_observations(weather)
     assert len(weather) >= 12
+
+    async def no_live(*_a, **_k):
+        return {"hourly": []}
+    monkeypatch.setattr(app.weather_client, "fetch_irradiance", no_live)
 
     r = client.post("/api/forecast/solar_array/infer",
                     params={"device_sn": sn})

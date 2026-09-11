@@ -1543,7 +1543,49 @@ def _cached_history(device_sn: str) -> list[dict]:
     return h
 
 
-def resolve_device_param(device_sn: str, key: str) -> dict[str, Any]:
+def _past_hours_from_weather_payload(fetched: dict | None) -> list[dict]:
+    """Keep Open-Meteo hours that fall in the last 14d (exclude forecast)."""
+    now = int(time.time())
+    since = now - 14 * 86400
+    rows: list[dict] = []
+    for w in (fetched or {}).get("hourly") or []:
+        try:
+            ts = int(w.get("ts") or 0)
+        except (TypeError, ValueError):
+            continue
+        if since <= ts <= now:
+            rows.append(w)
+    return rows
+
+
+async def _ensure_weather_hourly() -> list[dict]:
+    """Weather series for solar / max-charge fits.
+
+    Prefer the live (or 1h-cached) Open-Meteo payload — the same series
+    `build_forecast` uses — instead of `weather_observations`, which is
+    INSERT OR IGNORE. A first write of GHI=0 would otherwise stick
+    forever and Refit would keep returning k=0.
+    """
+    loc = device_location.get() or {}
+    fetched = None
+    lat, lon = loc.get("latitude"), loc.get("longitude")
+    if lat is not None and lon is not None:
+        try:
+            fetched = await weather_client.fetch_irradiance(
+                float(lat), float(lon))
+        except Exception as e:
+            log.warning("weather fetch for fit failed: %s", e)
+    rows = _past_hours_from_weather_payload(fetched)
+    if len(rows) >= 12:
+        return rows
+    db_rows = state.energy.list_weather_observations(
+        since_ts=int(time.time()) - 14 * 86400, limit=14 * 24 + 48,
+    )
+    return db_rows or rows
+
+
+def resolve_device_param(device_sn: str, key: str,
+                         weather_hourly: list[dict] | None = None) -> dict[str, Any]:
     """Walk the resolution ladder for `key` on `device_sn`. Returns a
     dict with at least {value, source}; may also include n_samples,
     confidence, note, updated_at when those make sense.
@@ -1631,8 +1673,10 @@ def resolve_device_param(device_sn: str, key: str) -> dict[str, Any]:
 
         try:
             tz_off = int(device_location.get_tz_offset() or 0)
-            wx = state.energy.list_weather_observations(
-                since_ts=int(time.time()) - 14 * 86400, limit=14 * 24,
+            wx = weather_hourly if weather_hourly is not None else (
+                state.energy.list_weather_observations(
+                    since_ts=int(time.time()) - 14 * 86400, limit=14 * 24 + 48,
+                )
             )
             w, n = forecaster.fit_max_charge_w(
                 _cached_history(device_sn),
@@ -1715,11 +1759,10 @@ def resolve_device_param(device_sn: str, key: str) -> dict[str, Any]:
     elif key == "solar_coefficient":
         try:
             ehist = _cached_history(device_sn)
-            # The solar fit needs paired weather + energy samples; we
-            # only have weather observations stored locally. Query the
-            # last 14d.
-            wx = state.energy.list_weather_observations(
-                since_ts=int(time.time()) - 14 * 86400, limit=14 * 24,
+            wx = weather_hourly if weather_hourly is not None else (
+                state.energy.list_weather_observations(
+                    since_ts=int(time.time()) - 14 * 86400, limit=14 * 24 + 48,
+                )
             )
             k_val, n = forecaster.fit_solar_coefficient(ehist, wx)
             k_val = round(float(k_val), 4)
@@ -3077,8 +3120,8 @@ async def api_reconnect():
 
 
 @app.get("/api/devices/params")
-def api_devices_params(device_sn: str | None = None,
-                        debug_key: str | None = None):
+async def api_devices_params(device_sn: str | None = None,
+                             debug_key: str | None = None):
     """Return every resolvable per-device parameter, with source +
     confidence. The Device tab renders this as a "Learned parameters"
     panel: each row shows the value, where it came from
@@ -3095,9 +3138,10 @@ def api_devices_params(device_sn: str | None = None,
         device_sn = state.device.device_sn if state.device else None
     if not device_sn:
         raise HTTPException(400, "no active device")
+    wx = await _ensure_weather_hourly()
     out = []
     for key, meta in energy_db.DEVICE_PARAM_KEYS.items():
-        resolved = resolve_device_param(device_sn, key)
+        resolved = resolve_device_param(device_sn, key, weather_hourly=wx)
         out.append({"key": key, **meta, **resolved})
     response: dict[str, Any] = {
         "device_sn": device_sn,
@@ -3112,9 +3156,6 @@ def api_devices_params(device_sn: str | None = None,
         try:
             ehist = state.energy.history(device_sn, hours=14 * 24, bucket_s=3600)
             tz_off = device_location.get_tz_offset() or 0
-            wx = state.energy.list_weather_observations(
-                since_ts=int(time.time()) - 14 * 86400, limit=14 * 24,
-            )
             samples, n_used = forecaster.fit_max_charge_w(
                 ehist, tz_offset_seconds=int(tz_off),
                 weather_hourly=wx, return_candidates=True,
@@ -3184,20 +3225,11 @@ async def api_devices_params_refit(req: Request):
     # memo so the live fit picks up the latest data.
     state.energy.clear_device_param(device_sn, key)
     _param_fit_cache.pop((device_sn, "_history"), None)
-    # Solar (and max-charge) fits pair energy with GHI. Refresh
-    # Open-Meteo first so Refit isn't stuck on a sparse/stale
-    # weather_observations table — same fetch the Forecast.Solar
-    # infer path already does.
+    wx = None
     if key in ("solar_coefficient", "max_charge_w"):
-        loc = device_location.get()
-        if loc:
-            try:
-                await weather_client.fetch_irradiance(
-                    float(loc["latitude"]), float(loc["longitude"]))
-            except Exception as e:
-                log.warning("params refit: irradiance fetch failed: %s", e)
+        wx = await _ensure_weather_hourly()
     return {"device_sn": device_sn, "key": key,
-            **resolve_device_param(device_sn, key)}
+            **resolve_device_param(device_sn, key, weather_hourly=wx)}
 
 
 @app.get("/api/devices/probe_results")
@@ -4663,21 +4695,17 @@ async def api_solar_array_infer(device_sn: str | None = None):
         device_sn, hours=14 * 24, bucket_s=3600,
         main_capacity_wh=main_wh, pack_capacity_wh=pack_wh,
     )
-    wx = state.energy.list_weather_observations(
-        since_ts=int(time.time()) - 14 * 86400, limit=14 * 24,
-    )
-    has_solar = any(float(r.get("solar_w") or 0) >= 50 for r in hist)
-    if len(wx) < 12 and has_solar:
-        try:
-            fetched = await weather_client.fetch_irradiance(
-                loc["latitude"], loc["longitude"])
-            wx = fetched.get("hourly") or wx
-        except Exception as e:
-            log.warning("infer: irradiance fetch failed: %s", e)
+    wx = await _ensure_weather_hourly()
     out = solar_array.infer_plane(
         hist, wx, loc["latitude"], loc["longitude"])
     if out.get("error") and "declination" not in out:
-        raise HTTPException(400, out["error"])
+        peak = max((float(r.get("solar_w") or 0) for r in hist), default=0.0)
+        raise HTTPException(
+            400,
+            f"{out['error']} (paired hours={out.get('n_samples', 0)}, "
+            f"weather={len(wx)}, energy hours={len(hist)}, "
+            f"peak solar={round(peak)} W)",
+        )
     return out
 
 

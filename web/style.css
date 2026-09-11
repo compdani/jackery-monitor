@@ -1761,7 +1761,7 @@ input.forecast-input[type="password"] { min-width: 12em; flex: 1; }
 .settings-control { display: flex; align-items: center; gap: 8px; }
 .settings-control input[type="number"],
 .settings-control input[type="time"] {
-  width: 90px; padding: 8px 10px;
+  width: 110px; padding: 8px 10px;
   background: var(--bg);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);

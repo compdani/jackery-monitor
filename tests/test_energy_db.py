@@ -156,6 +156,26 @@ def test_last_battery_full_ts(db):
     assert db.last_battery_full_ts("NOPE") is None
 
 
+def test_history_prefers_solar_wh_over_low_snapshot(db):
+    """AVG(last_solar_w) can be a few watts of noise while solar_wh is
+    a real hour of production. Prefer the energy-derived mean."""
+    sn = "TEST-SOLAR-WH-NOISE"
+    db.upsert_device(sn, "Test 5000", 13, "Explorer 5000 Plus")
+    hour = int((time.time() - 7200) // 3600) * 3600
+    with db._conn() as c:
+        c.execute(
+            """INSERT INTO samples
+                   (device_sn, bucket, input_wh, output_wh, solar_wh,
+                    ac_input_wh, solar_charge_diverted_wh,
+                    last_input_w, last_output_w, last_solar_w,
+                    last_ac_input_w, last_battery_pct, sample_count)
+               VALUES (?, ?, 0, 0, 2400, 0, 0, 0, 0, 12, 0, 50, 1)""",
+            (sn, hour),
+        )
+    rows = db.history(sn, hours=24, bucket_s=3600)
+    assert rows[0]["solar_w"] == 2400
+
+
 def test_history_recovers_solar_w_from_solar_wh(db):
     """Hourly last_solar_w can be NULL on pre-column samples; solar_wh
     still has the energy. history() must surface watts so the solar
