@@ -1588,6 +1588,10 @@ def expected_load_w(
     interpreted as additive watts on top of the proportional term —
     rare, only used by tests that pre-date the proportional model.
 
+    An explicit 0 W bucket means the inverter is off: return 0 and do
+    not add parasitic / overhead. Empty buckets still fall back to
+    IDLE_LOAD_W (unknown, not "off").
+
     Fallback hierarchy when the (hour, weekend) bucket is empty:
       1. Same hour, opposite weekend-flag.
       2. Neighboring hours within ±3, same weekend-flag (preserves day/night).
@@ -1619,6 +1623,8 @@ def expected_load_w(
                     break
         if base is None:
             base = IDLE_LOAD_W
+    if base <= 0:
+        return 0.0
     return base * (1.0 + pct) + flat
 
 
@@ -2037,8 +2043,14 @@ def build_forecast(
         asleep = _load_sched.in_sleep_window(minute, sleep_start, sleep_end)
         if mode == "scheduled":
             base = _load_sched.scheduled_load_w(load_windows or [], hour, weekend)
-            para = 0.0 if asleep else effective_parasitic_w
-            load_w = base * (1.0 + overhead_pct) + para
+            # 0 W (uncovered or explicit) = inverter off: no parasitic.
+            # Sleep zeros idle but scheduled window watts still apply.
+            if base <= 0:
+                load_w = 0.0
+            elif asleep:
+                load_w = base * (1.0 + overhead_pct)
+            else:
+                load_w = base * (1.0 + overhead_pct) + effective_parasitic_w
         elif asleep:
             # Unit is asleep: no AC output and no inverter idle / parasitic.
             load_w = 0.0

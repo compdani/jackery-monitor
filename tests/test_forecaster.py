@@ -644,6 +644,16 @@ def test_expected_load_uses_idle_default_when_no_data():
     assert load == expected
 
 
+def test_expected_load_zero_bucket_skips_parasitic():
+    from datetime import datetime
+    # Explicit 0 W = inverter off. Parasitic must not be added.
+    profile = {(12, 0): 0.0}
+    noon = int(datetime(2024, 7, 2, 12, 0, 0).timestamp())  # Tuesday
+    load = forecaster.expected_load_w(
+        profile, noon, idle_overhead_w=50.0, inverter_overhead_pct=0.10)
+    assert load == 0.0
+
+
 def test_expected_load_falls_back_to_neighbor_hour_not_global_mean():
     # User has heavy daytime activity (avg ~500W) but quiet evenings
     # (~50W). A missing 2am bucket should inherit from neighboring night
@@ -836,6 +846,60 @@ def test_build_forecast_scheduled_window_and_sleep_zeros_parasitic():
     assert eighteen[0]["load_w"] >= 800
     assert midnight
     assert midnight[0]["load_w"] == 0.0
+
+
+def test_build_forecast_scheduled_zero_or_uncovered_skips_parasitic():
+    """0 W / uncovered hours are inverter-off: no idle baseline.
+    Positive windows still get overhead + parasitic."""
+    from datetime import datetime, timezone
+    now = int(datetime(2024, 7, 1, 12, 0, tzinfo=timezone.utc).timestamp())
+    energy, weather = _ready_history_and_weather(now)
+    res = forecaster.build_forecast(
+        energy_history=energy,
+        weather_hourly=weather,
+        starting_soc_pct=50.0,
+        capacity_wh=5040,
+        now_ts=now,
+        horizon_hours=24,
+        utc_offset_seconds=0,
+        load_mode="scheduled",
+        load_windows=[{
+            "start": "18:00", "end": "22:00", "watts": 800, "days": "all",
+        }],
+    )
+    assert res["ready"]
+    para = res["effective_parasitic_w"]
+    pct = res["inverter_overhead_pct"]
+    noon = [h for h in res["forecast"] if ((h["ts"] // 3600) % 24) == 12]
+    eighteen = [h for h in res["forecast"] if ((h["ts"] // 3600) % 24) == 18]
+    assert noon and noon[0]["load_w"] == 0.0
+    assert eighteen
+    expected_on = 800 * (1.0 + pct) + para
+    assert abs(eighteen[0]["load_w"] - expected_on) < 0.2
+
+
+def test_build_forecast_historical_zero_bucket_skips_parasitic():
+    """Learned 0 W at an hour is inverter-off, even with parasitic fitted."""
+    from datetime import datetime, timezone
+    now = int(datetime(2024, 7, 1, 12, 0, tzinfo=timezone.utc).timestamp())
+    energy, weather = _ready_history_and_weather(now)
+    for row in energy:
+        row["output_w"] = 0
+        row["output_wh"] = 0
+    res = forecaster.build_forecast(
+        energy_history=energy,
+        weather_hourly=weather,
+        starting_soc_pct=50.0,
+        capacity_wh=5040,
+        now_ts=now,
+        horizon_hours=24,
+        utc_offset_seconds=0,
+    )
+    assert res["ready"]
+    noon = [h for h in res["forecast"] if ((h["ts"] // 3600) % 24) == 12]
+    assert noon and noon[0]["load_w"] == 0.0
+    assert all(h["load_w"] == 0.0 for h in res["forecast"])
+    assert res["effective_parasitic_w"] > 0
 
 
 def test_build_forecast_historical_sleep_zeros_overnight_load():

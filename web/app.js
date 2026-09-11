@@ -5696,6 +5696,18 @@ async function fetchForecast() {
     setText('forecast-capacity', j.capacity_wh);
     setText('forecast-coeff',    j.solar_coefficient, 2);
     setText('forecast-avg-load', j.overall_load_w);
+    const loadSub = $('forecast-avg-load-sub');
+    if (loadSub) {
+      if (j.parasitic_w != null) {
+        const idle = Math.round(Number(j.parasitic_w));
+        const packs = Number(j.pack_baseline_w || 0);
+        loadSub.textContent = packs
+          ? `idle ${idle} W when inverter on · +${Math.round(packs)} W packs`
+          : `idle ${idle} W when inverter on`;
+      } else {
+        loadSub.textContent = 'idle 0 W when inverter off';
+      }
+    }
     const sub = $('forecast-coeff-sub');
     if (sub) {
       const minFit = 2;

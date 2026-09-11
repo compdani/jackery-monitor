@@ -607,12 +607,14 @@
         <p class="hint" style="margin:8px 0 12px">
           Historical uses the learned table (last 14 days by hour and weekday/weekend).
           Scheduled uses only the watt windows below (uncovered hours are 0).
-          Sleep hours drop inverter parasitic so a bedtime shutdown does not drain the forecast.
+          0 W means the inverter is off — idle/parasitic is not added.
+          Sleep hours also drop inverter idle so a bedtime shutdown does not drain
+          the forecast even if a window has watts.
         </p>
         <div class="settings-row">
           <label class="settings-label">
             <span class="settings-label-text">Sleep window</span>
-            <span class="settings-hint">Local time. Parasitic / inverter idle is zeroed in this range. Scheduled windows still apply.</span>
+            <span class="settings-hint">Local time. 0 W hours are inverter-off (no idle). Sleep zeros idle even when a scheduled window has watts.</span>
           </label>
           <div class="settings-control" style="display:flex; gap:8px; align-items:center; flex-wrap:wrap">
             <input id="load-sleep-start" type="time" class="forecast-input" />
@@ -683,6 +685,7 @@
         <section class="card">
           <div class="card-eyebrow"><span>Avg load</span></div>
           <div class="kpi-value"><span id="forecast-avg-load">—</span><small>W</small></div>
+          <div class="kpi-sub" id="forecast-avg-load-sub">—</div>
         </section>
       </div>
 

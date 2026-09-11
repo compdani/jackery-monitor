@@ -31,6 +31,8 @@ export default function ForecastScreen() {
     capacity_wh?: number;
     solar_coefficient?: number;
     overall_load_w?: number;
+    parasitic_w?: number;
+    pack_baseline_w?: number;
     solar_source?: string;
     configured?: boolean;
     today_budget?: {
@@ -242,7 +244,7 @@ export default function ForecastScreen() {
             value={loadMode}
             onChange={setLoadMode}
           />
-          <Hint>Sleep window zeros inverter parasitic. Scheduled windows still apply.</Hint>
+          <Hint>0 W (or uncovered hours) means the inverter is off — no parasitic. Sleep zeros idle even when a window has watts.</Hint>
           <View style={{ flexDirection: "row", gap: 8 }}>
             <View style={{ flex: 1 }}>
               <Field label="Sleep start" value={sleepStart} onChangeText={setSleepStart} placeholder="23:00" />
@@ -351,7 +353,18 @@ export default function ForecastScreen() {
         value={fc?.solar_coefficient != null ? fc.solar_coefficient.toFixed(3) : "—"}
         sub={fc?.solar_source === "forecast_solar" ? "Forecast.Solar" : fc?.solar_source === "mixed" ? "Forecast.Solar + Open-Meteo" : "W per W/m²"}
       />
-      <Kpi label="Avg load" value={fc?.overall_load_w != null ? String(Math.round(fc.overall_load_w)) : "—"} unit="W" />
+      <Kpi
+        label="Avg load"
+        value={fc?.overall_load_w != null ? String(Math.round(fc.overall_load_w)) : "—"}
+        unit="W"
+        sub={
+          fc?.parasitic_w != null
+            ? (fc.pack_baseline_w
+              ? `idle ${Math.round(fc.parasitic_w)} W when inverter on · +${Math.round(fc.pack_baseline_w)} W packs`
+              : `idle ${Math.round(fc.parasitic_w)} W when inverter on`)
+            : undefined
+        }
+      />
 
       {fc?.today_budget ? (
         <Card>
