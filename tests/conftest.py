@@ -39,6 +39,7 @@ def isolated_data(tmp_path, monkeypatch):
     monkeypatch.setenv("JACKERY_LOAD_SCHEDULE_FILE",   str(data / "load_schedule.json"))
     monkeypatch.setenv("JACKERY_COST_FILE",            str(data / "cost.json"))
     monkeypatch.setenv("JACKERY_SMART_CHARGE_FILE",    str(data / "smart_charge.json"))
+    monkeypatch.setenv("JACKERY_F7_AC_RESET_FILE",     str(data / "f7_ac_reset.json"))
     monkeypatch.setenv("JACKERY_CLAUDE_KEY_FILE",      str(data / ".claude-key"))
     # Force module-level path constants to re-read the env vars by reloading.
     # Tests that import these modules import them inside the test function

@@ -480,7 +480,7 @@ function switchTab(name, opts = {}) {
     // User is now looking — clear the "new insights" dot.
     setAutomationDot(false);
   }
-  if (name === 'device')   { loadDeviceCapacity(); loadDeviceParams(); }
+  if (name === 'device')   { loadDeviceCapacity(); loadDeviceParams(); loadF7AcReset(); }
 }
 
 // Boot path: pull the tab from the URL hash. Defer the actual switch
@@ -981,10 +981,108 @@ function resetDeviceTabWidgets() {
     probeBtn.textContent = 'Probe now';
     probeBtn.disabled = false;
   }
+  const f7Hint = $('f7-ac-reset-hint');
+  if (f7Hint) f7Hint.textContent = '';
+  const f7Events = $('f7-ac-reset-events');
+  if (f7Events) f7Events.textContent = '';
 }
 
 function deviceTabLoadStale(requestedSn) {
   return (activeJackeryDevice()?.device_sn || null) !== (requestedSn || null);
+}
+
+function formatDeviceErrorCode(code) {
+  if (code == null || code === '') return '—';
+  const n = Number(code);
+  if (n === 8) return 'F7 (8)';
+  return String(code);
+}
+
+let _f7Enabled = false;
+
+function setF7Enabled(on) {
+  _f7Enabled = !!on;
+  document.querySelectorAll('.f7-enable-btn').forEach((b) => {
+    b.classList.toggle('on', (b.dataset.on === '1') === _f7Enabled);
+  });
+}
+
+function renderF7Events(events) {
+  const el = $('f7-ac-reset-events');
+  if (!el) return;
+  const rows = (events || []).slice(-8).reverse();
+  if (!rows.length) {
+    el.textContent = 'No pulses yet.';
+    return;
+  }
+  el.innerHTML = rows.map((e) => {
+    const ts = e.ts ? new Date(e.ts * 1000).toLocaleString() : '';
+    const msg = String(e.message || '');
+    return `<div>${escapeHtml(ts)} · ${escapeHtml(e.level || 'info')} · ${escapeHtml(msg)}</div>`;
+  }).join('');
+}
+
+async function loadF7AcReset() {
+  const requestedSn = activeJackeryDevice()?.device_sn;
+  const status = $('f7-ac-reset-status');
+  if (!requestedSn) {
+    setF7Enabled(false);
+    if (status) status.textContent = 'no device';
+    renderF7Events([]);
+    return;
+  }
+  try {
+    const r = await fetch(`/api/f7_ac_reset/config?device_sn=${encodeURIComponent(requestedSn)}`);
+    if (!r.ok) return;
+    if (deviceTabLoadStale(requestedSn)) return;
+    const j = await r.json();
+    if (deviceTabLoadStale(requestedSn)) return;
+    const c = j.config || {};
+    setF7Enabled(!!c.enabled);
+    if ($('f7-cooldown-min')) $('f7-cooldown-min').value = c.cooldown_min ?? 30;
+    if ($('f7-day-start')) $('f7-day-start').value = c.day_start || '';
+    if ($('f7-day-end')) $('f7-day-end').value = c.day_end || '';
+    const last = c.last_cycle_ts
+      ? `last pulse ${new Date(c.last_cycle_ts * 1000).toLocaleString()}`
+      : 'no pulse yet';
+    const day = j.in_daylight ? 'daylight' : 'night';
+    if (status) status.textContent = (c.enabled ? 'on' : 'off') + ` · ${day} · ${last}`;
+    renderF7Events(j.events || c.events || []);
+  } catch (e) {
+    console.warn('f7_ac_reset load failed', e);
+  }
+}
+
+async function saveF7AcReset() {
+  const sn = activeJackeryDevice()?.device_sn;
+  const hint = $('f7-ac-reset-hint');
+  if (!sn) {
+    if (hint) hint.textContent = 'No device selected';
+    return;
+  }
+  if (hint) hint.textContent = 'Saving…';
+  try {
+    const r = await fetch(`/api/f7_ac_reset/config?device_sn=${encodeURIComponent(sn)}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        device_sn: sn,
+        enabled: _f7Enabled,
+        cooldown_min: Number($('f7-cooldown-min')?.value || 30),
+        day_start: $('f7-day-start')?.value || null,
+        day_end: $('f7-day-end')?.value || null,
+      }),
+    });
+    if (!r.ok) {
+      const j = await r.json().catch(() => ({}));
+      if (hint) hint.textContent = j.detail || 'Save failed';
+      return;
+    }
+    if (hint) hint.textContent = 'Saved';
+    await loadF7AcReset();
+  } catch (e) {
+    if (hint) hint.textContent = e.message || 'Save failed';
+  }
 }
 
 async function loadDeviceCapacity() {
@@ -1462,6 +1560,17 @@ $('capacity-clear')?.addEventListener('click', async () => {
   // Trigger the form's submit logic so the override gets cleared on the
   // server side.
   $('capacity-form').dispatchEvent(new Event('submit', { cancelable: true }));
+});
+
+document.addEventListener('click', (e) => {
+  const en = e.target.closest('.f7-enable-btn');
+  if (en) {
+    setF7Enabled(en.dataset.on === '1');
+    return;
+  }
+  if (e.target.closest('#f7-ac-reset-save')) {
+    void saveF7AcReset();
+  }
 });
 
 $('cloud-probe-btn')?.addEventListener('click', async () => {
@@ -4172,6 +4281,7 @@ function applyStatus(s) {
       resetDeviceTabWidgets();
       loadDeviceCapacity();
       loadDeviceParams();
+      loadF7AcReset();
     }
   }
 
@@ -4401,7 +4511,7 @@ function applyStatus(s) {
   const upsParts = [t.ups_on && 'UPS', t.super_charge_on && 'Super charge'].filter(Boolean);
   $('dev-ups').textContent = upsParts.length ? upsParts.join(' + ')
     : (t.ups_on === false || t.super_charge_on === false) ? 'Off' : '—';
-  $('dev-err').textContent     = t.error_code != null ? String(t.error_code) : '—';
+  $('dev-err').textContent     = formatDeviceErrorCode(t.error_code);
 
   // Energy KPIs (cards on Energy tab)
   if (s.energy) renderEnergyKpis(s.energy);

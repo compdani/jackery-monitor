@@ -859,6 +859,56 @@
         </dl>
       </section>
 
+      <section class="card device-card" id="f7-ac-reset-card">
+        <div class="card-header">
+          <h2>F7 AC reset</h2>
+          <span class="hint" id="f7-ac-reset-status">off</span>
+        </div>
+        <p class="hint" style="margin:6px 0 12px">
+          Explorer 2000 Plus can latch a solar-inverter fault (F7 / error 8) at low morning PV.
+          When enabled for this station, the monitor pulses AC on for 5 seconds then off.
+          Skipped if AC is already on, outside daylight, or within the cooldown.
+        </p>
+        <div class="settings-row">
+          <label class="settings-label">
+            <span class="settings-label-text">Enable for this device</span>
+            <span class="settings-hint">Opt-in per serial number. Default is off.</span>
+          </label>
+          <div class="settings-control">
+            <div class="range-picker" role="tablist" aria-label="F7 AC reset">
+              <button type="button" class="lmode-btn f7-enable-btn on" data-on="0">Off</button>
+              <button type="button" class="lmode-btn f7-enable-btn" data-on="1">On</button>
+            </div>
+          </div>
+        </div>
+        <div class="settings-row">
+          <label class="settings-label" for="f7-cooldown-min">
+            <span class="settings-label-text">Cooldown</span>
+            <span class="settings-hint">Minimum minutes between pulses.</span>
+          </label>
+          <div class="settings-control">
+            <input id="f7-cooldown-min" type="number" min="1" max="1440" step="1" value="30" class="forecast-input" style="width:80px" />
+            <small class="hint">min</small>
+          </div>
+        </div>
+        <div class="settings-row">
+          <label class="settings-label">
+            <span class="settings-label-text">Daylight window</span>
+            <span class="settings-hint">Leave blank to use forecast/weather sunrise–sunset. Both times required to override.</span>
+          </label>
+          <div class="settings-control" style="display:flex; gap:8px; align-items:center; flex-wrap:wrap">
+            <input id="f7-day-start" type="time" class="forecast-input" />
+            <span class="hint">to</span>
+            <input id="f7-day-end" type="time" class="forecast-input" />
+          </div>
+        </div>
+        <div class="forecast-config-actions">
+          <button type="button" id="f7-ac-reset-save" class="btn btn-primary">Save F7 settings</button>
+        </div>
+        <p class="hint" id="f7-ac-reset-hint"></p>
+        <div id="f7-ac-reset-events" class="hint" style="margin-top:8px"></div>
+      </section>
+
       <section class="card device-card">
         <div class="card-header">
           <h2>Battery capacity</h2>
@@ -1455,6 +1505,7 @@
               <option value="poll">Poll</option>
               <option value="mqtt">MQTT</option>
               <option value="session">Session</option>
+              <option value="f7">F7</option>
             </select>
             <label class="logs-auto">
               <input type="checkbox" id="logs-auto" checked /> auto-refresh

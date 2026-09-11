@@ -292,6 +292,11 @@ export const endpoints = {
   solarEvaluate: (device_sn?: string | null) =>
     api("/api/solar_charge/evaluate_now", { method: "POST", query: { device_sn } }),
 
+  f7AcResetConfig: (device_sn?: string | null) =>
+    api("/api/f7_ac_reset/config", { query: { device_sn } }),
+  saveF7AcResetConfig: (body: Record<string, unknown>, device_sn?: string | null) =>
+    api("/api/f7_ac_reset/config", { method: "POST", body, query: { device_sn } }),
+
   rules: () => api<{ rules: unknown[] }>("/api/automation/rules"),
   saveRule: (body: unknown) => api("/api/automation/rules", { method: "POST", body }),
   deleteRule: (id: string) => api(`/api/automation/rules/${id}`, { method: "DELETE" }),

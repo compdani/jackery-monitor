@@ -27,7 +27,11 @@ export default function LogsScreen() {
     return () => clearInterval(id);
   }, [load]);
 
-  const filtered = events.filter((e) => level === "all" || (e.level || "").toLowerCase() === level);
+  const filtered = events.filter((e) => {
+    if (level === "all") return true;
+    if (level === "f7") return (e.category || "") === "f7";
+    return (e.level || "").toLowerCase() === level;
+  });
 
   async function copyDebug() {
     const parts = await Promise.allSettled([
@@ -56,6 +60,7 @@ export default function LogsScreen() {
             { id: "info", label: "Info" },
             { id: "warn", label: "Warn" },
             { id: "error", label: "Error" },
+            { id: "f7", label: "F7" },
           ]}
         />
         {filtered.slice(0, 80).map((e, i) => (

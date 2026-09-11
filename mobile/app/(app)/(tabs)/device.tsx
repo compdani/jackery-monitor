@@ -17,6 +17,12 @@ export default function DeviceScreen() {
   const [probe, setProbe] = useState<string | null>(null);
   const [pause, setPause] = useState("600");
   const [msg, setMsg] = useState<string | null>(null);
+  const [f7Enabled, setF7Enabled] = useState("0");
+  const [f7Cooldown, setF7Cooldown] = useState("30");
+  const [f7DayStart, setF7DayStart] = useState("");
+  const [f7DayEnd, setF7DayEnd] = useState("");
+  const [f7Status, setF7Status] = useState<string | null>(null);
+  const [f7Events, setF7Events] = useState<{ ts?: number; level?: string; message?: string }[]>([]);
 
   const sn = (d?.device_sn as string) || activeSn();
 
@@ -33,6 +39,32 @@ export default function DeviceScreen() {
       setParams(Array.isArray(p) ? p : p.params || []);
     } catch {
       setParams([]);
+    }
+    try {
+      const f = (await endpoints.f7AcResetConfig(sn)) as {
+        in_daylight?: boolean;
+        config?: {
+          enabled?: boolean;
+          cooldown_min?: number;
+          day_start?: string | null;
+          day_end?: string | null;
+          last_cycle_ts?: number;
+          events?: { ts?: number; level?: string; message?: string }[];
+        };
+        events?: { ts?: number; level?: string; message?: string }[];
+      };
+      const c = f.config || {};
+      setF7Enabled(c.enabled ? "1" : "0");
+      setF7Cooldown(String(c.cooldown_min ?? 30));
+      setF7DayStart(c.day_start || "");
+      setF7DayEnd(c.day_end || "");
+      const last = c.last_cycle_ts
+        ? `last pulse ${new Date(c.last_cycle_ts * 1000).toLocaleString()}`
+        : "no pulse yet";
+      setF7Status(`${c.enabled ? "on" : "off"} · ${f.in_daylight ? "daylight" : "night"} · ${last}`);
+      setF7Events(f.events || c.events || []);
+    } catch {
+      setF7Events([]);
     }
   }, [sn]);
 
@@ -51,7 +83,58 @@ export default function DeviceScreen() {
         <Hint>
           UPS {t?.ups_on ? "on" : "off"} · Super charge {t?.super_charge_on ? "on" : "off"}
         </Hint>
-        <Hint>Error {t?.error_code ?? "none"}</Hint>
+        <Hint>
+          Error {t?.error_code === 8 ? "F7 (8)" : (t?.error_code ?? "none")}
+        </Hint>
+      </Card>
+
+      <Card>
+        <Eyebrow>F7 AC reset</Eyebrow>
+        <Hint>
+          Explorer 2000 Plus morning solar-inverter latch. Pulses AC on 5s then off.
+          Skipped if AC is already on, at night, or in cooldown.
+        </Hint>
+        {f7Status ? <Hint>{f7Status}</Hint> : null}
+        <Segmented
+          value={f7Enabled}
+          onChange={setF7Enabled}
+          options={[
+            { id: "0", label: "Off" },
+            { id: "1", label: "On" },
+          ]}
+        />
+        <Field
+          label="Cooldown (min)"
+          value={f7Cooldown}
+          onChangeText={setF7Cooldown}
+          keyboardType="number-pad"
+        />
+        <Hint>Optional daylight override (leave blank to use forecast sunrise–sunset).</Hint>
+        <Field label="Day start" value={f7DayStart} onChangeText={setF7DayStart} placeholder="06:00" />
+        <Field label="Day end" value={f7DayEnd} onChangeText={setF7DayEnd} placeholder="20:00" />
+        <Btn
+          title="Save F7 settings"
+          onPress={() =>
+            void endpoints
+              .saveF7AcResetConfig(
+                {
+                  device_sn: sn,
+                  enabled: f7Enabled === "1",
+                  cooldown_min: Number(f7Cooldown) || 30,
+                  day_start: f7DayStart || null,
+                  day_end: f7DayEnd || null,
+                },
+                sn,
+              )
+              .then(load)
+              .then(() => setMsg("F7 settings saved"))
+          }
+        />
+        {f7Events.slice(-8).reverse().map((e, i) => (
+          <Hint key={i}>
+            {e.ts ? new Date(e.ts * 1000).toLocaleString() : ""} · {e.level} · {e.message}
+          </Hint>
+        ))}
       </Card>
 
       <Card>

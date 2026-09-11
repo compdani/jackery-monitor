@@ -47,6 +47,7 @@ import cost as cost_module
 import energy_db
 import forecast_solar
 import forecaster
+import f7_ac_reset
 import inverter_watchdog
 import kasa_client
 import kasa_creds
@@ -466,6 +467,10 @@ async def poll_loop() -> None:
                     except Exception as e:
                         log.debug("inverter_watchdog tick failed for %s: %s",
                                    sn, e)
+                    try:
+                        await _f7_ac_reset_tick(sn, t)
+                    except Exception as e:
+                        log.debug("f7_ac_reset tick failed for %s: %s", sn, e)
                     # If the solar-charge controller has the plug ON for
                     # this device, estimate the diverted_w as the JUMP
                     # in output_w above the pre-toggle house-load
@@ -2040,6 +2045,70 @@ async def _inverter_watchdog_tick(device_sn: str, telemetry: dict,
         )
     elif action == "idle" and (prior_attempts > 0 or prior_error):
         log.info("inverter_watchdog: %s recovered (output back)", device_sn)
+
+
+# ---------- F7 AC pulse (2000 Plus morning solar-inverter latch) ----------
+# ON → sleep pulse_s → OFF. Strong refs so the 5s pause is not GC'd.
+_F7_CYCLE_TASKS: dict[str, asyncio.Task] = {}
+
+
+def _f7_in_daylight(cfg: dict, now: float) -> bool:
+    tz_off = int(device_location.get_tz_offset() or 0)
+    weather_hourly = None
+    try:
+        rows, _fetched = state.energy.get_weather_forecast(
+            since_ts=int(now) - 7200)
+        weather_hourly = rows
+    except Exception:
+        weather_hourly = None
+    return f7_ac_reset.is_daylight(
+        now, cfg, tz_offset_s=tz_off, weather_hourly=weather_hourly)
+
+
+async def _f7_ac_reset_tick(device_sn: str, telemetry: dict) -> None:
+    """Opt-in F7 workaround. Never stalls the poll loop; never flips AC
+    that is already on. Best-effort — must not break telemetry writes."""
+    if not device_sn:
+        return
+    cfg = f7_ac_reset.get_config(device_sn)
+    if not cfg.get("enabled"):
+        return
+    now = time.time()
+    action = f7_ac_reset.evaluate(
+        cfg, telemetry, now=now, in_daylight=_f7_in_daylight(cfg, now))
+    if action != "cycle":
+        return
+    if device_sn in _F7_CYCLE_TASKS and not _F7_CYCLE_TASKS[device_sn].done():
+        return
+    setter = getattr(state.client, "set_output", None)
+    if not setter:
+        return
+    pulse_s = float(cfg.get("pulse_s") or 5)
+    try:
+        ec = int(telemetry.get("error_code") or cfg.get("error_code") or 8)
+    except (TypeError, ValueError):
+        ec = 8
+    f7_ac_reset.stamp_cycle(device_sn, now)
+    f7_ac_reset.record_event(
+        device_sn, "warn", "F7 AC reset pulse started",
+        error_code=ec, pulse_s=pulse_s)
+
+    async def _pulse(sn=device_sn, set_fn=setter, wait=pulse_s, code=ec):
+        try:
+            await set_fn("ac", True, device_sn=sn)
+            await asyncio.sleep(wait)
+            await set_fn("ac", False, device_sn=sn)
+            f7_ac_reset.record_event(
+                sn, "info", "F7 AC reset pulse finished",
+                error_code=code, pulse_s=wait)
+        except Exception as e:
+            f7_ac_reset.record_event(
+                sn, "error", f"F7 AC reset pulse failed: {e}",
+                error_code=code)
+        finally:
+            _F7_CYCLE_TASKS.pop(sn, None)
+
+    _F7_CYCLE_TASKS[device_sn] = asyncio.create_task(_pulse())
 
 
 # ---------- Solar-charge (inverse controller: Jackery → car) ----------
@@ -5274,17 +5343,61 @@ async def api_kasa_saved_delete(host: str):
 @app.get("/api/events")
 async def api_events(limit: int = 100, since: float = 0.0):
     """Return the bridge's recent event log (auth, poll, mqtt, session, etc.)
-       for the dashboard's Logs tab. `since` is unix-seconds; older events
-       are filtered out so the UI can do incremental polling cheaply."""
+       plus server-side F7 AC-reset pulses, for the dashboard Logs tab.
+       `since` is unix-seconds; older events are filtered out so the UI
+       can do incremental polling cheaply."""
+    events: list[dict] = []
     fetcher = getattr(state.client, "get_events", None)
-    if not fetcher:
-        # Mock backend has no event log — return empty so the tab still loads.
-        return {"events": []}
+    if fetcher:
+        try:
+            events = list(await fetcher(limit=limit, since=since) or [])
+        except DeviceClientError as e:
+            raise HTTPException(400, str(e)) from e
     try:
-        events = await fetcher(limit=limit, since=since)
-    except DeviceClientError as e:
-        raise HTTPException(400, str(e)) from e
+        events.extend(f7_ac_reset.list_events(since=since, limit=limit))
+    except Exception:
+        pass
+    events.sort(key=lambda e: float(e.get("ts") or 0))
+    if limit and len(events) > limit:
+        events = events[-limit:]
     return {"events": events}
+
+
+@app.get("/api/f7_ac_reset/config")
+def api_f7_ac_reset_get(device_sn: str | None = None):
+    """Per-device F7 AC-pulse workaround config + recent events."""
+    if not device_sn:
+        device_sn = state.device.device_sn if state.device else None
+    cfg = f7_ac_reset.get_config(device_sn)
+    now = time.time()
+    daylight = False
+    try:
+        daylight = _f7_in_daylight(cfg, now) if device_sn else False
+    except Exception:
+        daylight = False
+    return {
+        "device_sn": device_sn,
+        "config": cfg,
+        "in_daylight": daylight,
+        "events": cfg.get("events") or [],
+    }
+
+
+@app.post("/api/f7_ac_reset/config")
+async def api_f7_ac_reset_set(req: Request, device_sn: str | None = None):
+    try:
+        body = await req.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="invalid JSON body")
+    if not device_sn:
+        device_sn = ((body or {}).get("device_sn")
+                     or (state.device.device_sn if state.device else None))
+    if not device_sn:
+        raise HTTPException(status_code=400,
+                            detail="no active device — pass device_sn explicitly")
+    saved = f7_ac_reset.set_config(
+        body if isinstance(body, dict) else {}, device_sn=device_sn)
+    return {"device_sn": device_sn, "config": saved}
 
 
 @app.get("/api/settings")
