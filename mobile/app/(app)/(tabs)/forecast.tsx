@@ -4,6 +4,7 @@ import { Text, View } from "react-native";
 import { activeSn, endpoints } from "../../../src/api/client";
 import { LineChart } from "../../../src/components/LineChart";
 import { Btn, Card, Eyebrow, Field, Hint, Kpi, Screen, Segmented } from "../../../src/components/ui";
+import { useLive } from "../../../src/store/live";
 import { colors } from "../../../src/theme";
 
 type ForecastHour = {
@@ -57,6 +58,9 @@ export default function ForecastScreen() {
   const [wStart, setWStart] = useState("18:00");
   const [wEnd, setWEnd] = useState("22:00");
   const [wWatts, setWWatts] = useState("800");
+  // Direct open of this tab races the live socket: activeSn() is null
+  // until status arrives. Re-run load() when the SN appears or changes.
+  const deviceSn = useLive((s) => s.status?.device?.device_sn || undefined);
 
   const load = useCallback(async () => {
     try {
@@ -104,7 +108,7 @@ export default function ForecastScreen() {
 
   useEffect(() => {
     void load();
-  }, [load]);
+  }, [load, deviceSn]);
 
   async function useGps() {
     setMsg(null);

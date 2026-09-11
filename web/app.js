@@ -4121,6 +4121,10 @@ function applyStatus(s) {
     if (activeTab === 'forecast') {
       forecastCache = null;
       fetchForecast();
+      // Direct /#forecast boot runs this before lastStatus exists, so
+      // Expected load was skipped and never retried. Reload it once the
+      // viewed SN is known (and again on a device switch).
+      loadForecastConfigPanels();
     }
     // Daily table/records are per-device — drop the old cache so a CSV
     // export can't carry the previous device's data, and refresh in
@@ -5605,6 +5609,7 @@ window.addEventListener('resize', () => {
 // ============================================================
 // FORECAST TAB
 // ============================================================
+let _forecastFetchId = 0;
 async function fetchForecast() {
   const needsConfig = $('forecast-needs-config');
   const content     = $('forecast-content');
@@ -5618,14 +5623,17 @@ async function fetchForecast() {
     if (h) heading.textContent = h;
     if (p) body.textContent = p;
   };
+  const fetchId = ++_forecastFetchId;
   try {
     // Forecast is per-device — pass the currently-viewed Jackery's SN so
     // the Forecast tab follows the per-browser picker.
     const sn = activeJackeryDevice()?.device_sn;
     const url = sn ? `/api/forecast?device_sn=${encodeURIComponent(sn)}` : '/api/forecast';
     const r = await fetch(url);
+    if (fetchId !== _forecastFetchId) return;
     if (!r.ok) { showNeedsConfig(); return; }
     const j = await r.json();
+    if (fetchId !== _forecastFetchId) return;
     if (!j.configured) {
       showNeedsConfig('Allow location to enable forecasts',
         'The forecaster needs your approximate location to know which weather to fetch. Click below to share it.');
@@ -5655,6 +5663,13 @@ async function fetchForecast() {
     content.hidden = false;
     stats.hidden = false;
     forecastCache = j;
+    // Chart payload already includes the saved schedule. Apply it so a
+    // direct /#forecast load doesn't leave Expected load on defaults
+    // while the green load line uses the server schedule — but don't
+    // clobber in-progress edits or an in-flight save.
+    if (j.load_schedule && !_loadScheduleSaving && !loadScheduleFieldsFocused()) {
+      applyLoadSchedulePayload(j.load_schedule);
+    }
     // Show the location these forecasts are based on. Async, fires its
     // own /api/location request — doesn't block the chart render.
     refreshForecastCurrentLoc();
@@ -5713,6 +5728,26 @@ async function fetchForecast() {
 
 let _loadMode = 'historical';
 let _loadWindows = [];
+let _loadScheduleSaving = false;
+let _loadScheduleFetchId = 0;
+
+function loadScheduleFieldsFocused() {
+  const ae = document.activeElement;
+  if (!ae) return false;
+  if (ae.id === 'load-sleep-start' || ae.id === 'load-sleep-end') return true;
+  return !!ae.classList?.contains('lw-field');
+}
+
+function applyLoadSchedulePayload(j, opts = {}) {
+  if (!j) return;
+  setLoadMode(j.mode || 'historical');
+  if ($('load-sleep-start')) $('load-sleep-start').value = j.sleep_start || '';
+  if ($('load-sleep-end')) $('load-sleep-end').value = j.sleep_end || '';
+  _loadWindows = Array.isArray(j.windows) ? j.windows.map((w) => ({ ...w })) : [];
+  renderLoadWindows();
+  if (opts.learned) renderLearnedProfile(j.learned_profile || []);
+  updateForecastConfigSummaries();
+}
 
 function setLoadMode(mode) {
   _loadMode = mode === 'scheduled' ? 'scheduled' : 'historical';
@@ -5826,20 +5861,19 @@ async function loadForecastConfigPanels() {
   } catch (e) { console.warn('solar array fetch failed', e); }
 
   const sn = activeJackeryDevice()?.device_sn;
-  if (sn) {
-    try {
-      const r = await fetch(`/api/forecast/load_schedule?device_sn=${encodeURIComponent(sn)}`);
-      if (r.ok) {
-        const j = await r.json();
-        setLoadMode(j.mode || 'historical');
-        if ($('load-sleep-start')) $('load-sleep-start').value = j.sleep_start || '';
-        if ($('load-sleep-end')) $('load-sleep-end').value = j.sleep_end || '';
-        _loadWindows = Array.isArray(j.windows) ? j.windows.map((w) => ({ ...w })) : [];
-        renderLoadWindows();
-        renderLearnedProfile(j.learned_profile || []);
-      }
-    } catch (e) { console.warn('load schedule fetch failed', e); }
-  }
+  const fetchId = ++_loadScheduleFetchId;
+  try {
+    const url = sn
+      ? `/api/forecast/load_schedule?device_sn=${encodeURIComponent(sn)}`
+      : '/api/forecast/load_schedule';
+    const r = await fetch(url);
+    if (fetchId !== _loadScheduleFetchId) return;
+    if (r.ok) {
+      const j = await r.json();
+      if (fetchId !== _loadScheduleFetchId) return;
+      applyLoadSchedulePayload(j, { learned: true });
+    }
+  } catch (e) { console.warn('load schedule fetch failed', e); }
   updateForecastConfigSummaries();
 }
 
@@ -5966,23 +6000,28 @@ async function copyLearnedLoadProfile() {
   }
   harvestLoadWindows();
   if (hint) hint.textContent = 'Copying…';
-  const r = await fetch(`/api/forecast/load_schedule?copy_learned=1`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      device_sn: sn,
-      mode: 'scheduled',
-      sleep_start: $('load-sleep-start')?.value || null,
-      sleep_end: $('load-sleep-end')?.value || null,
-    }),
-  });
-  if (!r.ok) {
-    if (hint) hint.textContent = 'Copy failed';
-    return;
+  _loadScheduleSaving = true;
+  try {
+    const r = await fetch(`/api/forecast/load_schedule?copy_learned=1`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        device_sn: sn,
+        mode: 'scheduled',
+        sleep_start: $('load-sleep-start')?.value || null,
+        sleep_end: $('load-sleep-end')?.value || null,
+      }),
+    });
+    if (!r.ok) {
+      if (hint) hint.textContent = 'Copy failed';
+      return;
+    }
+    await loadForecastConfigPanels();
+    if (hint) hint.textContent = 'Copied learned hours into the schedule.';
+    fetchForecast();
+  } finally {
+    _loadScheduleSaving = false;
   }
-  await loadForecastConfigPanels();
-  if (hint) hint.textContent = 'Copied learned hours into the schedule.';
-  fetchForecast();
 }
 
 async function saveLoadSchedule() {
@@ -5994,25 +6033,30 @@ async function saveLoadSchedule() {
   }
   harvestLoadWindows();
   if (hint) hint.textContent = 'Saving…';
-  const r = await fetch('/api/forecast/load_schedule', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      device_sn: sn,
-      mode: _loadMode,
-      sleep_start: $('load-sleep-start')?.value || null,
-      sleep_end: $('load-sleep-end')?.value || null,
-      windows: _loadWindows,
-    }),
-  });
-  if (!r.ok) {
-    const j = await r.json().catch(() => ({}));
-    if (hint) hint.textContent = j.detail || 'Save failed';
-    return;
+  _loadScheduleSaving = true;
+  try {
+    const r = await fetch('/api/forecast/load_schedule', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        device_sn: sn,
+        mode: _loadMode,
+        sleep_start: $('load-sleep-start')?.value || null,
+        sleep_end: $('load-sleep-end')?.value || null,
+        windows: _loadWindows,
+      }),
+    });
+    if (!r.ok) {
+      const j = await r.json().catch(() => ({}));
+      if (hint) hint.textContent = j.detail || 'Save failed';
+      return;
+    }
+    if (hint) hint.textContent = 'Saved';
+    updateForecastConfigSummaries();
+    fetchForecast();
+  } finally {
+    _loadScheduleSaving = false;
   }
-  if (hint) hint.textContent = 'Saved';
-  updateForecastConfigSummaries();
-  fetchForecast();
 }
 
 // ============================================================
