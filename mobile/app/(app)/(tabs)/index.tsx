@@ -1,5 +1,5 @@
-import { useEffect, useState } from "react";
-import { Pressable, Text, View } from "react-native";
+import { useEffect, useRef, useState } from "react";
+import { ActivityIndicator, Animated, Pressable, Text, View } from "react-native";
 import { endpoints } from "../../../src/api/client";
 import { reconnectLive } from "../../../src/api/ws";
 import { LineChart } from "../../../src/components/LineChart";
@@ -10,8 +10,113 @@ import { useLive } from "../../../src/store/live";
 import { usePrefs } from "../../../src/store/prefs";
 import { colors } from "../../../src/theme";
 
+const PENDING_TOGGLE_MS = 30000;
+
 function portOn(v: unknown): boolean {
   return v === true || v === 1 || v === "1";
+}
+
+function portFlag(v: unknown): boolean | null {
+  if (v === true || v === 1 || v === "1") return true;
+  if (v === false || v === 0 || v === "0") return false;
+  return null;
+}
+
+type PendingToggle = { expected: boolean; until: number; inFlight: boolean };
+
+function PendingPulse({ active, color }: { active: boolean; color: string }) {
+  const opacity = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    if (!active) {
+      opacity.setValue(0);
+      return;
+    }
+    opacity.setValue(0.95);
+    const anim = Animated.loop(
+      Animated.sequence([
+        Animated.timing(opacity, { toValue: 0.25, duration: 650, useNativeDriver: true }),
+        Animated.timing(opacity, { toValue: 0.95, duration: 650, useNativeDriver: true }),
+      ]),
+    );
+    anim.start();
+    return () => anim.stop();
+  }, [active, opacity]);
+  if (!active) return null;
+  return (
+    <Animated.View
+      pointerEvents="none"
+      style={{
+        position: "absolute",
+        top: -2,
+        left: -2,
+        right: -2,
+        bottom: -2,
+        borderRadius: 14,
+        borderWidth: 2,
+        borderColor: color,
+        opacity,
+      }}
+    />
+  );
+}
+
+function PowerChip({
+  label,
+  on,
+  inFlight,
+  pending,
+  onPress,
+  accent = colors.accent,
+  onBg = "rgba(74,222,128,0.18)",
+  minWidth = 72,
+  inFlightShowsValue = false,
+}: {
+  label: string;
+  on: boolean;
+  inFlight?: boolean;
+  pending?: boolean;
+  onPress: () => void;
+  accent?: string;
+  onBg?: string;
+  minWidth?: number;
+  inFlightShowsValue?: boolean;
+}) {
+  const waiting = !!(inFlight || pending);
+  return (
+    <Pressable
+      onPress={onPress}
+      disabled={!!inFlight}
+      style={({ pressed }) => ({
+        paddingVertical: 12,
+        paddingHorizontal: 16,
+        borderRadius: 12,
+        backgroundColor: on ? onBg : colors.bgElev2,
+        borderWidth: 1,
+        borderColor: waiting ? accent : on ? accent : colors.border,
+        minWidth,
+        alignItems: "center",
+        opacity: pressed ? 0.65 : 1,
+        transform: [{ scale: pressed ? 0.96 : 1 }],
+      })}
+    >
+      <PendingPulse active={waiting} color={accent} />
+      <Text style={{ color: colors.textDim, fontSize: 11 }}>{label}</Text>
+      {inFlight && !inFlightShowsValue ? (
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 6, minHeight: 20 }}>
+          <ActivityIndicator size="small" color={accent} />
+          <Text style={{ color: accent, fontWeight: "700" }}>…</Text>
+        </View>
+      ) : (
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 6, minHeight: 20 }}>
+          {inFlight ? <ActivityIndicator size="small" color={accent} /> : null}
+          <Text style={{ color: on ? accent : colors.text, fontWeight: "700" }}>{on ? "ON" : "OFF"}</Text>
+        </View>
+      )}
+      {pending && !inFlight ? (
+        <Text style={{ color: accent, fontSize: 10, fontWeight: "600" }}>pending</Text>
+      ) : null}
+    </Pressable>
+  );
 }
 
 type Pack = {
@@ -92,7 +197,9 @@ export default function LiveScreen() {
   const connected = useLive((s) => s.connected);
   const alerts = useLive((s) => s.alerts);
   const tempUnit = usePrefs((s) => s.tempUnit);
-  const [busyPort, setBusyPort] = useState<string | null>(null);
+  const [pending, setPending] = useState<Record<string, PendingToggle>>({});
+  const [toggleErr, setToggleErr] = useState<string | null>(null);
+  const [kasaBusy, setKasaBusy] = useState<"charge" | "divert" | null>(null);
   const [chargeHost, setChargeHost] = useState<string | null>(null);
   const [divertHost, setDivertHost] = useState<string | null>(null);
   const [chargeOn, setChargeOn] = useState<boolean | null>(null);
@@ -140,6 +247,50 @@ export default function LiveScreen() {
     };
   }, [sn]);
 
+  useEffect(() => {
+    setPending({});
+    setToggleErr(null);
+  }, [sn]);
+
+  useEffect(() => {
+    const now = Date.now();
+    setPending((prev) => {
+      let changed = false;
+      const next = { ...prev };
+      for (const port of Object.keys(next)) {
+        const p = next[port];
+        if (p.inFlight) continue;
+        const live = portFlag(t?.[`${port}_on`]);
+        if (now > p.until || live === p.expected) {
+          delete next[port];
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
+  }, [t?.ac_on, t?.dc_on, t?.usb_on, t?.car_on]);
+
+  useEffect(() => {
+    const waits = Object.entries(pending).filter(([, p]) => !p.inFlight && p.until > Date.now());
+    if (!waits.length) return;
+    const ms = Math.min(...waits.map(([, p]) => p.until - Date.now())) + 25;
+    const id = setTimeout(() => {
+      const now = Date.now();
+      setPending((prev) => {
+        let changed = false;
+        const next = { ...prev };
+        for (const port of Object.keys(next)) {
+          if (!next[port].inFlight && next[port].until <= now) {
+            delete next[port];
+            changed = true;
+          }
+        }
+        return changed ? next : prev;
+      });
+    }, Math.max(ms, 0));
+    return () => clearTimeout(id);
+  }, [pending]);
+
   async function pickDevice(id: string) {
     useLive.getState().setViewDeviceId(id);
     try {
@@ -151,11 +302,41 @@ export default function LiveScreen() {
   }
 
   async function toggle(port: string, on: boolean) {
-    setBusyPort(port);
+    setToggleErr(null);
+    setPending((prev) => ({
+      ...prev,
+      [port]: { expected: on, until: Date.now() + PENDING_TOGGLE_MS, inFlight: true },
+    }));
     try {
       await endpoints.setOutput(port, on, status?.device?.device_sn as string | undefined);
+      setPending((prev) => ({
+        ...prev,
+        [port]: { expected: on, until: Date.now() + PENDING_TOGGLE_MS, inFlight: false },
+      }));
+    } catch (e: unknown) {
+      setPending((prev) => {
+        const next = { ...prev };
+        delete next[port];
+        return next;
+      });
+      setToggleErr(e instanceof Error ? e.message : `Failed to toggle ${port.toUpperCase()}`);
+    }
+  }
+
+  async function toggleKasa(kind: "charge" | "divert", host: string, current: boolean | null) {
+    const next = !current;
+    setToggleErr(null);
+    setKasaBusy(kind);
+    if (kind === "charge") setChargeOn(next);
+    else setDivertOn(next);
+    try {
+      await endpoints.kasaTest(host, next);
+    } catch (e: unknown) {
+      if (kind === "charge") setChargeOn(current);
+      else setDivertOn(current);
+      setToggleErr(e instanceof Error ? e.message : `Failed to toggle ${kind}`);
     } finally {
-      setBusyPort(null);
+      setKasaBusy(null);
     }
   }
 
@@ -251,75 +432,50 @@ export default function LiveScreen() {
         </View>
         <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
           {(["ac", "dc", "usb", "car"] as const).map((port) => {
-            const on = portOn(t?.[`${port}_on`]);
+            const liveOn = portOn(t?.[`${port}_on`]);
+            const pend = pending[port];
+            const inFlight = !!pend?.inFlight;
+            const waiting = !!pend && !pend.inFlight && Date.now() <= pend.until;
+            const on = pend && Date.now() <= pend.until ? pend.expected : liveOn;
             return (
-              <Pressable
+              <PowerChip
                 key={port}
-                onPress={() => toggle(port, !on)}
-                disabled={busyPort === port}
-                style={{
-                  paddingVertical: 12,
-                  paddingHorizontal: 16,
-                  borderRadius: 12,
-                  backgroundColor: on ? "rgba(74,222,128,0.18)" : colors.bgElev2,
-                  borderWidth: 1,
-                  borderColor: on ? colors.accent : colors.border,
-                  minWidth: 72,
-                  alignItems: "center",
-                }}
-              >
-                <Text style={{ color: colors.textDim, fontSize: 11 }}>{port.toUpperCase()}</Text>
-                <Text style={{ color: on ? colors.accent : colors.text, fontWeight: "700" }}>
-                  {on ? "ON" : "OFF"}
-                </Text>
-              </Pressable>
+                label={port.toUpperCase()}
+                on={on}
+                inFlight={inFlight}
+                pending={waiting}
+                onPress={() => void toggle(port, !on)}
+              />
             );
           })}
           {chargeHost ? (
-            <Pressable
-              onPress={() =>
-                void endpoints.kasaTest(chargeHost, !chargeOn).then(() => setChargeOn(!chargeOn))
-              }
-              style={{
-                paddingVertical: 12,
-                paddingHorizontal: 16,
-                borderRadius: 12,
-                backgroundColor: chargeOn ? "rgba(251,191,36,0.18)" : colors.bgElev2,
-                borderWidth: 1,
-                borderColor: chargeOn ? colors.accent3 : colors.border,
-                minWidth: 88,
-                alignItems: "center",
-              }}
-            >
-              <Text style={{ color: colors.textDim, fontSize: 11 }}>AC CHARGE</Text>
-              <Text style={{ color: chargeOn ? colors.accent3 : colors.text, fontWeight: "700" }}>
-                {chargeOn ? "ON" : "OFF"}
-              </Text>
-            </Pressable>
+            <PowerChip
+              label="AC CHARGE"
+              on={!!chargeOn}
+              inFlight={kasaBusy === "charge"}
+              inFlightShowsValue
+              onPress={() => void toggleKasa("charge", chargeHost, chargeOn)}
+              accent={colors.accent3}
+              onBg="rgba(251,191,36,0.18)"
+              minWidth={88}
+            />
           ) : null}
           {divertHost ? (
-            <Pressable
-              onPress={() =>
-                void endpoints.kasaTest(divertHost, !divertOn).then(() => setDivertOn(!divertOn))
-              }
-              style={{
-                paddingVertical: 12,
-                paddingHorizontal: 16,
-                borderRadius: 12,
-                backgroundColor: divertOn ? "rgba(56,189,248,0.18)" : colors.bgElev2,
-                borderWidth: 1,
-                borderColor: divertOn ? colors.accent2 : colors.border,
-                minWidth: 88,
-                alignItems: "center",
-              }}
-            >
-              <Text style={{ color: colors.textDim, fontSize: 11 }}>EXCESS</Text>
-              <Text style={{ color: divertOn ? colors.accent2 : colors.text, fontWeight: "700" }}>
-                {divertOn ? "ON" : "OFF"}
-              </Text>
-            </Pressable>
+            <PowerChip
+              label="EXCESS"
+              on={!!divertOn}
+              inFlight={kasaBusy === "divert"}
+              inFlightShowsValue
+              onPress={() => void toggleKasa("divert", divertHost, divertOn)}
+              accent={colors.accent2}
+              onBg="rgba(56,189,248,0.18)"
+              minWidth={88}
+            />
           ) : null}
         </View>
+        {toggleErr ? (
+          <Text style={{ color: colors.danger, fontSize: 12 }}>{toggleErr}</Text>
+        ) : null}
       </Card>
 
       {watchdog?.active ? (

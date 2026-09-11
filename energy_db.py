@@ -342,6 +342,7 @@ DEVICE_PARAM_KEYS: dict[str, dict[str, Any]] = {
     "solar_coefficient": {
         "label": "Solar coefficient",
         "unit": "W per W/m²",
+        "decimals": 2,
         "description": "Effective panel array size — fitted from observed solar vs irradiance.",
     },
 }
@@ -752,16 +753,21 @@ class EnergyDB(ForecastTablesMixin, AutomationTablesMixin):
     def list_weather_observations(self, since_ts: int = 0,
                                   limit: int = 24 * 30) -> list[dict]:
         """Past hourly weather observations, oldest first. since_ts=0
-        returns everything stored."""
+        returns everything stored. When `limit` truncates, the *newest*
+        N rows in the window are kept (then reordered oldest-first)."""
         with self._conn() as c:
             rows = c.execute(
                 """SELECT ts, ghi_w_m2, cloud_cover_pct
                      FROM weather_observations
                     WHERE ts >= ?
-                    ORDER BY ts ASC
+                    ORDER BY ts DESC
                     LIMIT ?""",
                 (int(since_ts), int(limit)),
             ).fetchall()
+        # Newest-first so a LIMIT can't drop the most recent hours
+        # (ORDER BY ts ASC LIMIT N kept the *oldest* N in the window,
+        # which starved the solar-coefficient fit of current GHI).
+        rows = list(reversed(rows))
         return [
             {"ts": r[0], "ghi_w_m2": r[1], "cloud_cover_pct": r[2]}
             for r in rows
@@ -1458,6 +1464,15 @@ class EnergyDB(ForecastTablesMixin, AutomationTablesMixin):
                    "input_w": int(r[6] or 0), "output_w": int(r[7] or 0),
                    "solar_w": int(r[8] or 0), "ac_input_w": int(r[9] or 0),
                    "battery_pct": int(r[10]) if r[10] is not None else None}
+            # last_solar_w is NULL on samples recorded before that column
+            # existed, so AVG(...) becomes NULL → 0. Hourly solar_wh is
+            # energy over the bucket (≈ mean W at bucket_s=3600); recover
+            # watts from it so the solar-coefficient fit isn't stuck at 0.
+            hours = bucket_s / 3600.0
+            if hours > 0 and row["solar_w"] <= 0:
+                mean_solar_w = (r[3] or 0) / hours
+                if mean_solar_w > 0:
+                    row["solar_w"] = int(round(mean_solar_w))
             if ts_sorted and row["battery_pct"] is not None:
                 row["system_soc"] = _capacity_weighted_soc(
                     float(row["battery_pct"]), int(row["ts"]),

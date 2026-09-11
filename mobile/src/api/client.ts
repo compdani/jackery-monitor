@@ -232,7 +232,8 @@ export const endpoints = {
       query: copyLearned ? { copy_learned: 1 } : undefined,
       body,
     }),
-  dailySummary: (days?: number) => api("/api/daily_summary", { query: { days } }),
+  dailySummary: (days?: number, device_sn?: string | null) =>
+    api("/api/daily_summary", { query: { days, device_sn } }),
   location: () => api("/api/location"),
   setLocation: (latitude: number, longitude: number, label?: string) =>
     api("/api/location", { method: "POST", body: { latitude, longitude, label } }),

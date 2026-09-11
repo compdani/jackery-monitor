@@ -1175,9 +1175,15 @@ function renderDeviceParams(rows, deviceSn) {
   }
   const safe = (s) => String(s == null ? '' : s).replace(/[<>&"]/g, (c) =>
     ({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;'}[c]));
-  const fmtVal = (v, unit) => v == null ? '—' : (
-    unit === 'ratio' ? Number(v).toFixed(3) : `${Math.round(Number(v))} ${safe(unit)}`
-  );
+  const fmtVal = (v, unit, decimals) => {
+    if (v == null) return '—';
+    const n = Number(v);
+    if (unit === 'ratio') return n.toFixed(3);
+    if (decimals != null && decimals !== '') {
+      return `${n.toFixed(Number(decimals))} ${safe(unit)}`;
+    }
+    return `${Math.round(n)} ${safe(unit)}`;
+  };
   const sourceTag = (src) => `<span class="device-param-source device-param-source-${safe(src)}">${safe(src)}</span>`;
   // Currently only max_charge_w has a debug-samples endpoint. As more
   // fits add return_candidates support, list them here.
@@ -1190,7 +1196,7 @@ function renderDeviceParams(rows, deviceSn) {
           p.n_samples ? ` · fit from ${p.n_samples} samples` : ''
         }</div>
       </div>
-      <div class="device-param-value">${fmtVal(p.value, p.unit)}</div>
+      <div class="device-param-value">${fmtVal(p.value, p.unit, p.decimals)}</div>
       <div class="device-param-edit" style="display:flex; gap:6px; align-items:center">
         ${sourceTag(p.source || 'unknown')}
         ${DEBUGGABLE.has(p.key)

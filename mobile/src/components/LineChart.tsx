@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Text, View } from "react-native";
+import { Pressable, Text, View } from "react-native";
 import Svg, { Circle, G, Line, Polygon, Polyline, Text as SvgText } from "react-native-svg";
 import { colors } from "../theme";
 
@@ -95,38 +95,46 @@ function valueAt(s: Series, x: number): number | null {
 export function LineChart({
   series,
   height = 180,
+  toggleable = false,
 }: {
   series: Series[];
   height?: number;
+  toggleable?: boolean;
 }) {
   const [width, setWidth] = useState(0);
   const [selectedX, setSelectedX] = useState<number | null>(null);
+  const [hidden, setHidden] = useState<Record<string, boolean>>({});
   const gesture = useRef({ moved: false, pendingClear: false, startPx: 0 });
 
-  const hasRight = series.some((s) => s.axis === "right");
+  const drawn = useMemo(
+    () => (toggleable ? series.filter((s) => !hidden[s.id]) : series),
+    [series, hidden, toggleable],
+  );
+
+  const hasRight = drawn.some((s) => s.axis === "right");
   const pad = { l: 38, r: hasRight ? 36 : 10, t: 12, b: 22 };
   const W = Math.max(width, 1);
   const H = height;
   const innerW = Math.max(1, W - pad.l - pad.r);
   const innerH = Math.max(1, H - pad.t - pad.b);
 
-  const left = series.filter((s) => (s.axis ?? "left") === "left");
-  const right = series.filter((s) => s.axis === "right");
-  const leftR = axisRange(left.length ? left : series);
+  const left = drawn.filter((s) => (s.axis ?? "left") === "left");
+  const right = drawn.filter((s) => s.axis === "right");
+  const leftR = axisRange(left.length ? left : drawn);
   const rightR = axisRange(right.length ? right : []);
 
   const samples = useMemo(() => {
     const set = new Set<number>();
-    for (const s of series) {
+    for (const s of drawn) {
       for (const v of s.values) if (Number.isFinite(v.x)) set.add(v.x);
     }
     return [...set].sort((a, b) => a - b);
-  }, [series]);
+  }, [drawn]);
 
   const minX = samples.length ? samples[0] : 0;
   const maxX = samples.length ? samples[samples.length - 1] : 1;
   const spanX = maxX - minX;
-  const hasData = series.some((s) => s.values.some((v) => Number.isFinite(v.y)));
+  const hasData = drawn.some((s) => s.values.some((v) => Number.isFinite(v.y)));
   const labeled = series.filter((s) => s.label);
 
   useEffect(() => {
@@ -265,7 +273,7 @@ export function LineChart({
                       key={`r${i}`}
                       x={W - pad.r + 4}
                       y={y + 3}
-                      fill={colors.accent3}
+                      fill={colors.textMute}
                       fontSize="9"
                       textAnchor="start"
                     >
@@ -291,7 +299,7 @@ export function LineChart({
               );
             })}
 
-            {series.map((s) => {
+            {drawn.map((s) => {
               const { min, max } = rangeFor(s);
               const pts = s.values.filter((v) => Number.isFinite(v.x) && Number.isFinite(v.y));
               if (pts.length < 2) return null;
@@ -325,7 +333,7 @@ export function LineChart({
                   stroke="rgba(255,255,255,0.28)"
                   strokeWidth={1}
                 />
-                {series.map((s) => {
+                {drawn.map((s) => {
                   const y = valueAt(s, selectedX);
                   if (y == null) return null;
                   const { min, max } = rangeFor(s);
@@ -366,7 +374,7 @@ export function LineChart({
                 {fmtTooltipX(selectedX, spanX)}
               </Text>
               <View style={{ height: 1, backgroundColor: colors.border }} />
-              {series.map((s) => {
+              {drawn.map((s) => {
                 const y = valueAt(s, selectedX);
                 return (
                   <View
@@ -398,20 +406,43 @@ export function LineChart({
         </View>
       )}
       {labeled.length ? (
-        <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 12, paddingTop: 8 }}>
-          {labeled.map((s) => (
-            <View key={s.id} style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+        <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8, paddingTop: 8 }}>
+          {labeled.map((s) => {
+            const off = toggleable && hidden[s.id];
+            const chip = (
               <View
                 style={{
-                  width: s.dashed ? 14 : 10,
-                  height: s.dashed ? 2 : 10,
-                  borderRadius: s.dashed ? 0 : 2,
-                  backgroundColor: s.color,
+                  flexDirection: "row",
+                  alignItems: "center",
+                  gap: 6,
+                  opacity: off ? 0.35 : 1,
+                  paddingVertical: 4,
+                  paddingHorizontal: 2,
                 }}
-              />
-              <Text style={{ color: colors.textMute, fontSize: 11 }}>{s.label}</Text>
-            </View>
-          ))}
+              >
+                <View
+                  style={{
+                    width: s.dashed ? 14 : 10,
+                    height: s.dashed ? 2 : 10,
+                    borderRadius: s.dashed ? 0 : 2,
+                    backgroundColor: s.color,
+                  }}
+                />
+                <Text style={{ color: colors.textMute, fontSize: 11 }}>{s.label}</Text>
+              </View>
+            );
+            if (!toggleable) return <View key={s.id}>{chip}</View>;
+            return (
+              <Pressable
+                key={s.id}
+                onPress={() => setHidden((prev) => ({ ...prev, [s.id]: !prev[s.id] }))}
+                accessibilityRole="button"
+                accessibilityState={{ selected: !off }}
+              >
+                {chip}
+              </Pressable>
+            );
+          })}
         </View>
       ) : null}
     </View>

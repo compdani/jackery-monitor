@@ -156,6 +156,42 @@ def test_last_battery_full_ts(db):
     assert db.last_battery_full_ts("NOPE") is None
 
 
+def test_history_recovers_solar_w_from_solar_wh(db):
+    """Hourly last_solar_w can be NULL on pre-column samples; solar_wh
+    still has the energy. history() must surface watts so the solar
+    coefficient fit isn't stuck at 0."""
+    sn = "TEST-SOLAR-WH"
+    db.upsert_device(sn, "Test 5000", 13, "Explorer 5000 Plus")
+    hour = int((time.time() - 7200) // 3600) * 3600
+    with db._conn() as c:
+        c.execute(
+            """INSERT INTO samples
+                   (device_sn, bucket, input_wh, output_wh, solar_wh,
+                    ac_input_wh, solar_charge_diverted_wh,
+                    last_input_w, last_output_w, last_solar_w,
+                    last_ac_input_w, last_battery_pct, sample_count)
+               VALUES (?, ?, 0, 0, 1800, 0, 0, 0, 0, NULL, 0, 50, 1)""",
+            (sn, hour),
+        )
+    rows = db.history(sn, hours=24, bucket_s=3600)
+    assert rows
+    assert rows[0]["solar_wh"] == 1800
+    assert rows[0]["solar_w"] == 1800
+
+
+def test_list_weather_observations_limit_keeps_newest(db):
+    base = 1_700_000_000
+    db.upsert_weather_observations([
+        {"ts": base + i * 3600, "ghi_w_m2": float(i), "cloud_cover_pct": 0}
+        for i in range(10)
+    ])
+    got = db.list_weather_observations(since_ts=base, limit=3)
+    assert [r["ts"] for r in got] == [
+        base + 7 * 3600, base + 8 * 3600, base + 9 * 3600,
+    ]
+    assert [r["ghi_w_m2"] for r in got] == [7.0, 8.0, 9.0]
+
+
 def test_weather_forecast_replace_and_get(db):
     now = int(time.time())
     rows = [{"ts": now + 3600, "ghi_w_m2": 500.0, "cloud_cover_pct": 10.0},

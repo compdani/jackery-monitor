@@ -1722,6 +1722,7 @@ def resolve_device_param(device_sn: str, key: str) -> dict[str, Any]:
                 since_ts=int(time.time()) - 14 * 86400, limit=14 * 24,
             )
             k_val, n = forecaster.fit_solar_coefficient(ehist, wx)
+            k_val = round(float(k_val), 4)
             source = "fit" if n >= forecaster.MIN_FIT_SAMPLES else "default"
             state.energy.set_device_param(
                 device_sn, key, k_val, source=source, n_samples=n,
@@ -3183,6 +3184,18 @@ async def api_devices_params_refit(req: Request):
     # memo so the live fit picks up the latest data.
     state.energy.clear_device_param(device_sn, key)
     _param_fit_cache.pop((device_sn, "_history"), None)
+    # Solar (and max-charge) fits pair energy with GHI. Refresh
+    # Open-Meteo first so Refit isn't stuck on a sparse/stale
+    # weather_observations table — same fetch the Forecast.Solar
+    # infer path already does.
+    if key in ("solar_coefficient", "max_charge_w"):
+        loc = device_location.get()
+        if loc:
+            try:
+                await weather_client.fetch_irradiance(
+                    float(loc["latitude"]), float(loc["longitude"]))
+            except Exception as e:
+                log.warning("params refit: irradiance fetch failed: %s", e)
     return {"device_sn": device_sn, "key": key,
             **resolve_device_param(device_sn, key)}
 

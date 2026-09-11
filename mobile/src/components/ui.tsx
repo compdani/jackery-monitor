@@ -1,4 +1,4 @@
-import { type ReactNode } from "react";
+import { type ReactNode, useState } from "react";
 import {
   ActivityIndicator,
   Pressable,
@@ -245,6 +245,37 @@ export function Kpi({
   );
 }
 
+export function Collapsible({
+  title,
+  summary,
+  defaultOpen = false,
+  children,
+}: {
+  title: string;
+  summary?: string;
+  defaultOpen?: boolean;
+  children: ReactNode;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
+  return (
+    <Card>
+      <Pressable
+        onPress={() => setOpen((v) => !v)}
+        accessibilityRole="button"
+        accessibilityState={{ expanded: open }}
+        style={styles.collapseHeader}
+      >
+        <View style={{ flex: 1, gap: 2 }}>
+          <Text style={styles.title}>{title}</Text>
+          {summary ? <Text style={styles.hint}>{summary}</Text> : null}
+        </View>
+        <Text style={styles.chevron}>{open ? "▾" : "▸"}</Text>
+      </Pressable>
+      {open ? <View style={styles.collapseBody}>{children}</View> : null}
+    </Card>
+  );
+}
+
 export function EnergyKpi({
   label,
   consumed,
@@ -344,4 +375,7 @@ const styles = StyleSheet.create({
   energyKpiCol: { flex: 1 },
   kpiConsumed: { color: colors.grid, fontSize: 22, fontWeight: "700" },
   kpiCharged: { color: colors.accent, fontSize: 22, fontWeight: "700" },
+  collapseHeader: { flexDirection: "row", alignItems: "center", gap: 8 },
+  collapseBody: { gap: 8 },
+  chevron: { color: colors.textMute, fontSize: 16, paddingHorizontal: 4 },
 });
