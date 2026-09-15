@@ -485,10 +485,10 @@ def test_shell_sends_no_cache_and_forecast_load_markup(client):
     assert r.status_code == 200
     assert "no-cache" in (r.headers.get("cache-control") or "").lower()
     html = r.text
-    assert 'id="forecast-array"' in html
+    assert 'id="forecast-array" class="card collapsible collapsed"' in html
+    assert 'id="forecast-load" class="card collapsible collapsed"' in html
     assert 'data-collapse-key="forecast-array"' in html
     assert 'data-collapse-key="forecast-load"' in html
-    assert 'id="forecast-load"' in html
     assert 'id="forecast-load" hidden' not in html
     assert 'id="forecast-array" hidden' not in html
     assert 'id="load-add-window"' in html
@@ -502,15 +502,32 @@ def test_shell_sends_no_cache_and_forecast_load_markup(client):
 
 
 def test_solar_array_validation_and_roundtrip(app, client):
+    sn = "TEST-ARRAY-A"
     r = client.post("/api/forecast/solar_array",
-                    json={"declination": 20, "azimuth": 0, "kwp": 2.4})
+                    json={"device_sn": sn, "declination": 20, "azimuth": 0, "kwp": 2.4})
     assert r.status_code == 200
     assert r.json()["declination"] == 20
-    g = client.get("/api/forecast/solar_array")
+    g = client.get("/api/forecast/solar_array", params={"device_sn": sn})
     assert g.json()["array"]["kwp"] == 2.4
     bad = client.post("/api/forecast/solar_array",
-                      json={"declination": 99, "azimuth": 0, "kwp": 2.4})
+                      json={"device_sn": sn, "declination": 99, "azimuth": 0, "kwp": 2.4})
     assert bad.status_code == 400
+
+
+def test_solar_array_is_per_device(app, client):
+    a = client.post("/api/forecast/solar_array",
+                    json={"device_sn": "SN-A", "declination": 20, "azimuth": 0, "kwp": 2.4})
+    b = client.post("/api/forecast/solar_array",
+                    json={"device_sn": "SN-B", "declination": 35, "azimuth": -90, "kwp": 1.1})
+    assert a.status_code == 200 and b.status_code == 200
+    ga = client.get("/api/forecast/solar_array", params={"device_sn": "SN-A"}).json()
+    gb = client.get("/api/forecast/solar_array", params={"device_sn": "SN-B"}).json()
+    assert ga["array"]["kwp"] == 2.4
+    assert gb["array"]["azimuth"] == -90
+    gc = client.get("/api/forecast/solar_array", params={"device_sn": "SN-C"}).json()
+    assert gc["array"] is None
+    missing = client.get("/api/forecast/solar_array")
+    assert missing.status_code == 400
 
 
 def test_solar_array_infer_requires_location(client):
@@ -533,7 +550,10 @@ def test_solar_array_infer_empty_history_400(app, client, monkeypatch):
                     params={"device_sn": "TEST-INFER-EMPTY"})
     assert r.status_code == 400
     assert "not enough" in r.json()["detail"].lower()
-    assert client.get("/api/forecast/solar_array").json()["array"] is None
+    assert client.get(
+        "/api/forecast/solar_array",
+        params={"device_sn": "TEST-INFER-EMPTY"},
+    ).json()["array"] is None
 
 
 def test_solar_array_infer_fills_without_saving(app, client, monkeypatch):
@@ -590,7 +610,9 @@ def test_solar_array_infer_fills_without_saving(app, client, monkeypatch):
     assert j["kwp"] >= 0.05
     assert j["n_samples"] >= 12
     # Preview only — Save is a separate POST.
-    assert client.get("/api/forecast/solar_array").json()["array"] is None
+    assert client.get(
+        "/api/forecast/solar_array", params={"device_sn": sn},
+    ).json()["array"] is None
 
 
 def test_load_schedule_get_post(app, client):

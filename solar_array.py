@@ -1,8 +1,13 @@
-"""Site-level PV plane for Forecast.Solar (tilt / azimuth / kWp).
+"""Per-device PV plane for Forecast.Solar (tilt / azimuth / kWp).
 
-Lives at /data/solar_array.json. Lat/lon stay in location.json; this file
-is only the plane geometry Forecast.Solar needs on the estimate URL.
+Lives at /data/solar_array.json, keyed by device_sn (same shape as
+load_schedule.json). Lat/lon stay in location.json; this file is only
+the plane geometry Forecast.Solar needs on the estimate URL.
 Not encrypted — tilt and kWp are not PII.
+
+Legacy site-level files (`{declination, azimuth, kwp}` at the top
+level) are still read as a default that every device inherits until
+that device is saved.
 
 `infer_plane` estimates the three fields from paired Jackery solar_w and
 Open-Meteo GHI: kWp from peak / POA regression, tilt+azimuth from a
@@ -30,6 +35,7 @@ _MIN_GHI = 80.0
 _MIN_SOLAR_W = 50.0
 
 _lock = threading.Lock()
+_DEFAULT_KEY = "_default"
 
 
 def _validate(dec: Any, az: Any, kwp: Any) -> dict | None:
@@ -48,34 +54,75 @@ def _validate(dec: Any, az: Any, kwp: Any) -> dict | None:
     return {"declination": declination, "azimuth": azimuth, "kwp": round(kwp_f, 4)}
 
 
-def get() -> dict | None:
-    """Return {declination, azimuth, kwp} or None if unset / invalid."""
-    with _lock:
-        try:
-            with open(PATH) as f:
-                data = json.load(f)
-        except FileNotFoundError:
-            return None
-        except Exception as e:
-            log.warning("solar_array unreadable: %s", e)
-            return None
-    if not isinstance(data, dict):
+def _is_legacy(data: dict) -> bool:
+    return (
+        "declination" in data
+        and "azimuth" in data
+        and "kwp" in data
+        and not isinstance(data.get("declination"), dict)
+    )
+
+
+def _plane_from(raw: Any) -> dict | None:
+    if not isinstance(raw, dict):
         return None
-    return _validate(data.get("declination"), data.get("azimuth"), data.get("kwp"))
+    return _validate(raw.get("declination"), raw.get("azimuth"), raw.get("kwp"))
 
 
-def set(declination: Any, azimuth: Any, kwp: Any) -> dict | None:
+def _read_all() -> dict:
+    try:
+        with open(PATH) as f:
+            data = json.load(f)
+    except FileNotFoundError:
+        return {}
+    except Exception as e:
+        log.warning("solar_array unreadable: %s", e)
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _write_all(data: dict) -> None:
+    os.makedirs(os.path.dirname(PATH) or ".", exist_ok=True)
+    tmp = PATH + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump(data, f)
+    os.replace(tmp, PATH)
+
+
+def get(device_sn: str | None = None) -> dict | None:
+    """Return {declination, azimuth, kwp} for this device, or None.
+
+    A legacy flat file (no per-device keys) is treated as a default that
+    every SN inherits until that SN is saved.
+    """
+    with _lock:
+        data = _read_all()
+    if not data:
+        return None
+    if _is_legacy(data):
+        return _plane_from(data)
+    if device_sn:
+        rec = _plane_from(data.get(device_sn))
+        if rec is not None:
+            return rec
+    return _plane_from(data.get(_DEFAULT_KEY))
+
+
+def set(device_sn: str, declination: Any, azimuth: Any, kwp: Any) -> dict | None:
+    if not device_sn:
+        raise ValueError("device_sn required")
     rec = _validate(declination, azimuth, kwp)
     if rec is None:
         return None
-    os.makedirs(os.path.dirname(PATH) or ".", exist_ok=True)
-    tmp = PATH + ".tmp"
     with _lock:
-        with open(tmp, "w") as f:
-            json.dump(rec, f)
-        os.replace(tmp, PATH)
-    log.info("solar array saved: dec=%s az=%s kwp=%s",
-             rec["declination"], rec["azimuth"], rec["kwp"])
+        data = _read_all()
+        if _is_legacy(data):
+            legacy = _plane_from(data)
+            data = {_DEFAULT_KEY: legacy} if legacy else {}
+        data[device_sn] = rec
+        _write_all(data)
+    log.info("solar array saved for %s: dec=%s az=%s kwp=%s",
+             device_sn, rec["declination"], rec["azimuth"], rec["kwp"])
     return rec
 
 

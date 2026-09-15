@@ -109,8 +109,8 @@ export default function ForecastScreen() {
   const [lon, setLon] = useState("");
   const [coordsHint, setCoordsHint] = useState<string | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
-  const [dec, setDec] = useState("20");
-  const [az, setAz] = useState("0");
+  const [dec, setDec] = useState("");
+  const [az, setAz] = useState("");
   const [kwp, setKwp] = useState("");
   const [fsKey, setFsKey] = useState("");
   const [hasFsKey, setHasFsKey] = useState(false);
@@ -139,16 +139,18 @@ export default function ForecastScreen() {
       setFc(null);
     }
     try {
-      const s = (await endpoints.solarArray()) as {
+      const s = (await endpoints.solarArray(deviceSn || activeSn())) as {
         array?: { declination?: number; azimuth?: number; kwp?: number };
         has_key?: boolean;
       };
-      if (s.array?.declination != null) setDec(String(s.array.declination));
-      if (s.array?.azimuth != null) setAz(String(s.array.azimuth));
-      if (s.array?.kwp != null) setKwp(String(s.array.kwp));
+      setDec(s.array?.declination != null ? String(s.array.declination) : "");
+      setAz(s.array?.azimuth != null ? String(s.array.azimuth) : "");
+      setKwp(s.array?.kwp != null ? String(s.array.kwp) : "");
       setHasFsKey(!!s.has_key);
     } catch {
-      /* ignore */
+      setDec("");
+      setAz("");
+      setKwp("");
     }
     try {
       const ls = (await endpoints.loadSchedule(activeSn())) as {
@@ -168,7 +170,7 @@ export default function ForecastScreen() {
     } finally {
       setHydrated(true);
     }
-  }, []);
+  }, [deviceSn]);
 
   const loadAccuracy = useCallback(async (days: number) => {
     try {
@@ -279,7 +281,10 @@ export default function ForecastScreen() {
     return base + weatherNote(fc) + solarSourceSuffix(fc.solar_source);
   })();
 
-  const arraySummary = `tilt ${dec}° · az ${az}° · ${kwp || "—"} kWp`;
+  const arraySummary =
+    dec !== "" && az !== "" && kwp
+      ? `tilt ${dec}° · az ${az}° · ${kwp} kWp`
+      : "tilt / azimuth / kWp — tap to edit";
   const sleepBit = sleepStart && sleepEnd ? ` · sleep ${sleepStart}–${sleepEnd}` : "";
   const winBit = windows.length
     ? ` · ${windows.length} window${windows.length === 1 ? "" : "s"}`
@@ -365,7 +370,7 @@ export default function ForecastScreen() {
         </Card>
       ) : null}
 
-      <Collapsible title="Solar array" summary={arraySummary} defaultOpen>
+      <Collapsible title="Solar array" summary={arraySummary}>
         <Hint>
           Tilt 0–90°, azimuth −180…180 (0 = south). Public plan covers today + 1 day; a key extends
           the horizon. Open-Meteo fills remaining days. Infer from 14 days of history.
@@ -413,7 +418,7 @@ export default function ForecastScreen() {
           title="Save array"
           onPress={() =>
             void endpoints
-              .setSolarArray(Number(dec), Number(az), Number(kwp))
+              .setSolarArray(Number(dec), Number(az), Number(kwp), deviceSn || activeSn())
               .then(() => {
                 setArrayHint("Saved");
                 return load();
@@ -462,7 +467,7 @@ export default function ForecastScreen() {
         {arrayHint ? <Hint>{arrayHint}</Hint> : null}
       </Collapsible>
 
-      <Collapsible title="Expected load" summary={loadSummary} defaultOpen>
+      <Collapsible title="Expected load" summary={loadSummary}>
         <Segmented
           options={[
             { id: "historical", label: "Historical" },

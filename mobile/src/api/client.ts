@@ -216,9 +216,13 @@ export const endpoints = {
   forecast: (device_sn?: string | null) =>
     api("/api/forecast", { query: { device_sn } }),
   forecastAccuracy: () => api("/api/forecast/accuracy"),
-  solarArray: () => api("/api/forecast/solar_array"),
-  setSolarArray: (declination: number, azimuth: number, kwp: number) =>
-    api("/api/forecast/solar_array", { method: "POST", body: { declination, azimuth, kwp } }),
+  solarArray: (device_sn?: string | null) =>
+    api("/api/forecast/solar_array", { query: { device_sn } }),
+  setSolarArray: (declination: number, azimuth: number, kwp: number, device_sn?: string | null) =>
+    api("/api/forecast/solar_array", {
+      method: "POST",
+      body: { declination, azimuth, kwp, device_sn },
+    }),
   inferSolarArray: (device_sn?: string | null) =>
     api("/api/forecast/solar_array/infer", { method: "POST", query: { device_sn } }),
   setSolarKey: (api_key: string) =>

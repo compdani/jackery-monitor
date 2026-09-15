@@ -123,11 +123,19 @@ function apiDetail(j, fallback) {
 }
 
 function fillSolarArrayForm(a) {
-  if (!a) return false;
+  const dec = $('fs-dec');
+  const az = $('fs-az');
+  const kwp = $('fs-kwp');
+  if (!a) {
+    if (dec) dec.value = '';
+    if (az) az.value = '';
+    if (kwp) kwp.value = '';
+    return false;
+  }
   let filled = false;
-  if ($('fs-dec') && a.declination != null) { $('fs-dec').value = a.declination; filled = true; }
-  if ($('fs-az') && a.azimuth != null) { $('fs-az').value = a.azimuth; filled = true; }
-  if ($('fs-kwp') && a.kwp != null) { $('fs-kwp').value = a.kwp; filled = true; }
+  if (dec && a.declination != null) { dec.value = a.declination; filled = true; }
+  if (az && a.azimuth != null) { az.value = a.azimuth; filled = true; }
+  if (kwp && a.kwp != null) { kwp.value = a.kwp; filled = true; }
   return filled;
 }
 function fmt(n, digits = 0) {
@@ -5804,6 +5812,10 @@ async function fetchForecast() {
     if (j.load_schedule && !_loadScheduleSaving && !loadScheduleFieldsFocused()) {
       applyLoadSchedulePayload(j.load_schedule);
     }
+    if ('solar_array' in j && !solarArrayFieldsFocused()) {
+      fillSolarArrayForm(j.solar_array);
+      updateForecastConfigSummaries();
+    }
     // Show the location these forecasts are based on. Async, fires its
     // own /api/location request — doesn't block the chart render.
     refreshForecastCurrentLoc();
@@ -5876,6 +5888,11 @@ let _loadMode = 'historical';
 let _loadWindows = [];
 let _loadScheduleSaving = false;
 let _loadScheduleFetchId = 0;
+
+function solarArrayFieldsFocused() {
+  const id = document.activeElement?.id;
+  return id === 'fs-dec' || id === 'fs-az' || id === 'fs-kwp';
+}
 
 function loadScheduleFieldsFocused() {
   const ae = document.activeElement;
@@ -5994,17 +6011,22 @@ async function loadForecastConfigPanels() {
   setLoadMode(_loadMode);
   renderLoadWindows();
 
+  const sn = activeJackeryDevice()?.device_sn;
+  const fetchId = ++_loadScheduleFetchId;
   try {
-    const r = await fetch('/api/forecast/solar_array');
+    const url = sn
+      ? `/api/forecast/solar_array?device_sn=${encodeURIComponent(sn)}`
+      : '/api/forecast/solar_array';
+    const r = await fetch(url);
+    if (fetchId !== _loadScheduleFetchId) return;
     if (r.ok) {
       const j = await r.json();
       fillSolarArrayForm(j.array);
       if ($('fs-key-status')) $('fs-key-status').textContent = j.has_key ? 'key saved' : 'no key';
+    } else {
+      fillSolarArrayForm(null);
     }
   } catch (e) { console.warn('solar array fetch failed', e); }
-
-  const sn = activeJackeryDevice()?.device_sn;
-  const fetchId = ++_loadScheduleFetchId;
   try {
     const url = sn
       ? `/api/forecast/load_schedule?device_sn=${encodeURIComponent(sn)}`
@@ -6100,7 +6122,10 @@ async function saveSolarArray() {
     const r = await fetch('/api/forecast/solar_array', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ declination, azimuth, kwp }),
+      body: JSON.stringify({
+        declination, azimuth, kwp,
+        device_sn: activeJackeryDevice()?.device_sn,
+      }),
     });
     const j = await r.json().catch(() => ({}));
     if (!r.ok) {

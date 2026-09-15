@@ -1,14 +1,29 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ActivityIndicator, Animated, Pressable, Text, View } from "react-native";
 import { endpoints } from "../../../src/api/client";
 import { reconnectLive } from "../../../src/api/ws";
 import { LineChart } from "../../../src/components/LineChart";
 import { PowerFlow } from "../../../src/components/PowerFlow";
-import { Btn, Card, EnergyKpi, Eyebrow, Hint, Pill, Screen } from "../../../src/components/ui";
+import {
+  Btn,
+  Card,
+  EnergyKpi,
+  EodForecastPill,
+  Eyebrow,
+  Hint,
+  Pill,
+  SavingsRow,
+  Screen,
+} from "../../../src/components/ui";
+import { buildEodForecast, type ForecastPayload } from "../../../src/lib/forecast";
 import { etaLabel, fmtKwh, fmtTemp, headlineSoc } from "../../../src/lib/format";
 import { useLive } from "../../../src/store/live";
 import { usePrefs } from "../../../src/store/prefs";
 import { colors } from "../../../src/theme";
+
+const EOD_DRIFT_THRESHOLD_PCT = 1;
+const EOD_MIN_REFRESH_MS = 5 * 60_000;
+const EOD_INTERVAL_MS = 30 * 60_000;
 
 const PENDING_TOGGLE_MS = 30000;
 
@@ -204,6 +219,9 @@ export default function LiveScreen() {
   const [divertHost, setDivertHost] = useState<string | null>(null);
   const [chargeOn, setChargeOn] = useState<boolean | null>(null);
   const [divertOn, setDivertOn] = useState<boolean | null>(null);
+  const [eodFc, setEodFc] = useState<ForecastPayload | null>(null);
+  const eodAnchorRef = useRef<number | null>(null);
+  const eodLastFetchRef = useRef(0);
 
   const t = status?.telemetry;
   const soc = headlineSoc(t);
@@ -213,8 +231,35 @@ export default function LiveScreen() {
   const packs = (status?.battery_packs || []) as Pack[];
   const hist = status?.history || [];
   const conn = status?.connection_status || (connected ? "connected" : "disconnected");
+  const source = status?.source ? String(status.source).toUpperCase() : null;
   const sn = status?.device?.device_sn as string | undefined;
   const watchdog = status?.inverter_watchdog as { active?: boolean; message?: string } | null;
+  const eod = useMemo(() => buildEodForecast(eodFc), [eodFc]);
+
+  const loadEod = useCallback(async () => {
+    eodLastFetchRef.current = Date.now();
+    try {
+      const j = (await endpoints.forecast(sn)) as ForecastPayload;
+      setEodFc(j);
+      if (j.starting_soc_pct != null) eodAnchorRef.current = j.starting_soc_pct;
+    } catch {
+      setEodFc(null);
+    }
+  }, [sn]);
+
+  useEffect(() => {
+    void loadEod();
+    const id = setInterval(() => void loadEod(), EOD_INTERVAL_MS);
+    return () => clearInterval(id);
+  }, [loadEod]);
+
+  useEffect(() => {
+    const anchor = eodAnchorRef.current;
+    if (soc == null || anchor == null) return;
+    if (Date.now() - eodLastFetchRef.current < EOD_MIN_REFRESH_MS) return;
+    if (Math.abs(soc - anchor) < EOD_DRIFT_THRESHOLD_PCT) return;
+    void loadEod();
+  }, [soc, loadEod]);
 
   useEffect(() => {
     let cancelled = false;
@@ -380,29 +425,42 @@ export default function LiveScreen() {
         <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
           <Eyebrow>State of charge</Eyebrow>
           <Pill
-            label={conn}
-            tone={conn === "connected" ? "ok" : conn === "error" ? "err" : "warn"}
+            label={conn === "connected" && source ? source : conn}
+            tone={
+              conn === "connected"
+                ? source
+                  ? "mute"
+                  : "ok"
+                : conn === "error"
+                  ? "err"
+                  : "warn"
+            }
           />
         </View>
-        <Text style={{ color: colors.text, fontSize: 48, fontWeight: "700" }}>
-          {soc == null ? "—" : Math.round(soc)}
-          <Text style={{ fontSize: 20, color: colors.textDim }}>%</Text>
-        </Text>
-        <View style={{ height: 8, backgroundColor: colors.bgElev2, borderRadius: 99, overflow: "hidden" }}>
-          <View
-            style={{
-              width: `${Math.max(0, Math.min(100, soc ?? 0))}%`,
-              height: "100%",
-              backgroundColor: (soc ?? 0) < 20 ? colors.danger : colors.accent,
-            }}
-          />
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 12 }}>
+          <View style={{ flex: 1, gap: 8 }}>
+            <Text style={{ color: colors.text, fontSize: 48, fontWeight: "700" }}>
+              {soc == null ? "—" : Math.round(soc)}
+              <Text style={{ fontSize: 20, color: colors.textDim }}>%</Text>
+            </Text>
+            <View style={{ height: 8, backgroundColor: colors.bgElev2, borderRadius: 99, overflow: "hidden" }}>
+              <View
+                style={{
+                  width: `${Math.max(0, Math.min(100, soc ?? 0))}%`,
+                  height: "100%",
+                  backgroundColor: (soc ?? 0) < 20 ? colors.danger : colors.accent,
+                }}
+              />
+            </View>
+            <Hint>
+              {etaLabel(t)}
+              {t?.system_soc_pct == null && t?.battery_temp_c != null
+                ? ` · ${fmtTemp(t.battery_temp_c, tempUnit)}`
+                : ""}
+            </Hint>
+          </View>
+          <EodForecastPill view={eod} />
         </View>
-        <Hint>
-          {etaLabel(t)}
-          {t?.system_soc_pct == null && t?.battery_temp_c != null
-            ? ` · ${fmtTemp(t.battery_temp_c, tempUnit)}`
-            : ""}
-        </Hint>
       </Card>
 
       <Card>
@@ -423,6 +481,10 @@ export default function LiveScreen() {
         {(energy?.today?.solar_charge_diverted_wh || 0) > 0 ? (
           <Hint>{fmtKwh(energy?.today?.solar_charge_diverted_wh)} kWh diverted</Hint>
         ) : null}
+        <SavingsRow
+          savings={energy?.today_savings}
+          currency={energy?.cost_plan?.currency}
+        />
       </EnergyKpi>
 
       <Card>

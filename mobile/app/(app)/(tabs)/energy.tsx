@@ -5,8 +5,8 @@ import { Pressable, Text, View } from "react-native";
 import { activeSn, endpoints } from "../../../src/api/client";
 import type { DailyRow, EnergyTotals, EnergyWindow } from "../../../src/api/types";
 import { LineChart } from "../../../src/components/LineChart";
-import { Btn, Card, EnergyKpi, Eyebrow, Hint, Screen, Segmented } from "../../../src/components/ui";
-import { fmtKwh, money } from "../../../src/lib/format";
+import { Btn, Card, EnergyKpi, Eyebrow, Hint, SavingsRow, Screen, Segmented } from "../../../src/components/ui";
+import { fmtKwh } from "../../../src/lib/format";
 import { useLive } from "../../../src/store/live";
 import { type EnergyBucketS, usePrefs } from "../../../src/store/prefs";
 import { colors } from "../../../src/theme";
@@ -140,10 +140,7 @@ export default function EnergyScreen() {
     };
   }, [devices, energy]);
 
-  const lifeNet =
-    devices.length <= 1 && energy?.lifetime_savings?.net_savings != null
-      ? `net ${money(energy.lifetime_savings.net_savings, energy.cost_plan?.currency)}`
-      : undefined;
+  const lifeSavings = devices.length <= 1 ? energy?.lifetime_savings : undefined;
 
   const showDevicePicker = devices.length > 1;
   const combined = chartSn === ALL;
@@ -180,8 +177,9 @@ export default function EnergyScreen() {
             label="Lifetime"
             consumed={fmtKwh(totals.lifetime.output_wh)}
             charged={fmtKwh(totals.lifetime.input_wh)}
-            sub={lifeNet}
-          />
+          >
+            <SavingsRow savings={lifeSavings} currency={energy?.cost_plan?.currency} />
+          </EnergyKpi>
         </View>
       </View>
 

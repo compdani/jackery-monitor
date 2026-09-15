@@ -48,3 +48,25 @@ def test_infer_east_array_finds_negative_azimuth():
     assert abs(out["declination"] - true_tilt) <= 10, out
     assert 1.0 <= out["kwp"] <= 8.0, out
     assert out["n_samples"] >= 12
+
+
+def test_get_set_isolated_per_device(tmp_path, monkeypatch):
+    monkeypatch.setattr(sa, "PATH", str(tmp_path / "solar_array.json"))
+    assert sa.get("A") is None
+    sa.set("A", 20, 0, 2.4)
+    sa.set("B", 30, -90, 1.2)
+    assert sa.get("A")["kwp"] == 2.4
+    assert sa.get("A")["declination"] == 20
+    assert sa.get("B")["azimuth"] == -90
+    assert sa.get("C") is None
+
+
+def test_legacy_flat_file_is_default_until_device_saved(tmp_path, monkeypatch):
+    path = tmp_path / "solar_array.json"
+    path.write_text('{"declination": 20, "azimuth": 0, "kwp": 2.4}')
+    monkeypatch.setattr(sa, "PATH", str(path))
+    assert sa.get("ANY")["kwp"] == 2.4
+    sa.set("SN1", 10, 90, 5.0)
+    assert sa.get("SN1")["kwp"] == 5.0
+    assert sa.get("SN2")["kwp"] == 2.4
+    assert sa.get("SN2")["declination"] == 20

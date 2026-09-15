@@ -12,6 +12,9 @@ import {
   type ViewStyle,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import type { EnergySavings } from "../api/types";
+import type { EodForecastView } from "../lib/forecast";
+import { money } from "../lib/format";
 import { colors, radius } from "../theme";
 
 export function Screen({
@@ -314,6 +317,89 @@ export function EnergyKpi({
   );
 }
 
+export function SavingsRow({
+  savings,
+  currency = "USD",
+}: {
+  savings?: EnergySavings | null;
+  currency?: string;
+}) {
+  if (!savings) return null;
+  const net = savings.net_savings ?? 0;
+  return (
+    <View style={styles.savingsRow}>
+      <Text style={styles.savPos}>+{money(savings.solar_savings, currency)} solar</Text>
+      <Text style={styles.savSep}>·</Text>
+      <Text style={styles.savNeg}>−{money(savings.grid_cost, currency)} grid</Text>
+      <Text style={styles.savSep}>·</Text>
+      <Text style={styles.savNet}>
+        {net >= 0 ? "+" : ""}
+        {money(net, currency)} net
+      </Text>
+    </View>
+  );
+}
+
+export function EodForecastPill({ view }: { view: EodForecastView }) {
+  if (view.kind === "hidden") return null;
+  const low = view.kind === "pair" || view.kind === "single" ? view.low : false;
+  const calibrating = view.kind === "calibrating";
+  return (
+    <View
+      accessibilityLabel={view.kind === "calibrating" ? view.hours : view.title}
+      style={[
+        styles.eodPill,
+        low && styles.eodPillLow,
+        calibrating && styles.eodPillCal,
+      ]}
+    >
+      {view.kind === "pair" ? (
+        <View style={styles.eodPair}>
+          <View style={styles.eodPairCol}>
+            <Text style={styles.eodLabel}>Peak</Text>
+            <Text style={[styles.eodValue, low && styles.eodValueLow]}>
+              {view.peak}
+              <Text style={styles.eodPct}>%</Text>
+            </Text>
+          </View>
+          <Text style={styles.eodDot}>·</Text>
+          <View style={styles.eodPairCol}>
+            <Text style={styles.eodLabel}>sunset</Text>
+            <Text style={[styles.eodValue, low && styles.eodValueLow]}>
+              {view.sunset}
+              <Text style={styles.eodPct}>%</Text>
+            </Text>
+          </View>
+        </View>
+      ) : view.kind === "single" ? (
+        <>
+          <Text style={styles.eodLabel}>{view.label}</Text>
+          <View style={styles.eodSingleRow}>
+            <Text
+              style={[
+                styles.eodTrend,
+                view.trend === "up" && styles.eodTrendUp,
+                view.trend === "down" && styles.eodTrendDown,
+              ]}
+            >
+              {view.trend === "up" ? "↗" : view.trend === "down" ? "↘" : "→"}
+            </Text>
+            <Text style={[styles.eodValue, low && styles.eodValueLow]}>
+              {view.value}
+              <Text style={styles.eodPct}>%</Text>
+            </Text>
+          </View>
+        </>
+      ) : (
+        <>
+          <Text style={styles.eodLabel}>Calibrating</Text>
+          <Text style={styles.eodCalHours}>{view.hours}</Text>
+        </>
+      )}
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: colors.bg },
   screenContent: { paddingBottom: 40 },
@@ -378,4 +464,51 @@ const styles = StyleSheet.create({
   collapseHeader: { flexDirection: "row", alignItems: "center", gap: 8 },
   collapseBody: { gap: 8 },
   chevron: { color: colors.textMute, fontSize: 16, paddingHorizontal: 4 },
+  savingsRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    alignItems: "baseline",
+    gap: 6,
+    paddingTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
+  },
+  savPos: { color: colors.accent, fontSize: 13, fontWeight: "600" },
+  savNeg: { color: colors.danger, fontSize: 13, fontWeight: "600" },
+  savNet: { color: colors.text, fontSize: 13, fontWeight: "600", marginLeft: "auto" },
+  savSep: { color: colors.textMute, fontSize: 13, fontWeight: "400" },
+  eodPill: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.bgElev2,
+    alignItems: "flex-end",
+    gap: 2,
+    minWidth: 96,
+  },
+  eodPillLow: {
+    borderColor: "rgba(239,68,68,0.5)",
+    backgroundColor: "rgba(239,68,68,0.06)",
+  },
+  eodPillCal: { borderStyle: "dashed" },
+  eodLabel: {
+    color: colors.textMute,
+    fontSize: 10,
+    fontWeight: "600",
+    textTransform: "uppercase",
+    letterSpacing: 0.6,
+  },
+  eodPair: { flexDirection: "row", alignItems: "center", gap: 6 },
+  eodPairCol: { alignItems: "center", gap: 2 },
+  eodSingleRow: { flexDirection: "row", alignItems: "baseline", gap: 4 },
+  eodValue: { color: colors.text, fontSize: 20, fontWeight: "700" },
+  eodValueLow: { color: colors.danger },
+  eodPct: { color: colors.textDim, fontSize: 11, fontWeight: "500" },
+  eodDot: { color: colors.textMute, fontSize: 12 },
+  eodTrend: { color: colors.textDim, fontSize: 14, fontWeight: "700" },
+  eodTrendUp: { color: colors.accent },
+  eodTrendDown: { color: colors.danger },
+  eodCalHours: { color: colors.textDim, fontSize: 11, fontWeight: "500", maxWidth: 120 },
 });

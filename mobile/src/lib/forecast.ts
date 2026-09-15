@@ -25,6 +25,7 @@ export type ForecastPayload = {
   starting_soc_pct?: number;
   today_actual_solar_wh?: number;
   charge_efficiency?: number;
+  low_battery_threshold?: number;
   readiness?: {
     have_hours?: number;
     needed_hours?: number;
@@ -32,6 +33,87 @@ export type ForecastPayload = {
     needed_idle_windows?: number;
   };
 };
+
+export type EodForecastView =
+  | { kind: "hidden" }
+  | { kind: "calibrating"; hours: string }
+  | { kind: "pair"; peak: number; sunset: number; low: boolean; title: string }
+  | {
+      kind: "single";
+      label: string;
+      value: number;
+      trend: "up" | "down" | "flat";
+      low: boolean;
+      title: string;
+    };
+
+/** Hero-card peak / sunset / sunrise pill, ported from web/app.js fetchEodForecast. */
+export function buildEodForecast(j: ForecastPayload | null | undefined): EodForecastView {
+  if (!j || !j.configured || j.error) return { kind: "hidden" };
+  if (j.ready === false) {
+    const r = j.readiness || {};
+    const haveH = Math.round(r.have_hours ?? 0);
+    const needH = r.needed_hours ?? 24;
+    const haveW = r.have_idle_windows ?? 0;
+    const needW = r.needed_idle_windows ?? 5;
+    return { kind: "calibrating", hours: `${haveH}/${needH} h · ${haveW}/${needW} cycles` };
+  }
+  const fc = j.forecast;
+  if (!Array.isArray(fc) || !fc.length) return { kind: "hidden" };
+
+  const isDayNow = num(fc[0]?.solar_w) > 0;
+  let i = 0;
+  let label: string;
+  if (isDayNow) {
+    while (i < fc.length && num(fc[i].solar_w) > 0) i++;
+    label = "At sunset";
+  } else {
+    while (i < fc.length && num(fc[i].solar_w) <= 0) i++;
+    label = "At sunrise";
+  }
+  if (i === 0 || i >= fc.length) return { kind: "hidden" };
+  const best = fc[i - 1];
+  if (best.predicted_soc == null) return { kind: "hidden" };
+
+  const start = j.starting_soc_pct ?? best.predicted_soc;
+  const sunsetVal = Math.round(best.predicted_soc);
+  let peakVal = sunsetVal;
+  if (isDayNow) {
+    let pk = -Infinity;
+    for (let d = 0; d < i; d++) {
+      if (fc[d].predicted_soc != null) pk = Math.max(pk, Number(fc[d].predicted_soc));
+    }
+    if (Number.isFinite(pk)) peakVal = Math.round(pk);
+  }
+  const showBoth = isDayNow && peakVal > Math.round(start) && peakVal > sunsetVal + 1;
+  const threshold = j.low_battery_threshold || 20;
+  const low = best.predicted_soc < threshold;
+  const delta = best.predicted_soc - start;
+
+  if (showBoth) {
+    return {
+      kind: "pair",
+      peak: peakVal,
+      sunset: sunsetVal,
+      low,
+      title:
+        `Battery peaks ~${peakVal}% today, then the shaded evening ` +
+        `(solar below house load) drains it to ~${sunsetVal}% by sunset.`,
+    };
+  }
+  const trend: "up" | "down" | "flat" =
+    Math.abs(delta) < 1 ? "flat" : delta > 0 ? "up" : "down";
+  return {
+    kind: "single",
+    label,
+    value: sunsetVal,
+    trend,
+    low,
+    title:
+      "Predicted state of charge at the next sun-phase boundary " +
+      "(sunset during the day, sunrise at night).",
+  };
+}
 
 export type LearnedBucket = {
   hour?: number;

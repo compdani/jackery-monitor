@@ -3465,7 +3465,7 @@ async def _build_and_record_forecast(device_sn: str | None) -> dict:
 
     fs_hourly: dict[int, float] = {}
     fs_meta: dict = {"configured": False}
-    plane = solar_array.get()
+    plane = solar_array.get(device_sn)
     if plane:
         fs_meta["configured"] = True
         fs = await forecast_solar.fetch_estimate(
@@ -4655,10 +4655,15 @@ async def api_location_set(req: Request):
 
 
 @app.get("/api/forecast/solar_array")
-def api_solar_array_get():
+def api_solar_array_get(device_sn: str | None = None):
     """Plane geometry for Forecast.Solar + whether an API key is saved."""
+    if not device_sn:
+        device_sn = state.device.device_sn if state.device else None
+    if not device_sn:
+        raise HTTPException(400, "device_sn required")
     return {
-        "array": solar_array.get(),
+        "device_sn": device_sn,
+        "array": solar_array.get(device_sn),
         "has_key": forecast_solar.has_key(),
     }
 
@@ -4666,7 +4671,12 @@ def api_solar_array_get():
 @app.post("/api/forecast/solar_array")
 async def api_solar_array_set(body: dict):
     """Save tilt / azimuth / kWp. 0° azimuth = south (Forecast.Solar)."""
+    device_sn = ((body or {}).get("device_sn")
+                 or (state.device.device_sn if state.device else None))
+    if not device_sn:
+        raise HTTPException(400, "device_sn required")
     rec = solar_array.set(
+        device_sn,
         (body or {}).get("declination"),
         (body or {}).get("azimuth"),
         (body or {}).get("kwp"),
@@ -4677,7 +4687,7 @@ async def api_solar_array_set(body: dict):
             "declination 0-90, azimuth -180-180 (0=south), kwp 0.01-100",
         )
     forecast_solar.clear_cache()
-    return rec
+    return {"device_sn": device_sn, **rec}
 
 
 @app.post("/api/forecast/solar_array/infer")
