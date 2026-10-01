@@ -51,6 +51,8 @@ def _normalize(d: dict) -> dict:
         "sniff_iface": str(d.get("sniff_iface") or "").strip(),
         "inverter_mac": str(d.get("inverter_mac") or "").strip().lower(),
         "router_mac": str(d.get("router_mac") or "").strip().lower(),
+        # Which plain-MQTT broker supplies Live watts. Empty keeps the portal.
+        "mqtt_broker_ip": str(d.get("mqtt_broker_ip") or "").strip(),
     }
 
 

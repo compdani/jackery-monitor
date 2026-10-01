@@ -499,7 +499,7 @@ def test_shell_sends_no_cache_and_forecast_load_markup(client):
     sw = client.get("/sw.js")
     assert sw.status_code == 200
     assert "no-cache" in (sw.headers.get("cache-control") or "").lower()
-    assert "jackery-shell-v14" in sw.text
+    assert "jackery-shell-v16" in sw.text
 
 
 def test_solar_array_validation_and_roundtrip(app, client):
@@ -662,6 +662,19 @@ def test_siseli_local_save_rejects_bad_ip(client, app, monkeypatch):
     assert saved["local_read"] is True
     assert saved["inverter_ip"] == "192.168.1.1"
     assert saved["password"] == "secret"
+    bad_broker = client.post("/api/siseli/local", json={
+        "local_read": True, "inverter_ip": "192.168.1.1", "router_ip": "192.168.1.1",
+        "mqtt_broker_ip": "not-an-ip",
+    })
+    assert bad_broker.status_code == 400
+    assert "broker" in bad_broker.json()["detail"].lower()
+    picked = client.post("/api/siseli/local", json={
+        "local_read": True, "inverter_ip": "192.168.1.1", "router_ip": "192.168.1.1",
+        "mqtt_broker_ip": "203.0.113.10",
+    })
+    assert picked.status_code == 200
+    assert app.siseli_creds.load()["mqtt_broker_ip"] == "203.0.113.10"
+    assert picked.json()["mqtt_broker_ip"] == "203.0.113.10"
 
 
 def test_siseli_local_test_reports_a_decode(client, app, monkeypatch):
@@ -680,7 +693,7 @@ def test_siseli_local_test_reports_a_decode(client, app, monkeypatch):
         "mains_power_w": 0, "mains_current_flow_direction": "Idle",
     })
 
-    async def instant(_runner, _before):
+    async def instant(_runner, _before, _started=None):
         state["decode"] = 50.0
 
     monkeypatch.setattr(app, "_wait_for_siseli_probe", instant)
@@ -711,7 +724,7 @@ def test_siseli_local_test_reports_packets_and_restores(client, app, monkeypatch
     monkeypatch.setattr(sl, "saw_inverter_packets", lambda mark: True)
     monkeypatch.setattr(sl, "pending_snapshot", lambda: None)
 
-    async def instant(_runner, _before):
+    async def instant(_runner, _before, _started=None):
         return None
 
     monkeypatch.setattr(app, "_wait_for_siseli_probe", instant)
@@ -732,6 +745,65 @@ def test_siseli_local_test_reports_packets_and_restores(client, app, monkeypatch
     assert again.status_code == 200
     assert again.json()["outcome"] == "packets"
     assert calls["stop"] == 0
+
+
+def test_siseli_local_test_names_the_brokers_it_saw(client, app, monkeypatch):
+    import time
+    import siseli_local.runner as sl
+    now = time.time() + 5
+    seen = [
+        {"ip": "203.0.113.20", "port": 1883, "encrypted": False, "last_seen": now},
+        {"ip": "203.0.113.21", "port": 8883, "encrypted": True, "last_seen": now},
+    ]
+    monkeypatch.setattr(sl, "start", lambda cfg: None)
+    monkeypatch.setattr(sl, "stop", lambda *a, **k: None)
+    monkeypatch.setattr(sl, "is_running", lambda: True)
+    monkeypatch.setattr(sl, "last_error", lambda: None)
+    monkeypatch.setattr(sl, "last_decode_ts", lambda: None)
+    monkeypatch.setattr(sl, "capture_mark", lambda: 1.0)
+    monkeypatch.setattr(sl, "saw_inverter_packets", lambda mark: True)
+    monkeypatch.setattr(sl, "pending_snapshot", lambda: None)
+    monkeypatch.setattr(sl, "mqtt_streams", lambda since=None: seen)
+
+    async def instant(*_a, **_k):
+        return None
+
+    monkeypatch.setattr(app, "_wait_for_siseli_probe", instant)
+    r = client.post("/api/siseli/local/test", json={
+        "inverter_ip": "192.168.2.104", "router_ip": "192.168.2.1",
+    })
+    assert r.status_code == 200, r.text
+    detail = r.json()["detail"]
+    assert "203.0.113.20:1883" in detail
+    assert "203.0.113.21:8883" in detail
+    assert "encrypted" in detail.lower()
+
+
+def test_live_watts_follow_only_the_saved_broker(app, monkeypatch):
+    import siseli_local.runner as sl
+    stored = []
+    monkeypatch.setattr(app, "_store_siseli_sample", lambda *a, **k: stored.append(a))
+    monkeypatch.setattr(app, "_siseli_target_device", lambda: ("siseli:1", "House"))
+    assert app.siseli_creds.save(
+        user_id="u", password="secret", station_id="1", mqtt_broker_ip="",
+    )
+    snap = {
+        "broker_ip": "203.0.113.10",
+        "pv_w": 100, "load_w": 20, "bat_cap": 50, "bat_v": 50.0,
+        "bat_charge_current": 0, "dischg_current": 0,
+        "mains_power_w": 0, "mains_current_flow_direction": "Idle",
+    }
+    app._on_siseli_local_snapshot(snap)
+    assert stored == []
+    assert any(row["ip"] == "203.0.113.10" and row.get("readings") for row in sl.mqtt_streams())
+    assert app.siseli_creds.save(
+        user_id="u", password="secret", station_id="1", mqtt_broker_ip="203.0.113.10",
+    )
+    other = dict(snap, broker_ip="203.0.113.11", pv_w=5)
+    app._on_siseli_local_snapshot(other)
+    assert stored == []
+    app._on_siseli_local_snapshot(snap)
+    assert stored and stored[-1][0] == "siseli:1"
 
 
 def test_siseli_credentials_save_keeps_lan_settings(app, client, monkeypatch):
@@ -770,6 +842,7 @@ def test_siseli_credentials_save_keeps_lan_settings(app, client, monkeypatch):
     assert app.siseli_creds.save(
         user_id="alice", password="secret", station_id="111",
         local_read=True, inverter_ip="192.168.2.104", router_ip="192.168.2.1",
+        mqtt_broker_ip="203.0.113.10",
     )
     monkeypatch.setattr(app.siseli_client, "SiseliAPI", FakeAPI)
     r = client.post("/api/siseli/credentials", json={
@@ -785,9 +858,11 @@ def test_siseli_credentials_save_keeps_lan_settings(app, client, monkeypatch):
     assert saved["local_read"] is True
     assert saved["inverter_ip"] == "192.168.2.104"
     assert saved["router_ip"] == "192.168.2.1"
+    assert saved["mqtt_broker_ip"] == "203.0.113.10"
     view = client.get("/api/siseli/credentials").json()
     assert view["local_read"] is True
     assert view["inverter_ip"] == "192.168.2.104"
+    assert view["mqtt_broker_ip"] == "203.0.113.10"
 
 
 def test_siseli_credentials_include_local_readings(client, app):

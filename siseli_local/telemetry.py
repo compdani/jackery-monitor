@@ -138,3 +138,39 @@ def should_skip_portal_latest(
     if isinstance(ts, bool) or not isinstance(ts, (int, float)):
         return False
     return (now - float(ts)) < stale_s
+
+
+def describe_mqtt_streams(streams: list[dict] | None, *, since: float | None = None) -> str | None:
+    """Name the brokers a listen actually saw, instead of a generic miss."""
+    rows = list(streams or [])
+
+    def _fresh_decode(row: dict) -> bool:
+        if row.get("encrypted") or not row.get("readings"):
+            return False
+        if since is None:
+            return True
+        return float(row.get("readings_ts") or 0) >= since
+
+    def _label(row: dict) -> str:
+        return f"{row.get('ip')}:{row.get('port')}"
+
+    decoded = [row for row in rows if _fresh_decode(row)]
+    plain = [
+        row for row in rows
+        if not row.get("encrypted") and row not in decoded
+    ]
+    encrypted = [row for row in rows if row.get("encrypted")]
+    parts: list[str] = []
+    if decoded:
+        names = ", ".join(_label(row) for row in decoded)
+        parts.append(f"Decoded an MQTT publish from {names}.")
+    if plain:
+        names = ", ".join(_label(row) for row in plain)
+        parts.append(
+            f"Saw MQTT to {names}, but no publish decoded yet. "
+            "The dongle often waits a few minutes."
+        )
+    if encrypted:
+        names = ", ".join(_label(row) for row in encrypted)
+        parts.append(f"Saw encrypted MQTT to {names}. That stream cannot be decoded.")
+    return " ".join(parts) or None

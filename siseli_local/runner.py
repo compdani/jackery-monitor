@@ -20,6 +20,8 @@ _last_error: str | None = None
 _pending: dict | None = None
 _last_decode_ts: float | None = None
 _atexit_registered = False
+_streams: dict[tuple[str, int], dict] = {}
+_streams_lock = threading.Lock()
 
 
 def last_error() -> str | None:
@@ -56,6 +58,39 @@ def note_snapshot(snapshot: dict) -> None:
     global _pending, _last_decode_ts
     _pending = dict(snapshot)
     _last_decode_ts = time.time()
+
+
+def note_stream(ip: str, port: int, *, encrypted: bool = False, readings: dict | None = None) -> None:
+    """Remember a broker the inverter contacted. Readings attach when a publish decodes."""
+    host = str(ip or "").strip()
+    try:
+        port_n = int(port)
+    except (TypeError, ValueError):
+        return
+    if not host or port_n <= 0:
+        return
+    key = (host, port_n)
+    with _streams_lock:
+        row = dict(_streams.get(key) or {})
+        row["ip"] = host
+        row["port"] = port_n
+        row["encrypted"] = bool(encrypted) or bool(row.get("encrypted"))
+        row["last_seen"] = time.time()
+        if readings:
+            row["readings"] = dict(readings)
+            row["readings_ts"] = time.time()
+            row["encrypted"] = False
+        _streams[key] = row
+
+
+def mqtt_streams(*, since: float | None = None) -> list[dict]:
+    """Brokers seen so far, newest first. `since` is a time.time() cutoff."""
+    with _streams_lock:
+        rows = [dict(row) for row in _streams.values()]
+    if since is not None:
+        rows = [row for row in rows if float(row.get("last_seen") or 0) >= since]
+    rows.sort(key=lambda row: float(row.get("last_seen") or 0), reverse=True)
+    return rows
 
 
 def is_running() -> bool:

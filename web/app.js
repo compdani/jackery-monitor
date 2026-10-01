@@ -2390,6 +2390,7 @@ async function loadSiseliCreds() {
     setVal('siseli-inverter-mac', j.inverter_mac);
     setVal('siseli-router-mac', j.router_mac);
     renderSiseliLocalStatus(j);
+    renderSiseliMqttStreams(j.mqtt_streams, j.mqtt_broker_ip);
   } catch (err) {
     if (status) status.textContent = 'unavailable';
   }
@@ -2403,6 +2404,7 @@ function siseliLocalBody() {
     sniff_iface: $('siseli-sniff-iface')?.value || '',
     inverter_mac: $('siseli-inverter-mac')?.value || '',
     router_mac: $('siseli-router-mac')?.value || '',
+    mqtt_broker_ip: document.querySelector('input[name="siseli-mqtt-broker"]:checked')?.value || '',
   };
 }
 
@@ -2414,14 +2416,8 @@ function formatLocalAge(ts) {
   return `decoded ${min} min ago`;
 }
 
-function renderSiseliLocalReadings(readings) {
-  const el = $('siseli-local-readings');
-  if (!el) return;
-  if (!readings) {
-    el.hidden = true;
-    el.textContent = '';
-    return;
-  }
+function siseliReadingLine(readings) {
+  if (!readings) return '';
   const parts = [];
   const add = (label, value, unit) => {
     if (value === null || value === undefined || value === '') return;
@@ -2435,8 +2431,53 @@ function renderSiseliLocalReadings(readings) {
   add('charge', readings.charge_a, ' A');
   add('discharge', readings.discharge_a, ' A');
   add('SOC', readings.soc, '%');
-  el.hidden = parts.length === 0;
-  el.textContent = parts.join(' · ');
+  return parts.join(' · ');
+}
+
+function renderSiseliLocalReadings(readings) {
+  const el = $('siseli-local-readings');
+  if (!el) return;
+  const line = siseliReadingLine(readings);
+  el.hidden = !line;
+  el.textContent = line;
+}
+
+function renderSiseliMqttStreams(streams, selected) {
+  const el = $('siseli-mqtt-streams');
+  if (!el) return;
+  const list = Array.isArray(streams) ? streams.slice() : [];
+  const chosen = selected || '';
+  if (chosen && !list.some((row) => row && row.ip === chosen && !row.encrypted)) {
+    list.unshift({ ip: chosen, port: 1883, encrypted: false });
+  }
+  el.replaceChildren();
+  if (!list.length) {
+    el.hidden = true;
+    return;
+  }
+  el.hidden = false;
+  for (const row of list) {
+    if (!row || !row.ip) continue;
+    const label = `${row.ip}:${row.port || 1883}`;
+    if (row.encrypted) {
+      const line = document.createElement('div');
+      line.className = 'lan-stream-enc';
+      line.textContent = `${label} encrypted, cannot decode`;
+      el.append(line);
+      continue;
+    }
+    const wrap = document.createElement('label');
+    const input = document.createElement('input');
+    input.type = 'radio';
+    input.name = 'siseli-mqtt-broker';
+    input.value = row.ip;
+    if (row.ip === chosen) input.checked = true;
+    wrap.append(input, document.createTextNode(` ${label}`));
+    const watts = siseliReadingLine(row.readings);
+    if (watts) wrap.append(document.createTextNode(` · ${watts}`));
+    el.append(wrap);
+  }
+  if (!el.childElementCount) el.hidden = true;
 }
 
 function renderSiseliLocalStatus(j) {
@@ -2468,11 +2509,9 @@ function setSiseliLocalStatus(text) {
 }
 
 async function saveSiseliLocal() {
-  const msg = $('siseli-local-msg');
   const btn = $('siseli-local-save');
   if (btn) btn.disabled = true;
   setSiseliLocalStatus('Saving…');
-  setSiseliCredsMsg(msg, 'Saving…', false);
   try {
     const r = await fetch('/api/siseli/local', {
       method: 'POST',
@@ -2482,6 +2521,7 @@ async function saveSiseliLocal() {
     const j = await r.json().catch(() => ({}));
     if (!r.ok) throw new Error(apiDetail(j, r.statusText));
     renderSiseliLocalStatus(j);
+    renderSiseliMqttStreams(j.mqtt_streams, j.mqtt_broker_ip);
     const savedLine = j.local_error && !j.local_running
       ? j.local_error
       : (j.local_read ? 'LAN read saved.' : 'LAN read turned off.');
@@ -2491,22 +2531,17 @@ async function saveSiseliLocal() {
     } else {
       setSiseliLocalStatus(savedLine);
     }
-    setSiseliCredsMsg(msg, savedLine, !!(j.local_error && !j.local_running));
   } catch (err) {
-    const text = err.message || 'save failed';
-    setSiseliLocalStatus(text);
-    setSiseliCredsMsg(msg, text, true);
+    setSiseliLocalStatus(err.message || 'save failed');
   } finally {
     if (btn) btn.disabled = false;
   }
 }
 
 async function testSiseliLocal() {
-  const msg = $('siseli-local-msg');
   const btn = $('siseli-local-test');
   if (btn) btn.disabled = true;
   setSiseliLocalStatus('Listening for up to 25 seconds…');
-  setSiseliCredsMsg(msg, 'Listening for up to 25 seconds…', false);
   try {
     const r = await fetch('/api/siseli/local/test', {
       method: 'POST',
@@ -2516,15 +2551,11 @@ async function testSiseliLocal() {
     const j = await r.json().catch(() => ({}));
     if (!r.ok) throw new Error(apiDetail(j, r.statusText));
     const detail = j.detail || 'Test finished.';
-    setSiseliLocalStatus(detail);
-    setSiseliCredsMsg(msg, detail, !j.ok);
     await loadSiseliCreds();
     setSiseliLocalStatus(detail);
     if (j.readings) renderSiseliLocalReadings(j.readings);
   } catch (err) {
-    const text = err.message || 'test failed';
-    setSiseliLocalStatus(text);
-    setSiseliCredsMsg(msg, text, true);
+    setSiseliLocalStatus(err.message || 'test failed');
   } finally {
     if (btn) btn.disabled = false;
   }

@@ -345,6 +345,15 @@ TCP_RST = 0x04
 TCP_ACK = 0x10
 
 
+def _remember_mqtt_stream(ip: str, port: int, *, encrypted: bool) -> None:
+    """Record a broker the inverter is talking to. Never raises into the callback."""
+    try:
+        import siseli_local.runner as runner
+        runner.note_stream(ip, port, encrypted=encrypted)
+    except Exception as exc:
+        log(f"[MQTT STREAM] {exc}", level="error")
+
+
 def handle_inverter_tcp_packet(pkt) -> None:
     flow_key = (pkt[IP].src, int(pkt[TCP].sport), pkt[IP].dst, int(pkt[TCP].dport))
     flags = int(pkt[TCP].flags)
@@ -438,19 +447,29 @@ def packet_callback(pkt) -> None:
         if src_mac:
             KNOWN_INVERTER_MACS.add(src_mac)
 
-        if TCP in pkt and dst_ip == TARGET_HOST and int(pkt[TCP].dport) == TARGET_PORT:
-            try:
-                handle_inverter_tcp_packet(pkt)
-            except Exception as exc:
-                log(f"[TCP PARSE ERROR] {exc}", level="error")
-
-            if AUTO_INTERCEPT and RTR_MAC:
+        if TCP in pkt and int(pkt[TCP].dport) in (1883, 8883):
+            dport = int(pkt[TCP].dport)
+            encrypted = dport == 8883
+            _remember_mqtt_stream(dst_ip, dport, encrypted=encrypted)
+            # Plain MQTT to any broker is decoded. 8883 is TLS: listed, not parsed.
+            # TARGET_HOST stays the old cloud label; it is no longer the only match.
+            if not encrypted:
+                import siseli_local.mqtt as sl_mqtt
+                token = sl_mqtt.bind_broker(dst_ip)
                 try:
-                    fwd_pkt = Ether(src=own_mac, dst=RTR_MAC) / pkt[IP]
-                    send_layer2(fwd_pkt, SNIFF_IFACE)
+                    handle_inverter_tcp_packet(pkt)
                 except Exception as exc:
-                    log(f"[FWD ERROR] inverter->router {exc}", level="error")
-            return
+                    log(f"[TCP PARSE ERROR] {exc}", level="error")
+                finally:
+                    sl_mqtt.unbind_broker(token)
+
+                if AUTO_INTERCEPT and RTR_MAC:
+                    try:
+                        fwd_pkt = Ether(src=own_mac, dst=RTR_MAC) / pkt[IP]
+                        send_layer2(fwd_pkt, SNIFF_IFACE)
+                    except Exception as exc:
+                        log(f"[FWD ERROR] inverter->router {exc}", level="error")
+                return
 
         # Everything else the inverter sends -- DNS, NTP, ICMP, any secondary
         # endpoint. ARP interception made us its gateway for all of it, but only

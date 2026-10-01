@@ -57,6 +57,38 @@ def test_probe_outcome_names_the_three_results():
     assert decoded["readings"]["solar_w"] == 10
 
 
+def test_describe_mqtt_streams_names_plain_and_encrypted():
+    from siseli_local.telemetry import describe_mqtt_streams
+    text = describe_mqtt_streams([
+        {"ip": "203.0.113.10", "port": 1883, "encrypted": False,
+         "readings": {"solar_w": 12}, "readings_ts": 20.0},
+        {"ip": "203.0.113.11", "port": 1883, "encrypted": False},
+        {"ip": "203.0.113.12", "port": 8883, "encrypted": True},
+    ], since=10.0)
+    assert "Decoded an MQTT publish from 203.0.113.10:1883." in text
+    assert "Saw MQTT to 203.0.113.11:1883" in text
+    assert "Saw encrypted MQTT to 203.0.113.12:8883." in text
+    stale = describe_mqtt_streams([
+        {"ip": "203.0.113.10", "port": 1883, "encrypted": False,
+         "readings": {"solar_w": 12}, "readings_ts": 1.0},
+    ], since=10.0)
+    assert stale.startswith("Saw MQTT to 203.0.113.10:1883")
+
+
+def test_publish_labels_the_bound_broker():
+    import siseli_local.mqtt as mqtt
+    got = {}
+    mqtt.set_sink(lambda snap: got.update(snap))
+    token = mqtt.bind_broker("203.0.113.10")
+    try:
+        assert mqtt.publish_grouped_state({"pv_w": 1}) is True
+    finally:
+        mqtt.unbind_broker(token)
+        mqtt.set_sink(None)
+    assert got["broker_ip"] == "203.0.113.10"
+    assert got["pv_w"] == 1
+
+
 def test_portal_latest_skipped_only_while_local_is_fresh():
     fresh = {"origin": "local", "ts": 1_000.0}
     assert should_skip_portal_latest(running=True, entry=fresh, now=1_100.0) is True

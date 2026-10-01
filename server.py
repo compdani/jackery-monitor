@@ -1008,10 +1008,25 @@ def _store_siseli_sample(sn: str, name: str | None, tele: dict, ts: float, *, or
 
 
 def _on_siseli_local_snapshot(snapshot: dict) -> None:
-    """Capture-thread callback. Never raise into the vendored parser."""
+    """Capture-thread callback. Never raise into the vendored parser.
+
+    Every decoded broker is remembered for the LAN card. Live watts update
+    only when that broker is the one saved on the card.
+    """
     import siseli_local.runner as sl_runner
     import siseli_local.telemetry as sl_tele
 
+    broker = str((snapshot or {}).get("broker_ip") or "").strip()
+    if broker:
+        canonical = sl_tele.decoded_to_canonical(snapshot)
+        tele = siseli_client.to_telemetry(canonical)
+        sl_runner.note_stream(
+            broker, 1883, encrypted=False,
+            readings=sl_tele.readings_from_telemetry(tele),
+        )
+    chosen = str((siseli_creds.load() or {}).get("mqtt_broker_ip") or "").strip()
+    if not chosen or broker != chosen:
+        return
     sl_runner.note_snapshot(snapshot)
     sn, name = _siseli_target_device()
     if not sn:
@@ -1080,6 +1095,7 @@ def _local_read_settings(body: dict) -> dict:
     sniff_iface = str(body.get("sniff_iface") or "").strip()
     inverter_mac = str(body.get("inverter_mac") or "").strip().lower()
     router_mac = str(body.get("router_mac") or "").strip().lower()
+    mqtt_broker_ip = str(body.get("mqtt_broker_ip") or "").strip()
     mac_re = re.compile(r"^([0-9a-f]{2}[:-]){5}[0-9a-f]{2}$")
     iface_re = re.compile(r"^[A-Za-z0-9._:-]{1,32}$")
     if enabled or inverter_ip or router_ip:
@@ -1095,6 +1111,11 @@ def _local_read_settings(body: dict) -> dict:
             raise HTTPException(400, f"{label} must look like aa:bb:cc:dd:ee:ff")
     if sniff_iface and not iface_re.match(sniff_iface):
         raise HTTPException(400, "sniff interface must be a short interface name")
+    if mqtt_broker_ip:
+        try:
+            ipaddress.IPv4Address(mqtt_broker_ip)
+        except ValueError as exc:
+            raise HTTPException(400, "MQTT broker IP must be an IPv4 address") from exc
     if enabled and not (inverter_ip and router_ip):
         raise HTTPException(400, "local read needs the inverter IP and the router IP")
     return {
@@ -1104,6 +1125,7 @@ def _local_read_settings(body: dict) -> dict:
         "sniff_iface": sniff_iface,
         "inverter_mac": inverter_mac,
         "router_mac": router_mac,
+        "mqtt_broker_ip": mqtt_broker_ip,
     }
 
 
@@ -5530,6 +5552,8 @@ def api_siseli_creds_status():
         "sniff_iface": view.get("sniff_iface") or "",
         "inverter_mac": view.get("inverter_mac") or "",
         "router_mac": view.get("router_mac") or "",
+        "mqtt_broker_ip": view.get("mqtt_broker_ip") or "",
+        "mqtt_streams": sl_runner.mqtt_streams(),
         "local_running": sl_runner.is_running(),
         "local_error": sl_runner.last_error(),
         "local_last_decode_ts": state.siseli.get("local_last_decode_ts"),
@@ -5615,6 +5639,7 @@ def _local_cfg_same(saved: dict, local: dict) -> bool:
             str(d.get("sniff_iface") or ""),
             str(d.get("inverter_mac") or ""),
             str(d.get("router_mac") or ""),
+            str(d.get("mqtt_broker_ip") or ""),
         )
     return norm(saved) == norm(local)
 
@@ -5649,19 +5674,29 @@ def api_siseli_local_save(body: dict):
         "local_error": sl_runner.last_error(),
         "local_last_decode_ts": state.siseli.get("local_last_decode_ts"),
         "local_readings": _siseli_local_readings(),
+        "mqtt_broker_ip": local.get("mqtt_broker_ip") or "",
+        "mqtt_streams": sl_runner.mqtt_streams(),
     }
 
 
 LOCAL_PROBE_S = 25.0
 
 
-async def _wait_for_siseli_probe(sl_runner, before_decode: float | None) -> None:
+async def _wait_for_siseli_probe(
+    sl_runner, before_decode: float | None, started: float | None = None,
+) -> None:
     """Block until a decode, a dead capture, or the listen window ends."""
     deadline = time.monotonic() + LOCAL_PROBE_S
     while time.monotonic() < deadline:
         decoded_at = sl_runner.last_decode_ts()
         if decoded_at is not None and decoded_at != before_decode:
             return
+        if started is not None:
+            for row in sl_runner.mqtt_streams(since=started):
+                if row.get("encrypted"):
+                    continue
+                if float(row.get("readings_ts") or 0) >= started:
+                    return
         if sl_runner.last_error() and not sl_runner.is_running():
             return
         await asyncio.sleep(0.4)
@@ -5685,12 +5720,18 @@ async def api_siseli_local_test(body: dict):
     sl_mqtt.set_sink(_on_siseli_local_snapshot)
     before_decode = sl_runner.last_decode_ts()
     mark = sl_runner.capture_mark()
+    started = time.time()
     cfg = {**existing, **local, "local_read": True}
     try:
         await asyncio.to_thread(sl_runner.start, cfg)
-        await _wait_for_siseli_probe(sl_runner, before_decode)
+        await _wait_for_siseli_probe(sl_runner, before_decode, started)
         decoded_at = sl_runner.last_decode_ts()
         decoded = decoded_at is not None and decoded_at != before_decode
+        seen = sl_runner.mqtt_streams(since=started)
+        fresh = [
+            row for row in seen
+            if not row.get("encrypted") and float(row.get("readings_ts") or 0) >= started
+        ]
         readings = None
         if decoded:
             snap = sl_runner.pending_snapshot()
@@ -5699,6 +5740,9 @@ async def api_siseli_local_test(body: dict):
                 readings = sl_tele.readings_from_telemetry(tele)
             else:
                 readings = _siseli_local_readings()
+        elif fresh:
+            decoded = True
+            readings = fresh[0].get("readings")
         result = sl_tele.probe_outcome(
             error=sl_runner.last_error(),
             running=sl_runner.is_running(),
@@ -5706,6 +5750,10 @@ async def api_siseli_local_test(body: dict):
             decoded=decoded,
             readings=readings,
         )
+        named = sl_tele.describe_mqtt_streams(seen, since=started)
+        if named and result.get("outcome") != "capture-failed":
+            result["detail"] = named
+        result["mqtt_streams"] = sl_runner.mqtt_streams()
     finally:
         if not (was_on and same):
             if was_on:

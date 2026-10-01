@@ -39,7 +39,14 @@ def test_round_trip_save_and_load(fresh_creds):
     again = sc.load()
     assert again["local_read"] is True
     assert again["inverter_ip"] == "192.168.1.50"
+    assert again["mqtt_broker_ip"] == ""
     assert again["password"] == "hunter2"
+    assert sc.save(
+        user_id="alice", password="hunter2", station_id="12345",
+        mqtt_broker_ip="203.0.113.10",
+    )
+    assert sc.load()["mqtt_broker_ip"] == "203.0.113.10"
+    assert sc.public_view()["mqtt_broker_ip"] == "203.0.113.10"
 
 
 def test_save_rejects_missing_required_fields(fresh_creds):
