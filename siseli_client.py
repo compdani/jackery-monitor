@@ -169,6 +169,19 @@ class AuthenticationError(Exception):
     """Login credentials rejected by the server."""
 
 
+class PortalError(Exception):
+    """Portal answered, but the JSON code was not success.
+
+    Used for device-list failures such as an unknown Station ID. Network
+    failures stay ordinary exceptions so callers can tell them apart.
+    """
+
+    def __init__(self, message: str = "", *, code: Any = None) -> None:
+        self.code = code
+        self.portal_message = (message or "").strip()
+        super().__init__(self.portal_message or f"code={code}")
+
+
 class EnergyFlowRuleNotConfiguredError(RuntimeError):
     """Portal returned code 70132 — no energy-flow rule for this device."""
 
@@ -663,9 +676,9 @@ class SiseliAPI:
                 "page": page, "count": page_size, "stationId": station_id,
             })
             if data.get("code") not in (0, None):
-                raise RuntimeError(
-                    f"Device list error code={data.get('code')} "
-                    f"message={data.get('message')}"
+                raise PortalError(
+                    data.get("message") or data.get("msg") or "",
+                    code=data.get("code"),
                 )
             d = data.get("data") or {}
             total = d.get("total", total)
@@ -685,8 +698,20 @@ class SiseliAPI:
         return devices
 
     def fetch_latest_data(self, device_id: str) -> dict[str, Any]:
-        latest_values = self._fetch_time_series_values(device_id)
-        if not has_realtime_values(latest_values):
+        try:
+            latest_values = self._fetch_time_series_values(device_id)
+        except TokenExpiredError:
+            raise
+        except Exception as err:
+            log.warning("device %s: time-series unavailable: %s", device_id, err)
+            latest_values = {}
+        # One history key, even a zero, used to skip this fallback entirely
+        # and leave battery SOC empty. Fill gaps only — setdefault below
+        # keeps a real history reading.
+        if (
+            not has_realtime_values(latest_values)
+            or latest_values.get("batterySOC") is None
+        ):
             try:
                 fields = self.fetch_energy_flow(device_id)
             except TokenExpiredError:
@@ -737,7 +762,7 @@ class SiseliAPI:
             "orderByTimeAsc": True,
             "keys": keys,
         })
-        if data.get("code") not in (0, None):
+        if data.get("code") not in (0, None, "0"):
             raise RuntimeError(
                 f"Timeseries error code={data.get('code')} "
                 f"message={data.get('message')}"

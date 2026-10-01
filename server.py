@@ -5192,8 +5192,16 @@ async def api_siseli_creds_save(body: dict):
         devices = await asyncio.to_thread(probe.list_devices, station_id)
     except siseli_client.AuthenticationError as e:
         raise HTTPException(400, str(e)) from e
+    except siseli_client.PortalError as e:
+        detail = (
+            "Siseli rejected that Station ID. Use the numeric stationId "
+            "from the solar.siseli.com Network tab, not the inverter serial."
+        )
+        if e.portal_message:
+            detail = f"{detail} Portal said: {e.portal_message}"
+        raise HTTPException(400, detail) from e
     except Exception as e:
-        raise HTTPException(502, f"Siseli portal unreachable: {e}") from e
+        raise HTTPException(502, "Could not reach solar.siseli.com") from e
     finally:
         probe.close()
     if not siseli_creds.save(

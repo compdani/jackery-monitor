@@ -1926,12 +1926,15 @@ input.forecast-input[type="password"] { min-width: 12em; flex: 1; }
   padding: 0;
 }
 .auto-field input[type="text"],
+.auto-field input[type="password"],
+.auto-field input[type="email"],
 .auto-field input[type="number"],
 .auto-field select {
   background: var(--bg);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   color: var(--text);
+  color-scheme: dark;
   padding: 8px 10px;
   font-family: inherit;
   font-size: 14px;

@@ -205,6 +205,88 @@ def test_fetch_latest_data_uses_energy_flow_fallback():
     api.close()
 
 
+def _flow_fields():
+    return {
+        "pv1Power": 300,
+        "bmsSOC": 55,
+        "load_power": 0.2,
+    }
+
+
+def test_history_error_still_uses_energy_flow():
+    def handler(request: httpx.Request) -> httpx.Response:
+        path = request.url.path
+        if path.endswith("/history/v1"):
+            return httpx.Response(200, json={"code": 20101, "message": "Illegal argument"})
+        if path.endswith("/energy/flow/v1"):
+            return httpx.Response(200, json={
+                "code": 0,
+                "data": {"deviceAttributeState": {"fields": _flow_fields()}},
+            })
+        return httpx.Response(404)
+
+    http = httpx.Client(transport=_transport(handler))
+    api = sc.SiseliAPI(user_id="alice", password="p", iot_token="tok", http=http)
+    values = api.fetch_latest_data("99")
+    assert values["batterySOC"] == 55
+    assert values["pvInputPower"] == 300
+    api.close()
+
+
+def test_partial_history_still_fills_missing_soc():
+    calls = {"flow": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        path = request.url.path
+        if path.endswith("/history/v1"):
+            return httpx.Response(200, json={
+                "code": "0",
+                "data": {"payload": {"fields": {"feedInPower": [0]}}},
+            })
+        if path.endswith("/energy/flow/v1"):
+            calls["flow"] += 1
+            return httpx.Response(200, json={
+                "code": 0,
+                "data": {"deviceAttributeState": {"fields": _flow_fields()}},
+            })
+        return httpx.Response(404)
+
+    http = httpx.Client(transport=_transport(handler))
+    api = sc.SiseliAPI(user_id="alice", password="p", iot_token="tok", http=http)
+    values = api.fetch_latest_data("99")
+    assert calls["flow"] == 1
+    assert values["batterySOC"] == 55
+    assert values["feedInPower"] == 0
+    assert values["pvInputPower"] == 300
+    api.close()
+
+
+def test_history_with_soc_skips_energy_flow():
+    calls = {"flow": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        path = request.url.path
+        if path.endswith("/history/v1"):
+            return httpx.Response(200, json={
+                "code": 0,
+                "data": {"payload": {"fields": {"batterySOC": [42]}}},
+            })
+        if path.endswith("/energy/flow/v1"):
+            calls["flow"] += 1
+            return httpx.Response(200, json={
+                "code": 0,
+                "data": {"deviceAttributeState": {"fields": {"bmsSOC": 99}}},
+            })
+        return httpx.Response(404)
+
+    http = httpx.Client(transport=_transport(handler))
+    api = sc.SiseliAPI(user_id="alice", password="p", iot_token="tok", http=http)
+    values = api.fetch_latest_data("99")
+    assert calls["flow"] == 0
+    assert values["batterySOC"] == 42
+    api.close()
+
+
 def test_set_device_setting_uses_alias():
     writes = []
 

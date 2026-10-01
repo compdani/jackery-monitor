@@ -688,6 +688,47 @@ def test_siseli_credentials_save_mocked(app, client, monkeypatch):
     assert st.json()["station_id"] == "111"
 
 
+def test_siseli_credentials_bad_station_not_saved(app, client, monkeypatch):
+    class FakeAPI:
+        def __init__(self, **kwargs):
+            self.access_token = "tok"
+            self._refresh = "ref"
+
+        @property
+        def refresh_token(self):
+            return self._refresh
+
+        @property
+        def access_token_expires_iso(self):
+            return ""
+
+        @property
+        def refresh_token_expires_iso(self):
+            return ""
+
+        def login(self):
+            return None
+
+        def list_devices(self, station_id):
+            raise app.siseli_client.PortalError("station not found", code=7)
+
+        def close(self):
+            return None
+
+    monkeypatch.setattr(app.siseli_client, "SiseliAPI", FakeAPI)
+    r = client.post("/api/siseli/credentials", json={
+        "user_id": "alice",
+        "password": "secret",
+        "station_id": "000",
+    })
+    assert r.status_code == 400, r.text
+    detail = r.json()["detail"]
+    assert "Station ID" in detail
+    assert "station not found" in detail
+    st = client.get("/api/siseli/credentials")
+    assert st.json()["has_credentials"] is False
+
+
 def test_siseli_settings_write_mocked(app, client, monkeypatch):
     app.state.siseli = {
         "state": "connected",

@@ -2017,6 +2017,8 @@ function applySiseliChrome(s) {
   const siseli = viewingSiseli(s);
   const power = $('power-card');
   const controls = $('siseli-controls-card');
+  const eod = $('eod-forecast');
+  if (eod && siseli) eod.hidden = true;
   if (power) power.hidden = siseli;
   if (controls) {
     controls.hidden = !siseli;
@@ -2128,11 +2130,19 @@ async function loadSiseliCreds() {
   }
 }
 
+function setSiseliCredsMsg(msg, text, isError) {
+  if (!msg) return;
+  msg.hidden = false;
+  msg.textContent = text;
+  msg.classList.toggle('login-error', isError);
+  msg.classList.toggle('hint', !isError);
+}
+
 $('siseli-creds-form')?.addEventListener('submit', async (e) => {
   e.preventDefault();
   const msg = $('siseli-creds-msg');
   const status = $('siseli-creds-status');
-  if (msg) { msg.hidden = true; }
+  if (msg) msg.hidden = true;
   try {
     const r = await fetch('/api/siseli/credentials', {
       method: 'POST',
@@ -2148,9 +2158,9 @@ $('siseli-creds-form')?.addEventListener('submit', async (e) => {
     if (!r.ok) throw new Error(j.detail || r.statusText);
     $('siseli-creds-password').value = '';
     if (status) status.textContent = `saved · ${j.device_count || 0} device(s)`;
-    if (msg) { msg.hidden = false; msg.textContent = 'Saved. Polling the portal…'; }
+    setSiseliCredsMsg(msg, 'Saved. Polling the portal…', false);
   } catch (err) {
-    if (msg) { msg.hidden = false; msg.textContent = err.message || 'save failed'; }
+    setSiseliCredsMsg(msg, err.message || 'save failed', true);
     if (status) status.textContent = 'error';
   }
 });
@@ -4548,6 +4558,12 @@ function applyStatus(s) {
     // this keeps the Main row + system SOC overlay in sync without
     // waiting for the next pack fetch.
     renderBatteryPacks();
+  } else if (viewingSiseli(s)) {
+    // A missing Siseli reading must not keep the previous Jackery's charge.
+    const pct = $('battery-pct');
+    if (pct) pct.textContent = '—';
+    const bar = $('battery-bar-fill');
+    if (bar) bar.style.width = '0%';
   }
   // Battery time label. The Jackery cloud sends two fields:
   //   time_to_full_h     -> ETA to 100% when the unit is charging
@@ -7167,6 +7183,7 @@ const EOD_MIN_REFRESH_INTERVAL_MS = 5 * 60_000;
 async function fetchEodForecast() {
   const el = $('eod-forecast');
   if (!el) return;
+  if (viewingSiseli()) { el.hidden = true; return; }
   _eodLastFetchAt = Date.now();
 
   // Helper: surface the "still calibrating" state with progress hints
