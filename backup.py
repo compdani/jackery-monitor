@@ -6,7 +6,7 @@ Design (see also docs/backup.md):
     SQLite backup of /data/energy.db (consistent even with active
     writers thanks to sqlite3's online .backup API), copy the small
     JSON files alongside it (auth, kasa-creds, anthropic-creds,
-    jackery-creds, settings, location), write a MANIFEST.json with
+    jackery-creds, siseli-creds, settings, location), write a MANIFEST.json with
     sha256 checksums, then upload the whole staging directory via the
     user-selected transport.
   * Transport is pluggable. Today we support:
@@ -88,6 +88,7 @@ SMALL_FILES = (
     "kasa-creds.json",
     "anthropic-creds.json",
     "jackery-creds.json",
+    "siseli-creds.json",
     "settings.json",
     "location.json",
     "anthropic-prefs.json",

@@ -35,6 +35,7 @@ export type DeviceInfo = {
   device_sn?: string | null;
   device_id?: string | null;
   address?: string | null;
+  source?: string | null;
   [key: string]: unknown;
 };
 
@@ -48,6 +49,8 @@ export type DeviceOverview = {
   output_w?: number | null;
   pack_count?: number;
   battery_status?: number | null;
+  source?: string;
+  feed_in_w?: number | null;
 };
 
 export type HistoryPoint = {

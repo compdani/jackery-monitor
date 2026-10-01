@@ -283,7 +283,7 @@
            is configured for this device's smart-charge). Section is
            "Power" because the AC-charge button is an *input* (grid
            → battery), not an output, so "Outputs" was misleading. -->
-      <section class="card">
+      <section class="card" id="power-card">
         <div class="card-header">
           <h2>Power</h2>
           <span class="hint">Click to toggle</span>
@@ -302,6 +302,17 @@
             <span class="sw-state" id="solar-charge-state">—</span>
           </button>
         </div>
+      </section>
+
+      <section id="siseli-controls-card" class="card" hidden>
+        <div class="card-header">
+          <h2>Inverter controls</h2>
+          <span id="siseli-controls-status" class="hint">—</span>
+        </div>
+        <p class="hint" style="margin:6px 0 12px">
+          Writes go to the Siseli portal (solar.siseli.com). Controls the inverter firmware does not expose stay hidden.
+        </p>
+        <div id="siseli-controls-body" class="siseli-controls"></div>
       </section>
 
       <!-- Per-expansion-battery state (only shown when packs are
@@ -827,7 +838,7 @@
            auto-probe the cloud for capacity hints; if any are found
            they show up below as one-click "use this value" buttons.
            Falls back to a manual override + PR-snippet path. -->
-      <section id="unknown-model-banner" class="card device-card unknown-model-banner" hidden>
+      <section id="unknown-model-banner" class="card device-card unknown-model-banner" hidden data-jackery-only>
         <h2 style="margin:0 0 8px">🔍 New Jackery model detected</h2>
         <p class="hint" style="margin:0 0 10px">
           We don't recognize <strong id="umb-name">this device</strong> (model_code <code id="umb-code">?</code>) yet, so the forecaster is using a <strong id="umb-fallback">3024 Wh</strong> fallback capacity.
@@ -859,7 +870,7 @@
         </dl>
       </section>
 
-      <section class="card device-card" id="f7-ac-reset-card">
+      <section class="card device-card" id="f7-ac-reset-card" data-jackery-only>
         <div class="card-header">
           <h2>F7 AC reset</h2>
           <span class="hint" id="f7-ac-reset-status">off</span>
@@ -927,7 +938,7 @@
         </form>
       </section>
 
-      <section class="card device-card">
+      <section class="card device-card" data-jackery-only>
         <div class="card-header">
           <h2>Learned parameters</h2>
           <span id="device-params-status" class="hint" hidden></span>
@@ -940,7 +951,7 @@
         </div>
       </section>
 
-      <section class="card device-card">
+      <section class="card device-card" data-jackery-only>
         <div class="card-header">
           <h2>Cloud properties (debug)</h2>
           <button id="raw-props-toggle" class="btn btn-ghost" type="button">Show</button>
@@ -951,7 +962,7 @@
         <pre id="raw-props-dump" class="raw-props" hidden>—</pre>
       </section>
 
-      <section class="card device-card">
+      <section class="card device-card" data-jackery-only>
         <div class="card-header">
           <h2>Cloud endpoint probe (debug)</h2>
           <button id="cloud-probe-btn" class="btn btn-ghost" type="button">Probe now</button>
@@ -962,7 +973,7 @@
         <pre id="cloud-probe-dump" class="raw-props" hidden>—</pre>
       </section>
 
-      <section class="card device-card">
+      <section class="card device-card" data-jackery-only>
         <div class="card-header">
           <h2>Polling</h2>
         </div>
@@ -991,6 +1002,44 @@
         </p>
         <button id="forget-creds" class="btn btn-ghost" type="button">Sign out / Forget credentials</button>
         <p id="forget-msg" class="login-error" hidden style="margin-top:10px"></p>
+      </section>
+
+      <section class="card device-card">
+        <div class="card-header">
+          <h2>Siseli account</h2>
+          <span id="siseli-creds-status" class="hint">—</span>
+        </div>
+        <p class="hint" style="margin:6px 0 12px">
+          Optional house-inverter connection via the Solar of Things portal
+          (<code>solar.siseli.com</code>). Station ID is the numeric
+          <code>stationId</code> from the portal Network tab — not the inverter serial.
+          Credentials are encrypted at rest in the data volume.
+        </p>
+        <form id="siseli-creds-form">
+          <div class="auto-form-grid">
+            <label class="auto-field">
+              <span class="auto-label">User ID</span>
+              <input id="siseli-creds-user" type="text" required autocomplete="username" />
+            </label>
+            <label class="auto-field">
+              <span class="auto-label">Password</span>
+              <input id="siseli-creds-password" type="password" autocomplete="current-password" placeholder="unchanged if blank" />
+            </label>
+            <label class="auto-field">
+              <span class="auto-label">Station ID</span>
+              <input id="siseli-creds-station" type="text" required inputmode="numeric" />
+            </label>
+            <label class="auto-field">
+              <span class="auto-label">Time zone</span>
+              <input id="siseli-creds-tz" type="text" placeholder="uses Forecast location if set" />
+            </label>
+            <span id="siseli-creds-msg" class="hint" hidden></span>
+          </div>
+          <div style="margin-top:14px; display:flex; gap:8px">
+            <button class="btn btn-primary" type="submit">Save credentials</button>
+            <button id="siseli-creds-clear" class="btn btn-ghost" type="button">Forget</button>
+          </div>
+        </form>
       </section>
     </section>
 

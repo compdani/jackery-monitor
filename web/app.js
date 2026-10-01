@@ -506,7 +506,7 @@ function switchTab(name, opts = {}) {
     // User is now looking — clear the "new insights" dot.
     setAutomationDot(false);
   }
-  if (name === 'device')   { loadDeviceCapacity(); loadDeviceParams(); loadF7AcReset(); }
+  if (name === 'device')   { loadDeviceCapacity(); loadDeviceParams(); loadF7AcReset(); loadSiseliCreds(); }
 }
 
 // Boot path: pull the tab from the URL hash. Defer the actual switch
@@ -1997,6 +1997,171 @@ function activeJackeryDevice() {
   const sel = lastStatus.cloud.selected_device_id;
   return (lastStatus.cloud.devices || []).find((d) => d.device_id === sel) || null;
 }
+
+function isSiseliDevice(d) {
+  if (!d) return false;
+  return d.source === 'siseli' || String(d.device_id || d.device_sn || '').startsWith('siseli:');
+}
+
+function viewingSiseli(s) {
+  const st = s || lastStatus;
+  const active = (st && st.cloud)
+    ? (st.cloud.devices || []).find((d) => String(d.device_id) === String(st.cloud.selected_device_id))
+    : null;
+  if (isSiseliDevice(active)) return true;
+  const dev = st && st.device;
+  return isSiseliDevice(dev);
+}
+
+function applySiseliChrome(s) {
+  const siseli = viewingSiseli(s);
+  const power = $('power-card');
+  const controls = $('siseli-controls-card');
+  if (power) power.hidden = siseli;
+  if (controls) {
+    controls.hidden = !siseli;
+    if (siseli) renderSiseliControls(s && s.siseli_controls, s && s.cloud && s.cloud.selected_device_id);
+  }
+  document.querySelectorAll('[data-jackery-only]').forEach((el) => {
+    if (el.id === 'unknown-model-banner') {
+      if (siseli) el.hidden = true;
+      return;
+    }
+    el.hidden = siseli;
+  });
+}
+
+function renderSiseliControls(controls, deviceId) {
+  const body = $('siseli-controls-body');
+  const status = $('siseli-controls-status');
+  if (!body) return;
+  const list = Array.isArray(controls) ? controls : [];
+  if (status) status.textContent = list.length ? `${list.length} available` : 'none exposed';
+  if (!list.length) {
+    body.innerHTML = '<p class="hint">No writable settings reported for this inverter firmware.</p>';
+    return;
+  }
+  body.innerHTML = list.map((c) => {
+    const key = escapeHtml(c.canonical);
+    const name = escapeHtml(c.name || c.canonical);
+    if (c.kind === 'number') {
+      return `<label class="auto-field siseli-control">
+        <span class="auto-label">${name}${c.unit ? ` (${escapeHtml(c.unit)})` : ''}</span>
+        <input type="number" data-siseli-key="${key}" min="${c.min ?? 0}" max="${c.max ?? 100}"
+               step="${c.step ?? 1}" value="${c.value ?? ''}" />
+      </label>`;
+    }
+    if (c.kind === 'select') {
+      const opts = (c.options || []).map((o) =>
+        `<option value="${o.value}"${Number(o.value) === Number(c.value) ? ' selected' : ''}>${escapeHtml(o.label)}</option>`
+      ).join('');
+      return `<label class="auto-field siseli-control">
+        <span class="auto-label">${name}</span>
+        <select data-siseli-key="${key}">${opts}</select>
+      </label>`;
+    }
+    const on = !!c.value;
+    return `<label class="auto-field siseli-control siseli-switch">
+      <span class="auto-label">${name}</span>
+      <button type="button" class="switch${on ? ' on' : ''}" data-siseli-key="${key}"
+              data-on-value="${c.on_value}" data-off-value="${c.off_value}" aria-pressed="${on}">
+        <span class="sw-state">${on ? 'on' : 'off'}</span>
+      </button>
+    </label>`;
+  }).join('');
+  body.dataset.deviceId = deviceId || '';
+}
+
+async function writeSiseliSetting(key, value) {
+  const body = $('siseli-controls-body');
+  const deviceId = (body && body.dataset.deviceId) || (lastStatus && lastStatus.cloud && lastStatus.cloud.selected_device_id);
+  const status = $('siseli-controls-status');
+  if (!deviceId) return;
+  if (status) status.textContent = 'saving…';
+  try {
+    const r = await fetch('/api/siseli/settings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ device_id: deviceId, key, value }),
+    });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.detail || r.statusText);
+    if (status) status.textContent = 'saved';
+    if (Array.isArray(j.controls)) renderSiseliControls(j.controls, deviceId);
+  } catch (err) {
+    if (status) status.textContent = err.message || 'save failed';
+  }
+}
+
+$('siseli-controls-body')?.addEventListener('change', (e) => {
+  const el = e.target.closest('[data-siseli-key]');
+  if (!el || el.tagName === 'BUTTON') return;
+  const key = el.dataset.siseliKey;
+  const value = el.tagName === 'SELECT' ? Number(el.value) : Number(el.value);
+  writeSiseliSetting(key, value);
+});
+
+$('siseli-controls-body')?.addEventListener('click', (e) => {
+  const btn = e.target.closest('button[data-siseli-key]');
+  if (!btn) return;
+  const on = btn.getAttribute('aria-pressed') === 'true';
+  const next = !on;
+  const value = next ? Number(btn.dataset.onValue) : Number(btn.dataset.offValue);
+  writeSiseliSetting(btn.dataset.siseliKey, value);
+});
+
+async function loadSiseliCreds() {
+  const status = $('siseli-creds-status');
+  try {
+    const r = await fetch('/api/siseli/credentials');
+    const j = await r.json();
+    if (status) {
+      status.textContent = j.has_credentials
+        ? (j.state === 'connected' ? 'connected' : (j.error || j.state || 'saved'))
+        : 'not configured';
+    }
+    if (j.user_id) $('siseli-creds-user').value = j.user_id;
+    if (j.station_id) $('siseli-creds-station').value = j.station_id;
+    if (j.time_zone) $('siseli-creds-tz').value = j.time_zone;
+  } catch (err) {
+    if (status) status.textContent = 'unavailable';
+  }
+}
+
+$('siseli-creds-form')?.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const msg = $('siseli-creds-msg');
+  const status = $('siseli-creds-status');
+  if (msg) { msg.hidden = true; }
+  try {
+    const r = await fetch('/api/siseli/credentials', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        user_id: $('siseli-creds-user').value,
+        password: $('siseli-creds-password').value,
+        station_id: $('siseli-creds-station').value,
+        time_zone: $('siseli-creds-tz').value,
+      }),
+    });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.detail || r.statusText);
+    $('siseli-creds-password').value = '';
+    if (status) status.textContent = `saved · ${j.device_count || 0} device(s)`;
+    if (msg) { msg.hidden = false; msg.textContent = 'Saved. Polling the portal…'; }
+  } catch (err) {
+    if (msg) { msg.hidden = false; msg.textContent = err.message || 'save failed'; }
+    if (status) status.textContent = 'error';
+  }
+});
+
+$('siseli-creds-clear')?.addEventListener('click', async () => {
+  if (!confirm('Forget saved Siseli credentials? Inverters will drop from the fleet.')) return;
+  await fetch('/api/siseli/credentials', { method: 'DELETE' });
+  $('siseli-creds-password').value = '';
+  const status = $('siseli-creds-status');
+  if (status) status.textContent = 'not configured';
+});
 
 function renderRulesWithFilter() {
   const filterName = $('auto-rules-filter-name');
@@ -3994,16 +4159,18 @@ function fleetCardHtml(d, selectedId) {
   const watts = [];
   watts.push(`☀ ${Math.round(d.solar_w || 0)}W`);
   if ((d.ac_input_w || 0) > 0) watts.push(`⚡ ${Math.round(d.ac_input_w)}W`);
+  if ((d.feed_in_w || 0) > 0) watts.push(`↑ ${Math.round(d.feed_in_w)}W`);
   watts.push(`⌂ ${Math.round(d.output_w || 0)}W`);
   const packLabel = d.pack_count > 0
     ? `+${d.pack_count} pack${d.pack_count === 1 ? '' : 's'}`
     : '';
   const name = escapeHtml(d.name || d.model_name || d.device_sn || d.device_id || 'Device');
+  const src = d.source === 'siseli' ? '<span class="fleet-source">inverter</span>' : '';
   return `<button type="button" class="fleet-card ${st.cls}${selected ? ' is-selected' : ''}"
       data-device-id="${escapeHtml(d.device_id)}"
       aria-pressed="${selected ? 'true' : 'false'}">
     <div class="fleet-card-top">
-      <span class="fleet-name">${name}</span>
+      <span class="fleet-name">${name}${src}</span>
       <span class="fleet-badge ${st.cls}">${st.text}</span>
     </div>
     <div class="fleet-soc"><span class="fleet-soc-n">${socTxt}</span><small>%</small></div>
@@ -4352,6 +4519,7 @@ function applyStatus(s) {
 
   // Telemetry
   const t = s.telemetry || {};
+  applySiseliChrome(s);
   if (t.battery_percent != null) {
     // Prefer the server-computed system SOC when packs are attached,
     // so the SOC card lands on the right number on the very first

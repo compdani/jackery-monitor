@@ -35,6 +35,10 @@ def server_state(isolated_data, monkeypatch):
     server module so tests can call serialize_status() directly."""
     import importlib
 
+    import crypto_util
+    importlib.reload(crypto_util)
+    import siseli_creds
+    importlib.reload(siseli_creds)
     import server as server_mod
     importlib.reload(server_mod)
 
@@ -236,7 +240,7 @@ def test_secondary_view_history_pulls_from_energy_db(server_state, monkeypatch):
     only holds the bridge-active device's samples)."""
     captured: dict = {}
 
-    def fake_history(device_sn, hours, bucket_s):
+    def fake_history(device_sn, hours, bucket_s, **_kw):
         captured["sn"] = device_sn
         captured["hours"] = hours
         return [
@@ -365,7 +369,7 @@ def test_view_history_is_cached(server_state, monkeypatch):
     calls = {"live_chart_hydrates": 0}
     live_chart_hours = server_state.LIVE_CHART_HOURS
 
-    def fake_history(device_sn, hours, bucket_s):
+    def fake_history(device_sn, hours, bucket_s, **_kw):
         if hours == live_chart_hours:
             calls["live_chart_hydrates"] += 1
         return []
@@ -376,3 +380,52 @@ def test_view_history_is_cached(server_state, monkeypatch):
     server_state.serialize_status(view_device_id="id-B")
     server_state.serialize_status(view_device_id="id-B")
     assert calls["live_chart_hydrates"] == 1
+
+
+def test_siseli_view_synthesizes_status(server_state):
+    """Selecting a Siseli inverter must use the Siseli cache, not Jackery."""
+    server_state.state.siseli = {
+        "state": "connected",
+        "error": None,
+        "devices": [{
+            "device_id": "siseli:42",
+            "device_sn": "siseli:42",
+            "portal_device_id": "42",
+            "name": "House inverter",
+            "model_name": "Sumry",
+            "model_code": None,
+            "source": "siseli",
+        }],
+        "telemetry_by_sn": {
+            "siseli:42": {"telemetry": {
+                "battery_percent": 64,
+                "solar_input_w": 1500,
+                "output_power_w": 400,
+                "ac_input_w": 0,
+                "feed_in_w": 200,
+                "source": "siseli",
+            }, "ts": 1700000100},
+        },
+        "settings_by_sn": {
+            "siseli:42": [{"canonical": "batteryChargeLimit", "kind": "number",
+                           "value": 90}],
+        },
+        "raw_settings_by_sn": {},
+        "last_poll_ts": 1700000100,
+    }
+    out = server_state.serialize_status(view_device_id="siseli:42")
+    assert out["device"]["device_sn"] == "siseli:42"
+    assert out["device"]["device_type"] == "inverter"
+    assert out["source"] == "siseli"
+    assert out["telemetry"]["battery_percent"] == 64
+    assert out["telemetry"]["solar_input_w"] == 1500
+    assert out["siseli_controls"][0]["canonical"] == "batteryChargeLimit"
+    assert out["cloud"]["selected_device_id"] == "siseli:42"
+    overview_ids = [r["device_id"] for r in out["cloud"]["devices_overview"]]
+    assert "siseli:42" in overview_ids
+    assert "id-A" in overview_ids
+    siseli_row = next(r for r in out["cloud"]["devices_overview"]
+                      if r["device_id"] == "siseli:42")
+    assert siseli_row["source"] == "siseli"
+    assert siseli_row["feed_in_w"] == 200
+    assert out["inverter_watchdog"] is None

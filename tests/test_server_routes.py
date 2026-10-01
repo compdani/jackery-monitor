@@ -50,6 +50,7 @@ def app(isolated_data, monkeypatch, tmp_path):
         "cost", "anthropic_creds", "anthropic_prefs",
         "kasa_creds", "kasa_devices", "backup_creds", "energy_db",
         "solar_array", "forecast_solar", "load_schedule",
+        "siseli_creds",
     ):
         mod = importlib.import_module(name)
         importlib.reload(mod)
@@ -633,3 +634,109 @@ def test_load_schedule_get_post(app, client):
     assert j["sleep_start"] == "23:00"
     assert j["windows"][0]["watts"] == 800
     assert "learned_profile" in j
+
+
+def test_siseli_credentials_status_empty(client):
+    r = client.get("/api/siseli/credentials")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["has_credentials"] is False
+    assert body["devices"] == []
+
+
+def test_siseli_credentials_save_mocked(app, client, monkeypatch):
+    class FakeAPI:
+        def __init__(self, **kwargs):
+            self.access_token = "tok"
+            self._refresh = "ref"
+
+        @property
+        def refresh_token(self):
+            return self._refresh
+
+        @property
+        def access_token_expires_iso(self):
+            return "2099-01-01T00:00:00+00:00"
+
+        @property
+        def refresh_token_expires_iso(self):
+            return "2099-06-01T00:00:00+00:00"
+
+        def login(self):
+            return None
+
+        def list_devices(self, station_id):
+            assert station_id == "111"
+            return [{"id": "42", "name": "House inverter"}]
+
+        def close(self):
+            return None
+
+    monkeypatch.setattr(app.siseli_client, "SiseliAPI", FakeAPI)
+    r = client.post("/api/siseli/credentials", json={
+        "user_id": "alice",
+        "password": "secret",
+        "station_id": "111",
+    })
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["ok"] is True
+    assert body["device_count"] == 1
+    st = client.get("/api/siseli/credentials")
+    assert st.json()["has_credentials"] is True
+    assert st.json()["user_id"] == "alice"
+    assert st.json()["station_id"] == "111"
+
+
+def test_siseli_settings_write_mocked(app, client, monkeypatch):
+    app.state.siseli = {
+        "state": "connected",
+        "error": None,
+        "devices": [{
+            "device_id": "siseli:42",
+            "device_sn": "siseli:42",
+            "portal_device_id": "42",
+            "name": "Inv",
+            "source": "siseli",
+        }],
+        "telemetry_by_sn": {},
+        "settings_by_sn": {"siseli:42": []},
+        "raw_settings_by_sn": {
+            "siseli:42": {"outputSourcePrioritySetting": {"value": 1}},
+        },
+        "last_poll_ts": 1.0,
+    }
+
+    class FakeAPI:
+        def __init__(self, **kwargs):
+            pass
+
+        def set_device_setting(self, device_id, key, value, settings=None):
+            assert device_id == "42"
+            assert key == "outputSourcePrioritySetting"
+            assert value == 2
+
+        def get_device_settings(self, device_id):
+            return {"outputSourcePrioritySetting": {"value": 2}}
+
+        def close(self):
+            return None
+
+    monkeypatch.setattr(app, "_make_siseli_api", lambda creds: FakeAPI())
+    import siseli_creds as sc
+    sc.save(user_id="alice", password="p", station_id="111")
+    r = client.post("/api/siseli/settings", json={
+        "device_id": "siseli:42",
+        "key": "outputSourcePrioritySetting",
+        "value": 2,
+    })
+    assert r.status_code == 200, r.text
+    keys = {c["canonical"] for c in r.json()["controls"]}
+    assert "outputSourcePrioritySetting" in keys
+
+
+def test_siseli_settings_unknown_key(client):
+    r = client.post("/api/siseli/settings", json={
+        "device_id": "siseli:42", "key": "notARealKey", "value": 1,
+    })
+    assert r.status_code == 400

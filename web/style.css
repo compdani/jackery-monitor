@@ -2960,3 +2960,25 @@ footer {
 @keyframes spin { to { transform: rotate(360deg); } }
 body.device-switching .tab-panel { opacity: .45; pointer-events: none;
   transition: opacity .15s ease; }
+
+.fleet-source {
+  display: inline-block;
+  margin-left: 6px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  vertical-align: 1px;
+}
+.siseli-controls {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px;
+}
+.siseli-control.siseli-switch {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}

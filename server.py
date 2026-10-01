@@ -55,6 +55,8 @@ import load_schedule
 import location as device_location
 import rescue
 import settings as user_settings
+import siseli_client
+import siseli_creds
 import smart_charge
 import solar_array
 import solar_charge
@@ -119,6 +121,11 @@ FORECASTER_BREAKING_CHANGE_TS = int(
 # while recovery is still pending, not after the fact. Skips when the
 # user has paused polling or the session is in contested cooldown.
 CLOUD_STALL_ALERT_S = 8 * 60
+
+# Siseli (Solar of Things) cloud poll — independent of the Jackery
+# bridge. The portal is HTTP-only and rate-limited; 5 min matches the
+# upstream Home Assistant integration's default.
+SISELI_POLL_INTERVAL_S = 300
 
 # Cloudy-tomorrow guard horizon for solar_charge: how far ahead the
 # with-diversion forecast's minimum SOC must stay above comfort_low
@@ -236,6 +243,19 @@ class AppState:
         # round-trip the API on every page load. {ts, models}.
         self.anthropic_models_cache: dict[str, Any] = {"ts": 0.0, "models": []}
         self.openai_models_cache: dict[str, Any] = {"ts": 0.0, "models": []}
+        # Siseli inverter cache. Independent of Jackery cloud_meta so a
+        # portal outage cannot blank Jackery telemetry and vice versa.
+        self.siseli: dict[str, Any] = {
+            "state": "idle",
+            "error": None,
+            "devices": [],
+            "telemetry_by_sn": {},
+            "settings_by_sn": {},
+            "raw_settings_by_sn": {},
+            "last_poll_ts": None,
+        }
+        self.siseli_task: asyncio.Task | None = None
+        self.siseli_wake: asyncio.Event = asyncio.Event()
 
     @property
     def backend(self) -> str:
@@ -457,6 +477,8 @@ async def poll_loop() -> None:
                          getattr(dev, "model_code", None), ts)
                     )
                 for sn, t, name, model_code, frame_ts in samples_to_write:
+                    if siseli_client.is_siseli_sn(sn):
+                        continue
                     state.energy.upsert_device(sn, name, model_code, None)
                     # Inverter recovery watchdog: opt-in hardware-trip
                     # recovery (port claims ON, output collapsed). A
@@ -818,6 +840,167 @@ def _pack_count_for(device_sn: str | None) -> int:
     return 0
 
 
+def _siseli_timezone(creds: dict | None = None) -> str:
+    loc = device_location.get() or {}
+    if loc.get("timezone"):
+        return str(loc["timezone"])
+    if creds and creds.get("time_zone"):
+        return str(creds["time_zone"])
+    return "UTC"
+
+
+def _siseli_on_tokens(access: str, refresh: str, aexp: str, rexp: str) -> None:
+    siseli_creds.update_tokens(access, refresh, aexp, rexp)
+
+
+def _make_siseli_api(creds: dict) -> siseli_client.SiseliAPI:
+    return siseli_client.SiseliAPI(
+        user_id=creds["user_id"],
+        password=creds["password"],
+        iot_token=creds.get("access_token") or None,
+        refresh_token=creds.get("refresh_token") or None,
+        access_token_expires=creds.get("access_token_expires") or None,
+        refresh_token_expires=creds.get("refresh_token_expires") or None,
+        time_zone=_siseli_timezone(creds),
+        on_token_refreshed=_siseli_on_tokens,
+    )
+
+
+def _kick_siseli_poll() -> None:
+    try:
+        state.siseli_wake.set()
+    except Exception:
+        pass
+
+
+def _merged_cloud_meta() -> dict:
+    """Jackery cloud_meta plus any Siseli inverters, for fleet/view APIs."""
+    cloud = dict(state.last_cloud_meta) if state.last_cloud_meta else {}
+    jackery_devices = [d for d in (cloud.get("devices") or []) if isinstance(d, dict)]
+    tele = dict(cloud.get("devices_telemetry") or {})
+    siseli_devices = list(state.siseli.get("devices") or [])
+    tele.update(state.siseli.get("telemetry_by_sn") or {})
+    cloud["devices"] = jackery_devices + siseli_devices
+    cloud["devices_telemetry"] = tele
+    return cloud
+
+
+async def siseli_poll_once() -> None:
+    """One Siseli portal pass: login if needed, list devices, fetch telemetry."""
+    creds = siseli_creds.load()
+    if not creds:
+        state.siseli = {
+            "state": "idle",
+            "error": None,
+            "devices": [],
+            "telemetry_by_sn": {},
+            "settings_by_sn": {},
+            "raw_settings_by_sn": {},
+            "last_poll_ts": None,
+        }
+        return
+    state.siseli["state"] = "connecting"
+    api = _make_siseli_api(creds)
+    try:
+        if not api.access_token:
+            await asyncio.to_thread(api.login)
+        raw_devices = await asyncio.to_thread(api.list_devices, creds["station_id"])
+        wanted = (creds.get("device_id") or "").strip()
+        devices: list[dict] = []
+        for raw in raw_devices:
+            if not isinstance(raw, dict):
+                continue
+            norm = siseli_client.normalize_device(raw)
+            if not norm:
+                continue
+            if wanted and wanted not in (
+                norm["portal_device_id"], norm["device_id"], norm["device_sn"],
+            ):
+                continue
+            devices.append(norm)
+        telemetry_by_sn: dict[str, dict] = {}
+        settings_by_sn: dict[str, list] = {}
+        raw_settings_by_sn: dict[str, dict] = {}
+        ts = time.time()
+        for d in devices:
+            pid = d["portal_device_id"]
+            sn = d["device_sn"]
+            try:
+                values = await asyncio.to_thread(api.fetch_latest_data, pid)
+                tele = siseli_client.to_telemetry(values)
+                telemetry_by_sn[sn] = {"telemetry": tele, "ts": ts}
+            except Exception as e:
+                log.warning("siseli fetch %s failed: %s", pid, e)
+            try:
+                raw_settings = await asyncio.to_thread(api.get_device_settings, pid)
+                if isinstance(raw_settings, dict):
+                    raw_settings_by_sn[sn] = raw_settings
+                    settings_by_sn[sn] = siseli_client.normalize_controls(raw_settings)
+            except Exception as e:
+                log.debug("siseli settings %s failed: %s", pid, e)
+            tele = (telemetry_by_sn.get(sn) or {}).get("telemetry")
+            if tele:
+                state.energy.upsert_device(sn, d.get("name"), None, None)
+                state.energy.record(
+                    sn, ts,
+                    float(tele.get("input_power_w") or 0),
+                    float(tele.get("output_power_w") or 0),
+                    int(tele.get("battery_percent") or 0),
+                    solar_w=float(tele.get("solar_input_w") or 0),
+                    ac_input_w=float(tele.get("ac_input_w") or 0),
+                )
+        state.siseli = {
+            "state": "connected",
+            "error": None,
+            "devices": devices,
+            "telemetry_by_sn": telemetry_by_sn,
+            "settings_by_sn": settings_by_sn,
+            "raw_settings_by_sn": raw_settings_by_sn,
+            "last_poll_ts": ts,
+        }
+    except siseli_client.AuthenticationError as e:
+        state.siseli["state"] = "error"
+        state.siseli["error"] = str(e)
+        log.error("siseli auth failed: %s", e)
+    except Exception as e:
+        state.siseli["state"] = "error"
+        state.siseli["error"] = str(e)
+        log.warning("siseli poll failed: %s", e)
+    finally:
+        api.close()
+
+
+async def siseli_loop() -> None:
+    while True:
+        try:
+            if siseli_creds.has_credentials():
+                await siseli_poll_once()
+                await broadcast_status("telemetry")
+            elif state.siseli.get("devices"):
+                state.siseli = {
+                    "state": "idle",
+                    "error": None,
+                    "devices": [],
+                    "telemetry_by_sn": {},
+                    "settings_by_sn": {},
+                    "raw_settings_by_sn": {},
+                    "last_poll_ts": None,
+                }
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            log.warning("siseli_loop: %s", e)
+        state.siseli_wake.clear()
+        try:
+            await asyncio.wait_for(
+                state.siseli_wake.wait(), timeout=SISELI_POLL_INTERVAL_S,
+            )
+        except asyncio.TimeoutError:
+            pass
+        except asyncio.CancelledError:
+            raise
+
+
 def _as_int(v, default: int = 0) -> int:
     try:
         return int(v)
@@ -870,10 +1053,12 @@ def _devices_overview(cloud_src: dict | None) -> list[dict]:
             "pack_count": len(state.battery_packs_by_sn.get(sn, [])) if sn else 0,
             "solar_w": _as_int(tele.get("solar_input_w")),
             "ac_input_w": _as_int(tele.get("ac_input_w")),
+            "feed_in_w": _as_int(tele.get("feed_in_w")),
             "output_w": _as_int(tele.get("output_power_w")),
             "ac_on": bool(tele.get("ac_on")),
             "battery_status": tele.get("battery_status"),
             "age_s": age_s,
+            "source": d.get("source") or "jackery",
         })
     return out
 
@@ -1082,31 +1267,29 @@ def serialize_status(view_device_id: str | None = None) -> dict[str, Any]:
     """Build the WS/REST status payload.
 
     `view_device_id` is the per-browser cookie value indicating which
-    Jackery this client wants to see. When it matches the bridge-active
-    device (or is missing/unknown), we return the same rich response we
-    always have. When it points at a different device on the account, we
-    synthesize the response from cached per-device data: telemetry from
-    `cloud_meta.devices_telemetry`, packs from the per-device cache, live
-    history from the energy DB. The bridge polls every device on every
-    tick, so all this data is fresh.
+    device this client wants to see. When it matches the bridge-active
+    Jackery (or is missing/unknown), we return the same rich response we
+    always have. When it points at a different Jackery or a Siseli
+    inverter, we synthesize the response from cached per-device data.
 
     `cloud.selected_device_id` in the response is overridden with the
     chosen view so the frontend's `activeJackeryDevice()` reflects the
     per-browser selection without other code changes.
     """
-    cloud_src = state.last_cloud_meta or {}
-    bridge_active_id = cloud_src.get("selected_device_id")
+    cloud_src = _merged_cloud_meta()
+    bridge_active_id = (state.last_cloud_meta or {}).get("selected_device_id")
     bridge_active_sn = state.device.device_sn if state.device else None
 
-    # Resolve the view override against currently-known devices. A stale
-    # cookie pointing at a device that's no longer on the account just
-    # falls through to the bridge-active view.
     view_meta: dict | None = None
     if view_device_id and str(view_device_id) != str(bridge_active_id or ""):
         for d in (cloud_src.get("devices") or []):
             if str(d.get("device_id")) == str(view_device_id):
                 view_meta = d
                 break
+
+    viewing_siseli = bool(
+        view_meta and siseli_client.is_siseli_sn(view_meta.get("device_id"))
+    )
 
     if view_meta is None:
         device_info = state.device.to_dict() if state.device else None
@@ -1116,28 +1299,38 @@ def serialize_status(view_device_id: str | None = None) -> dict[str, Any]:
         view_packs = state.battery_packs_by_sn.get(view_sn or "", [])
         history = list(state.history)
         model_code = getattr(state.device, "model_code", None)
+        last_update_ts = state.last_update_ts
+        source = state.last_source
     else:
         view_sn = str(view_meta.get("device_sn") or "") or None
         view_id = str(view_meta["device_id"])
         device_info = {
             "name": view_meta.get("name") or view_meta.get("model_name"),
-            "address": "cloud",
+            "address": "siseli" if viewing_siseli else "cloud",
             "rssi": 0,
             "model_code": view_meta.get("model_code"),
             "device_sn": view_sn,
-            "device_type": device_type_for(view_meta.get("model_code")),
+            "device_type": (
+                "inverter" if viewing_siseli
+                else device_type_for(view_meta.get("model_code"))
+            ),
+            "source": "siseli" if viewing_siseli else "jackery",
         }
         devs_t = (cloud_src.get("devices_telemetry") or {})
         entry = devs_t.get(view_sn) or {}
         telemetry = entry.get("telemetry")
-        view_packs = state.battery_packs_by_sn.get(view_sn or "", [])
+        view_packs = (
+            [] if viewing_siseli
+            else state.battery_packs_by_sn.get(view_sn or "", [])
+        )
         history = _view_history(view_sn)
         model_code = view_meta.get("model_code")
+        last_update_ts = entry.get("ts") or (
+            state.siseli.get("last_poll_ts") if viewing_siseli
+            else state.last_update_ts
+        )
+        source = "siseli" if viewing_siseli else state.last_source
 
-    # Augment telemetry with the precomputed system SOC so the SOC card
-    # renders the right number on the very first paint (no main→system
-    # flash). Falls back to the raw telemetry untouched when the device
-    # has no expansion packs (e.g. HomePower 3000).
     if telemetry and view_packs:
         main_pct = telemetry.get("battery_percent")
         if main_pct is not None:
@@ -1146,11 +1339,6 @@ def serialize_status(view_device_id: str | None = None) -> dict[str, Any]:
             telemetry = {**telemetry,
                          "main_soc_pct": main_pct,
                          "system_soc_pct": sys_pct,
-                         # System capacity (main + every cached expansion pack)
-                         # so the UI can synthesize an ETA from net W + remaining
-                         # Wh without having to hardcode a per-model constant.
-                         # Single-unit devices fall through this branch and get
-                         # capacity_wh from the else below.
                          "capacity_wh": _total_capacity_wh(view_sn, model_code),
                          "main_capacity_wh": main_wh,
                          "pack_capacity_wh": pack_wh}
@@ -1170,39 +1358,41 @@ def serialize_status(view_device_id: str | None = None) -> dict[str, Any]:
     except Exception as e:
         log.debug("energy totals lookup failed: %s", e)
 
-    # Shallow-copy cloud_meta so we can override selected_device_id without
-    # mutating the cached state shared with all other clients.
-    cloud_out = dict(state.last_cloud_meta) if state.last_cloud_meta else None
-    if cloud_out is not None:
-        cloud_out["selected_device_id"] = view_id
-        # Fleet strip on Live: one compact row per account device so
-        # the glance numbers don't require switching the view cookie.
-        cloud_out["devices_overview"] = _devices_overview(cloud_src)
+    cloud_out = dict(cloud_src)
+    cloud_out["selected_device_id"] = view_id
+    cloud_out["devices_overview"] = _devices_overview(cloud_src)
 
-    # Inverter recovery watchdog snapshot. Always present so the UI can
-    # clear stale decoration without an extra fetch when AC recovers.
     watchdog_state = None
-    if view_id:
+    if view_id and not viewing_siseli:
         watchdog_state = inverter_watchdog.state_to_dict(
             inverter_watchdog.get_state(view_id))
+
+    siseli_controls = None
+    if viewing_siseli and view_sn:
+        siseli_controls = (state.siseli.get("settings_by_sn") or {}).get(view_sn)
+
     return {
         "connection_status": state.connection_status,
         "connection_error": state.connection_error,
         "device": device_info,
-        "last_update_ts": state.last_update_ts,
+        "last_update_ts": last_update_ts,
         "telemetry": telemetry,
-        # Piggy-back packs on the WS broadcast so per-pack rows update at
-        # the same cadence as the SOC card. Empty list for devices without
-        # packs (e.g. HomePower 3000) — UI hides the card on empty.
         "battery_packs": view_packs,
         "history": history,
         "mock_mode": state.backend == "mock",
         "backend": state.backend,
         "low_battery_threshold": user_settings.get("low_battery_threshold"),
-        "source": state.last_source,
+        "source": source,
         "cloud": cloud_out,
         "energy": energy,
         "inverter_watchdog": watchdog_state,
+        "siseli_controls": siseli_controls,
+        "siseli": {
+            "state": state.siseli.get("state"),
+            "error": state.siseli.get("error"),
+            "last_poll_ts": state.siseli.get("last_poll_ts"),
+            "has_credentials": siseli_creds.has_credentials(),
+        },
     }
 
 
@@ -3026,6 +3216,7 @@ async def lifespan(app: FastAPI):
     # try to connect at startup, but don't block app boot if it fails
     asyncio.create_task(connect_device())
     state.poll_task = asyncio.create_task(poll_loop())
+    state.siseli_task = asyncio.create_task(siseli_loop())
     state.smart_charge_task = asyncio.create_task(smart_charge_loop())
     state.solar_charge_task = asyncio.create_task(solar_charge_loop())
     # Daily AI-insights auto-run is intentionally NOT started here.
@@ -3048,6 +3239,8 @@ async def lifespan(app: FastAPI):
     yield
     if state.poll_task:
         state.poll_task.cancel()
+    if getattr(state, "siseli_task", None):
+        state.siseli_task.cancel()
     if getattr(state, "smart_charge_task", None):
         state.smart_charge_task.cancel()
     if getattr(state, "solar_charge_task", None):
@@ -3285,12 +3478,16 @@ def api_devices():
     this model" banner when a new device shows up that isn't yet in the
     catalog — see README's "Adding a new Jackery model" for the PR
     workflow."""
-    cloud_meta = state.last_cloud_meta or {}
+    cloud_meta = _merged_cloud_meta()
     raw = cloud_meta.get("devices") or []
     annotated = []
     for d in raw:
         if not isinstance(d, dict):
             annotated.append(d)
+            continue
+        if siseli_client.is_siseli_sn(d.get("device_id") or d.get("device_sn")):
+            annotated.append({**d, "model_recognized": True,
+                              "inferred_capacity_wh": None})
             continue
         mc = d.get("model_code")
         recognized = (mc is not None
@@ -4953,6 +5150,162 @@ def api_kasa_creds_clear():
     return {"ok": True}
 
 
+@app.get("/api/siseli/credentials")
+def api_siseli_creds_status():
+    """Public (redacted) Siseli portal credentials + connection snapshot."""
+    view = siseli_creds.public_view()
+    return {
+        "has_credentials": view is not None,
+        "user_id": (view or {}).get("user_id"),
+        "station_id": (view or {}).get("station_id"),
+        "device_id": (view or {}).get("device_id"),
+        "time_zone": (view or {}).get("time_zone"),
+        "state": state.siseli.get("state"),
+        "error": state.siseli.get("error"),
+        "last_poll_ts": state.siseli.get("last_poll_ts"),
+        "devices": state.siseli.get("devices") or [],
+    }
+
+
+@app.post("/api/siseli/credentials")
+async def api_siseli_creds_save(body: dict):
+    """Validate User ID + password + Station ID against the portal, then
+    persist. An empty password keeps the previously stored one."""
+    user_id = ((body or {}).get("user_id") or "").strip()
+    password = (body or {}).get("password") or ""
+    station_id = ((body or {}).get("station_id") or "").strip()
+    device_id = ((body or {}).get("device_id") or "").strip()
+    time_zone = ((body or {}).get("time_zone") or "").strip()
+    existing = siseli_creds.load()
+    if not password and existing:
+        password = existing.get("password") or ""
+    if not user_id or not password or not station_id:
+        raise HTTPException(400, "user_id, password, and station_id are required")
+    probe = siseli_client.SiseliAPI(
+        user_id=user_id,
+        password=password,
+        time_zone=time_zone or _siseli_timezone(),
+        on_token_refreshed=_siseli_on_tokens,
+    )
+    try:
+        await asyncio.to_thread(probe.login)
+        devices = await asyncio.to_thread(probe.list_devices, station_id)
+    except siseli_client.AuthenticationError as e:
+        raise HTTPException(400, str(e)) from e
+    except Exception as e:
+        raise HTTPException(502, f"Siseli portal unreachable: {e}") from e
+    finally:
+        probe.close()
+    if not siseli_creds.save(
+        user_id=user_id,
+        password=password,
+        station_id=station_id,
+        device_id=device_id,
+        time_zone=time_zone,
+        access_token=probe.access_token,
+        refresh_token=probe.refresh_token,
+        access_token_expires=probe.access_token_expires_iso,
+        refresh_token_expires=probe.refresh_token_expires_iso,
+    ):
+        raise HTTPException(500, "failed to save credentials")
+    _kick_siseli_poll()
+    names = []
+    for raw in devices:
+        if isinstance(raw, dict):
+            n = siseli_client.normalize_device(raw)
+            if n:
+                names.append(n["name"])
+    return {
+        "ok": True,
+        "user_id": user_id,
+        "station_id": station_id,
+        "device_count": len(names),
+        "devices": names,
+    }
+
+
+@app.delete("/api/siseli/credentials")
+def api_siseli_creds_clear():
+    siseli_creds.clear()
+    state.siseli = {
+        "state": "idle",
+        "error": None,
+        "devices": [],
+        "telemetry_by_sn": {},
+        "settings_by_sn": {},
+        "raw_settings_by_sn": {},
+        "last_poll_ts": None,
+    }
+    _kick_siseli_poll()
+    return {"ok": True}
+
+
+@app.get("/api/siseli/status")
+def api_siseli_status():
+    return {
+        "state": state.siseli.get("state"),
+        "error": state.siseli.get("error"),
+        "last_poll_ts": state.siseli.get("last_poll_ts"),
+        "devices": state.siseli.get("devices") or [],
+        "has_credentials": siseli_creds.has_credentials(),
+    }
+
+
+@app.get("/api/siseli/settings")
+def api_siseli_settings_get(device_id: str | None = None):
+    if not device_id:
+        raise HTTPException(400, "device_id required")
+    sn = siseli_client.make_sn(siseli_client.portal_id_from_sn(device_id))
+    controls = (state.siseli.get("settings_by_sn") or {}).get(sn)
+    if controls is None:
+        raise HTTPException(404, "no settings cached for this device")
+    return {"device_id": sn, "controls": controls}
+
+
+@app.post("/api/siseli/settings")
+async def api_siseli_settings_set(body: dict):
+    device_id = ((body or {}).get("device_id") or "").strip()
+    key = ((body or {}).get("key") or "").strip()
+    if not device_id or not key:
+        raise HTTPException(400, "device_id and key are required")
+    if "value" not in (body or {}):
+        raise HTTPException(400, "value is required")
+    value = body["value"]
+    spec = next(
+        (c for c in siseli_client.CONTROL_DEFINITIONS if c["canonical"] == key),
+        None,
+    )
+    if spec is None:
+        raise HTTPException(400, f"unknown control key: {key}")
+    creds = siseli_creds.load()
+    if not creds:
+        raise HTTPException(400, "Siseli credentials not configured")
+    sn = siseli_client.make_sn(siseli_client.portal_id_from_sn(device_id))
+    pid = siseli_client.portal_id_from_sn(sn)
+    raw = (state.siseli.get("raw_settings_by_sn") or {}).get(sn)
+    api = _make_siseli_api(creds)
+    try:
+        await asyncio.to_thread(api.set_device_setting, pid, key, value, raw)
+        fresh = await asyncio.to_thread(api.get_device_settings, pid)
+        if isinstance(fresh, dict):
+            state.siseli.setdefault("raw_settings_by_sn", {})[sn] = fresh
+            state.siseli.setdefault("settings_by_sn", {})[sn] = (
+                siseli_client.normalize_controls(fresh)
+            )
+    except siseli_client.AuthenticationError as e:
+        raise HTTPException(401, str(e)) from e
+    except Exception as e:
+        raise HTTPException(502, str(e)) from e
+    finally:
+        api.close()
+    await broadcast_status("status")
+    return {
+        "ok": True,
+        "device_id": sn,
+        "controls": (state.siseli.get("settings_by_sn") or {}).get(sn) or [],
+    }
+
+
 @app.get("/api/anthropic/key")
 def api_anthropic_key_status():
     """Tell the UI whether an Anthropic API key is saved (without
@@ -5602,7 +5955,7 @@ async def api_view_select_device(body: dict, request: Request, response: Respons
     device_id = (body or {}).get("device_id")
     if not device_id:
         raise HTTPException(400, "device_id required")
-    cloud = state.last_cloud_meta or {}
+    cloud = _merged_cloud_meta()
     devs = cloud.get("devices") or []
     if not any(str(d.get("device_id")) == str(device_id) for d in devs):
         raise HTTPException(404, "device not found in current account")

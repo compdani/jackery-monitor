@@ -233,6 +233,11 @@ export default function LiveScreen() {
   const conn = status?.connection_status || (connected ? "connected" : "disconnected");
   const source = status?.source ? String(status.source).toUpperCase() : null;
   const sn = status?.device?.device_sn as string | undefined;
+  const isSiseli =
+    status?.source === "siseli" ||
+    (status?.device as { source?: string } | null)?.source === "siseli" ||
+    String(sn || "").startsWith("siseli:") ||
+    String(selected || "").startsWith("siseli:");
   const watchdog = status?.inverter_watchdog as { active?: boolean; message?: string } | null;
   const eod = useMemo(() => buildEodForecast(eodFc), [eodFc]);
 
@@ -262,6 +267,11 @@ export default function LiveScreen() {
   }, [soc, loadEod]);
 
   useEffect(() => {
+    if (isSiseli) {
+      setChargeHost(null);
+      setDivertHost(null);
+      return;
+    }
     let cancelled = false;
     void (async () => {
       try {
@@ -290,7 +300,7 @@ export default function LiveScreen() {
     return () => {
       cancelled = true;
     };
-  }, [sn]);
+  }, [sn, isSiseli]);
 
   useEffect(() => {
     setPending({});
@@ -487,6 +497,7 @@ export default function LiveScreen() {
         />
       </EnergyKpi>
 
+      {!isSiseli ? (
       <Card>
         <View style={{ flexDirection: "row", justifyContent: "space-between" }}>
           <Eyebrow>Power</Eyebrow>
@@ -539,8 +550,9 @@ export default function LiveScreen() {
           <Text style={{ color: colors.danger, fontSize: 12 }}>{toggleErr}</Text>
         ) : null}
       </Card>
+      ) : null}
 
-      {watchdog?.active ? (
+      {watchdog?.active && !isSiseli ? (
         <Card>
           <Eyebrow>Inverter watchdog</Eyebrow>
           <Hint>{watchdog.message || "AC trip recovery is active."}</Hint>
@@ -548,7 +560,7 @@ export default function LiveScreen() {
         </Card>
       ) : null}
 
-      {packs.length > 0 ? (
+      {packs.length > 0 && !isSiseli ? (
         <Card>
           <Eyebrow>Battery packs</Eyebrow>
           <Hint>
