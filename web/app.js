@@ -1,5 +1,5 @@
 /* ========================================================================
-   Jackery Monitor — UI v4 client.
+   Solar Pow Monitor — UI v4 client.
 
    Responsibilities:
      • Login flow (POST /api/auth/credentials, GET /api/auth/status).
@@ -2020,11 +2020,15 @@ function applySiseliChrome(s) {
   const eod = $('eod-forecast');
   if (eod && siseli) eod.hidden = true;
   if (power) power.hidden = siseli;
+  const prefs = s && s.device_prefs;
+  const deviceId = s && s.cloud && s.cloud.selected_device_id;
   if (controls) {
-    controls.hidden = !siseli;
-    if (siseli) renderSiseliControls(s && s.siseli_controls, s && s.cloud && s.cloud.selected_device_id);
+    const pins = siseliLivePinSet(prefs);
+    const liveList = siseliPinnedControls(s && s.siseli_controls, pins);
+    controls.hidden = !siseli || !liveList.length;
+    if (siseli && liveList.length) renderSiseliControls(liveList, deviceId);
   }
-  renderSiseliDeviceSettings(s && s.siseli_controls, s && s.cloud && s.cloud.selected_device_id, siseli);
+  renderSiseliDeviceSettings(s && s.siseli_controls, deviceId, siseli, prefs);
   document.querySelectorAll('[data-jackery-only]').forEach((el) => {
     if (el.id === 'unknown-model-banner') {
       if (siseli) el.hidden = true;
@@ -2034,54 +2038,79 @@ function applySiseliChrome(s) {
   });
 }
 
-function renderSiseliControls(controls, deviceId) {
+function siseliLivePinSet(prefs) {
+  return new Set((prefs && prefs.live_controls) || []);
+}
+
+function siseliPinnedControls(controls, pins) {
+  const set = pins instanceof Set ? pins : siseliLivePinSet(pins);
+  return (Array.isArray(controls) ? controls : []).filter((c) => set.has(c.canonical));
+}
+
+function siseliControlFields(c) {
+  const key = escapeHtml(c.canonical);
+  if (c.kind === 'number') {
+    const min = c.min != null ? ` min="${c.min}"` : '';
+    const max = c.max != null ? ` max="${c.max}"` : '';
+    return `<input type="number" data-siseli-key="${key}"${min}${max}
+             step="${c.step ?? 1}" value="${c.value ?? ''}" />`;
+  }
+  if (c.kind === 'select') {
+    const opts = (c.options || []).map((o) =>
+      `<option value="${o.value}"${Number(o.value) === Number(c.value) ? ' selected' : ''}>${escapeHtml(o.label)}</option>`
+    ).join('');
+    return `<select data-siseli-key="${key}">${opts}</select>`;
+  }
+  const on = !!c.value;
+  return `<button type="button" class="switch${on ? ' on' : ''}" data-siseli-key="${key}"
+            data-on-value="${c.on_value}" data-off-value="${c.off_value}" aria-pressed="${on}">
+      <span class="sw-state">${on ? 'on' : 'off'}</span>
+    </button>`;
+}
+
+function siseliControlEditor(c) {
+  const name = escapeHtml(c.name || c.canonical);
+  const unit = c.unit ? ` (${escapeHtml(c.unit)})` : '';
+  const fields = siseliControlFields(c);
+  if (c.kind === 'switch') {
+    return `<label class="auto-field siseli-control siseli-switch">
+      <span class="auto-label">${name}</span>
+      ${fields}
+    </label>`;
+  }
+  return `<label class="auto-field siseli-control">
+    <span class="auto-label">${name}${unit}</span>
+    ${fields}
+  </label>`;
+}
+
+function siseliPinToggle(canonical, pinned) {
+  return `<label class="siseli-pin">
+    <input type="checkbox" data-siseli-pin="${escapeHtml(canonical)}"${pinned ? ' checked' : ''} />
+    Live
+  </label>`;
+}
+
+function renderSiseliControls(list, deviceId) {
   const body = $('siseli-controls-body');
   const status = $('siseli-controls-status');
   if (!body) return;
-  const list = (Array.isArray(controls) ? controls : []).filter((c) => !c.dynamic);
-  if (status) status.textContent = list.length ? `${list.length} available` : 'none exposed';
+  if (status) status.textContent = list.length ? `${list.length} on Live` : 'none pinned';
   if (!list.length) {
-    body.innerHTML = '<p class="hint">No writable settings reported for this inverter firmware.</p>';
+    body.innerHTML = '';
     return;
   }
-  body.innerHTML = list.map((c) => {
-    const key = escapeHtml(c.canonical);
-    const name = escapeHtml(c.name || c.canonical);
-    if (c.kind === 'number') {
-      return `<label class="auto-field siseli-control">
-        <span class="auto-label">${name}${c.unit ? ` (${escapeHtml(c.unit)})` : ''}</span>
-        <input type="number" data-siseli-key="${key}" min="${c.min ?? 0}" max="${c.max ?? 100}"
-               step="${c.step ?? 1}" value="${c.value ?? ''}" />
-      </label>`;
-    }
-    if (c.kind === 'select') {
-      const opts = (c.options || []).map((o) =>
-        `<option value="${o.value}"${Number(o.value) === Number(c.value) ? ' selected' : ''}>${escapeHtml(o.label)}</option>`
-      ).join('');
-      return `<label class="auto-field siseli-control">
-        <span class="auto-label">${name}</span>
-        <select data-siseli-key="${key}">${opts}</select>
-      </label>`;
-    }
-    const on = !!c.value;
-    return `<label class="auto-field siseli-control siseli-switch">
-      <span class="auto-label">${name}</span>
-      <button type="button" class="switch${on ? ' on' : ''}" data-siseli-key="${key}"
-              data-on-value="${c.on_value}" data-off-value="${c.off_value}" aria-pressed="${on}">
-        <span class="sw-state">${on ? 'on' : 'off'}</span>
-      </button>
-    </label>`;
-  }).join('');
+  body.innerHTML = list.map((c) => siseliControlEditor(c)).join('');
   body.dataset.deviceId = deviceId || '';
 }
 
-function renderSiseliDeviceSettings(controls, deviceId, siseli) {
+function renderSiseliDeviceSettings(controls, deviceId, siseli, prefs) {
   const card = $('siseli-device-settings-card');
   const body = $('siseli-device-settings-body');
   const status = $('siseli-device-settings-status');
   if (!card || !body) return;
   const show = siseli !== false && viewingSiseli();
-  const list = (Array.isArray(controls) ? controls : []).filter((c) => c.dynamic);
+  const list = Array.isArray(controls) ? controls : [];
   card.hidden = !show || !list.length;
   if (!show) return;
   const drafts = {};
@@ -2096,6 +2125,7 @@ function renderSiseliDeviceSettings(controls, deviceId, siseli) {
     body.innerHTML = '';
     return;
   }
+  const pins = siseliLivePinSet(prefs || (lastStatus && lastStatus.device_prefs));
   body.innerHTML = list.map((c) => {
     const key = escapeHtml(c.canonical);
     const name = escapeHtml(c.name || c.canonical);
@@ -2103,15 +2133,28 @@ function renderSiseliDeviceSettings(controls, deviceId, siseli) {
     const hint = c.hint
       ? `<span class="hint">${escapeHtml(c.hint)}</span>`
       : '';
-    const value = c.value ?? '';
-    return `<div class="siseli-setting-row">
+    const pin = siseliPinToggle(c.canonical, pins.has(c.canonical));
+    if (c.dynamic) {
+      const value = c.value ?? '';
+      return `<div class="siseli-setting-row is-dynamic">
+        <div class="siseli-setting-label">
+          <span class="auto-label">${name}${unit}</span>
+          ${hint}
+        </div>
+        <input type="number" step="any" data-siseli-key="${key}" data-siseli-dynamic="1"
+               data-original="${value}" value="${value}" />
+        <button type="button" class="btn btn-ghost" data-siseli-reset="${key}">Reset</button>
+        <button type="button" class="btn btn-primary" data-siseli-send="${key}">Send</button>
+        ${pin}
+      </div>`;
+    }
+    return `<div class="siseli-setting-row is-known">
       <div class="siseli-setting-label">
         <span class="auto-label">${name}${unit}</span>
         ${hint}
       </div>
-      <input type="number" step="any" data-siseli-key="${key}" data-original="${value}" value="${value}" />
-      <button type="button" class="btn btn-ghost" data-siseli-reset="${key}">Reset</button>
-      <button type="button" class="btn btn-primary" data-siseli-send="${key}">Send</button>
+      <div class="siseli-setting-editor">${siseliControlFields(c)}</div>
+      ${pin}
     </div>`;
   }).join('');
   body.querySelectorAll('input[data-siseli-key]').forEach((el) => {
@@ -2120,6 +2163,45 @@ function renderSiseliDeviceSettings(controls, deviceId, siseli) {
     el.value = drafted;
     el.dataset.dirty = '1';
   });
+}
+
+async function saveDevicePrefs(patch) {
+  const deviceId = (lastStatus && lastStatus.cloud && lastStatus.cloud.selected_device_id)
+    || (lastStatus && lastStatus.device && lastStatus.device.device_sn);
+  if (!deviceId) return;
+  const r = await fetch('/api/device_prefs', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ device_id: deviceId, ...patch }),
+  });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.detail || r.statusText);
+  if (lastStatus) {
+    lastStatus.device_prefs = lastStatus.device_prefs || {};
+    if ('alias' in patch) lastStatus.device_prefs.alias = patch.alias || '';
+    if ('live_controls' in patch) lastStatus.device_prefs.live_controls = patch.live_controls;
+    if ('alias' in patch && lastStatus.device) {
+      lastStatus.device.name = patch.alias || lastStatus.device.portal_name || lastStatus.device.name;
+    }
+    if ('alias' in patch && lastStatus.cloud && Array.isArray(lastStatus.cloud.devices)) {
+      const nextName = patch.alias || (lastStatus.device && lastStatus.device.portal_name) || '';
+      for (const d of lastStatus.cloud.devices) {
+        if (String(d.device_id) !== String(deviceId)) continue;
+        d.name = patch.alias || d.portal_name || d.name;
+      }
+      if (Array.isArray(lastStatus.cloud.devices_overview)) {
+        for (const d of lastStatus.cloud.devices_overview) {
+          if (String(d.device_id) !== String(deviceId)) continue;
+          d.name = nextName || d.name;
+        }
+      }
+      lastDevices = lastStatus.cloud.devices;
+      renderDevicePicker(lastStatus.cloud.devices, deviceId);
+      renderFleet(lastStatus.cloud.devices_overview, deviceId);
+    }
+  }
+  applySiseliChrome(lastStatus);
+  return j;
 }
 
 async function writeSiseliSetting(key, value, opts) {
@@ -2142,8 +2224,8 @@ async function writeSiseliSetting(key, value, opts) {
     if (!r.ok) throw new Error(j.detail || r.statusText);
     if (opts && opts.onSaved) opts.onSaved();
     if (Array.isArray(j.controls)) {
-      renderSiseliControls(j.controls, deviceId);
-      renderSiseliDeviceSettings(j.controls, deviceId, true);
+      if (lastStatus) lastStatus.siseli_controls = j.controls;
+      applySiseliChrome(lastStatus);
     }
     if (status) status.textContent = 'saved';
   } catch (err) {
@@ -2171,10 +2253,42 @@ $('siseli-controls-body')?.addEventListener('click', (e) => {
 $('siseli-device-settings-body')?.addEventListener('input', (e) => {
   const el = e.target.closest('input[data-siseli-key]');
   if (!el) return;
-  el.dataset.dirty = el.value === el.dataset.original ? '0' : '1';
+  if (el.dataset.original != null) {
+    el.dataset.dirty = el.value === el.dataset.original ? '0' : '1';
+  }
+});
+
+$('siseli-device-settings-body')?.addEventListener('change', (e) => {
+  const pin = e.target.closest('[data-siseli-pin]');
+  if (pin) {
+    const key = pin.dataset.siseliPin;
+    const pins = siseliLivePinSet(lastStatus && lastStatus.device_prefs);
+    if (pin.checked) pins.add(key); else pins.delete(key);
+    saveDevicePrefs({ live_controls: [...pins] }).catch((err) => {
+      pin.checked = !pin.checked;
+      alert('Could not save Live pin: ' + (err.message || err));
+    });
+    return;
+  }
+  const el = e.target.closest('[data-siseli-key]');
+  if (!el || el.tagName === 'BUTTON' || el.dataset.siseliDynamic === '1') return;
+  const value = el.tagName === 'SELECT' ? Number(el.value) : Number(el.value);
+  writeSiseliSetting(el.dataset.siseliKey, value, {
+    status: $('siseli-device-settings-status'),
+  });
 });
 
 $('siseli-device-settings-body')?.addEventListener('click', (e) => {
+  const sw = e.target.closest('button[data-siseli-key]');
+  if (sw) {
+    const on = sw.getAttribute('aria-pressed') === 'true';
+    const next = !on;
+    const value = next ? Number(sw.dataset.onValue) : Number(sw.dataset.offValue);
+    writeSiseliSetting(sw.dataset.siseliKey, value, {
+      status: $('siseli-device-settings-status'),
+    });
+    return;
+  }
   const reset = e.target.closest('[data-siseli-reset]');
   const send = e.target.closest('[data-siseli-send]');
   const body = $('siseli-device-settings-body');
@@ -2197,6 +2311,26 @@ $('siseli-device-settings-body')?.addEventListener('click', (e) => {
     status,
     onSaved() { input.dataset.dirty = '0'; },
   });
+});
+
+async function saveDeviceAliasFromInput() {
+  const el = $('dev-alias');
+  if (!el) return;
+  try {
+    await saveDevicePrefs({ alias: el.value.trim() });
+  } catch (err) {
+    alert('Could not save display name: ' + (err.message || err));
+  }
+}
+
+$('dev-alias-save')?.addEventListener('click', () => {
+  saveDeviceAliasFromInput();
+});
+$('dev-alias')?.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') {
+    e.preventDefault();
+    saveDeviceAliasFromInput();
+  }
 });
 
 async function loadSiseliCreds() {
@@ -2382,7 +2516,7 @@ $('bms-add-form')?.addEventListener('submit', async (e) => {
       }),
     });
     const j = await r.json().catch(() => ({}));
-    if (!r.ok) throw new Error(j.detail || r.statusText);
+    if (!r.ok) throw new Error(apiDetail(j, r.statusText));
     if (msg) { msg.textContent = 'Saved.'; setTimeout(() => { msg.hidden = true; }, 2000); }
     $('bms-mac').value = '';
     $('bms-alias').value = '';
@@ -2393,71 +2527,107 @@ $('bms-add-form')?.addEventListener('submit', async (e) => {
   }
 });
 
-$('bms-scan')?.addEventListener('click', async () => {
+let _bmsScanBusy = false;
+async function runBmsScan() {
+  if (_bmsScanBusy) return;
   const btn = $('bms-scan');
   const box = $('bms-scan-results');
   const status = $('bms-status');
+  const msg = $('bms-msg');
+  _bmsScanBusy = true;
   if (btn) { btn.disabled = true; btn.textContent = 'Scanning…'; }
-  if (box) { box.hidden = false; box.textContent = 'Scanning for ~8s…'; }
+  if (box) { box.hidden = false; box.textContent = 'Scanning Bluetooth (~8s)…'; }
+  const ac = typeof AbortController === 'function' ? new AbortController() : null;
+  const kill = ac ? setTimeout(() => ac.abort(), 20000) : null;
   try {
-    const r = await fetch('/api/bms/scan');
+    const r = await fetch('/api/bms/scan', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ seconds: 8 }),
+      signal: ac ? ac.signal : undefined,
+    });
     const j = await r.json().catch(() => ({}));
-    if (!r.ok) throw new Error(j.detail || r.statusText);
+    if (!r.ok) throw new Error(apiDetail(j, r.statusText));
     if (j.ble_available === false) {
-      if (box) box.textContent = j.error || 'BLE unavailable on this host.';
+      const err = j.error || 'BLE unavailable on this host (needs bleak + host bluetoothd).';
+      if (box) box.textContent = err;
       if (status) status.textContent = 'BLE unavailable';
+      if (msg) { msg.hidden = false; msg.textContent = err; }
       return;
     }
     const devices = j.devices || [];
     if (!devices.length) {
-      if (box) box.textContent = (j.error || 'No JBD/Overkill modules found. Enter the MAC manually.');
+      const err = j.error || 'No Bluetooth devices seen. Check the USB dongle / host bluetoothd, or type the MAC.';
+      if (box) box.textContent = err;
       return;
     }
+    const likelyN = devices.filter((d) => d.likely_jbd).length;
+    const head = likelyN
+      ? `${likelyN} likely JBD/Overkill · ${devices.length} nearby`
+      : `${devices.length} nearby BLE device${devices.length === 1 ? '' : 's'} (none advertised a JBD name — pick your pack MAC)`;
     if (box) {
-      box.innerHTML = devices.map((d) =>
+      box.innerHTML = `<div class="hint" style="margin-bottom:8px">${escapeHtml(head)}</div>` + devices.map((d) =>
         `<div class="auto-disc-row">
-          <span class="alias">${escapeHtml(d.name || d.mac)}</span>
+          <span class="alias">${escapeHtml(d.name || d.mac)}${d.likely_jbd ? ' · JBD?' : ''}</span>
           <span class="host">${escapeHtml(d.mac)}</span>
           <span class="hint">${d.rssi != null ? d.rssi + ' dBm' : ''}</span>
           <button type="button" class="btn btn-ghost" data-bms-pick="${escapeHtml(d.mac)}" data-bms-name="${escapeHtml(d.name || '')}">Use</button>
         </div>`
       ).join('');
-      box.querySelectorAll('[data-bms-pick]').forEach((b) => {
-        b.addEventListener('click', () => {
-          $('bms-mac').value = b.dataset.bmsPick || '';
-          if (!$('bms-alias').value) $('bms-alias').value = b.dataset.bmsName || '';
-        });
-      });
     }
   } catch (err) {
-    if (box) box.textContent = err.message || 'scan failed';
+    const text = (err && err.name === 'AbortError')
+      ? 'Scan timed out. If this keeps happening, type the MAC manually.'
+      : (err.message || 'scan failed');
+    if (box) { box.hidden = false; box.textContent = text; }
+    if (msg) { msg.hidden = false; msg.textContent = text; }
   } finally {
+    if (kill) clearTimeout(kill);
+    _bmsScanBusy = false;
     if (btn) { btn.disabled = false; btn.textContent = 'Scan BLE'; }
   }
-});
+}
 
-$('bms-use-as-main')?.addEventListener('click', async () => {
+document.addEventListener('click', (e) => {
+  const scanBtn = e.target.closest('#bms-scan');
+  if (scanBtn) {
+    e.preventDefault();
+    void runBmsScan();
+    return;
+  }
+  const pick = e.target.closest('[data-bms-pick]');
+  if (pick) {
+    e.preventDefault();
+    const mac = pick.getAttribute('data-bms-pick') || '';
+    const name = pick.getAttribute('data-bms-name') || '';
+    if ($('bms-mac')) $('bms-mac').value = mac;
+    if ($('bms-alias') && !$('bms-alias').value && name && name !== mac) {
+      $('bms-alias').value = name;
+    }
+    return;
+  }
+  const mainBtn = e.target.closest('#bms-use-as-main');
+  if (!mainBtn) return;
+  e.preventDefault();
   const sn = $('bms-siseli-sn')?.value || activeJackeryDevice()?.device_sn;
   if (!sn || !isSiseliDevice({ device_sn: sn, device_id: sn })) {
     const msg = $('bms-msg');
     if (msg) { msg.hidden = false; msg.textContent = 'Pick a Siseli inverter first.'; }
     return;
   }
-  const btn = $('bms-use-as-main');
-  const next = !btn.classList.contains('on');
-  try {
-    const r = await fetch('/api/bms/inverter/' + encodeURIComponent(sn), {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ use_as_main: next }),
-    });
+  const next = !mainBtn.classList.contains('on');
+  fetch('/api/bms/inverter/' + encodeURIComponent(sn), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ use_as_main: next }),
+  }).then(async (r) => {
     const j = await r.json().catch(() => ({}));
-    if (!r.ok) throw new Error(j.detail || r.statusText);
+    if (!r.ok) throw new Error(apiDetail(j, r.statusText));
     setBmsUseAsMainUi(next);
-  } catch (err) {
+  }).catch((err) => {
     const msg = $('bms-msg');
     if (msg) { msg.hidden = false; msg.textContent = err.message || 'failed'; }
-  }
+  });
 });
 
 $('bms-siseli-sn')?.addEventListener('change', () => loadBms());
@@ -4425,7 +4595,7 @@ function renderDevicePicker(devices, selectedId) {
   if (!devices || devices.length < 2) { show(wrap, false); return; }
   show(wrap, true);
   // Only rebuild if the option set changed
-  const sig = devices.map(d => d.device_id).join('|') + '#' + (selectedId || '');
+  const sig = devices.map(d => `${d.device_id}:${d.name || ''}`).join('|') + '#' + (selectedId || '');
   if (sel.dataset.sig === sig) return;
   sel.dataset.sig = sig;
   sel.innerHTML = '';
@@ -4554,7 +4724,7 @@ $('fleet-strip')?.addEventListener('click', (e) => {
 // RECONNECT
 // ============================================================
 $('logout')?.addEventListener('click', async () => {
-  if (!confirm('Sign out of the Jackery Monitor?')) return;
+  if (!confirm('Sign out of Solar Pow Monitor?')) return;
   try { await fetch('/api/auth/logout', { method: 'POST' }); }
   catch (_e) {}
   window.location.replace('/login');
@@ -4566,7 +4736,7 @@ $('reconnect')?.addEventListener('click', async () => {
   finally { setTimeout(() => $('reconnect').disabled = false, 800); }
 });
 
-// Brand-as-home: clicking "Jackery Monitor" reloads to / (which lands
+// Brand-as-home: clicking "Solar Pow Monitor" reloads to / (which lands
 // on the Live tab — that's the default activeTab on boot). Treats it
 // as the "fix it" button: same gesture as cmd+R but always lands on
 // Live regardless of which tab the user was on. Modifier/middle-clicks
@@ -5007,7 +5177,13 @@ function applyStatus(s) {
 
   // Device tab
   const dev = s.device || {};
-  $('dev-name').textContent  = dev.name  || '—';
+  const aliasEl = $('dev-alias');
+  if (aliasEl && document.activeElement !== aliasEl) {
+    aliasEl.value = (s.device_prefs && s.device_prefs.alias) || '';
+  }
+  if ($('dev-portal-name')) {
+    $('dev-portal-name').textContent = dev.portal_name || '—';
+  }
   $('dev-model').textContent = dev.model_code != null ? `model ${dev.model_code}` : '—';
   $('dev-sn').textContent    = dev.device_sn || '—';
   $('src-cloud').textContent = describeSrc(s.cloud);
@@ -5436,7 +5612,7 @@ function renderEnergyComparePicker() {
   }
   if (!energyCompareSns.size && viewedSn) energyCompareSns.add(viewedSn);
   const sel = [...energyCompareSns].sort().join(',');
-  const sig = devices.map((d) => d.device_sn).join('|') + '#' + sel;
+  const sig = devices.map((d) => `${d.device_sn}:${d.name || ''}`).join('|') + '#' + sel;
   if (wrap.dataset.sig === sig) {
     wrap.hidden = false;
     return;
@@ -5840,24 +6016,73 @@ function drawAxes(ctx, w, h, padL, padR, padT, padB) {
   ctx.stroke();
 }
 
-// Build a smooth Catmull-Rom path through `pts` (array of [x,y]) and trace
-// it onto ctx. Tension 0.5 = classic Catmull-Rom, gentle curves, no
-// overshoot. Skips null entries cleanly (lifts pen + restarts).
-function _smoothPath(ctx, pts) {
-  let i = 0, started = false;
+// Monotone cubic (Fritsch–Carlson) through `pts` ([x,y] or null).
+// Smooth, no x-reversal, no overshoot past neighbouring samples.
+// Nulls lift the pen. `resume` skips moveTo on the first run so a fill
+// that already lineTo'd the first point stays one subpath.
+function _monotoneTangents(pts) {
+  const n = pts.length;
+  const m = new Array(n).fill(0);
+  if (n < 2) return m;
+  const d = new Array(n - 1);
+  for (let i = 0; i < n - 1; i++) {
+    const dx = pts[i + 1][0] - pts[i][0];
+    d[i] = dx === 0 ? 0 : (pts[i + 1][1] - pts[i][1]) / dx;
+  }
+  m[0] = d[0];
+  m[n - 1] = d[n - 2];
+  for (let i = 1; i < n - 1; i++) {
+    m[i] = (d[i - 1] * d[i] <= 0) ? 0 : (d[i - 1] + d[i]) / 2;
+  }
+  for (let i = 0; i < n - 1; i++) {
+    if (d[i] === 0) {
+      m[i] = 0;
+      m[i + 1] = 0;
+      continue;
+    }
+    const a = m[i] / d[i];
+    const b = m[i + 1] / d[i];
+    const s = a * a + b * b;
+    if (s > 9) {
+      const t = 3 / Math.sqrt(s);
+      m[i] = t * a * d[i];
+      m[i + 1] = t * b * d[i];
+    }
+  }
+  return m;
+}
+
+function _strokeRun(ctx, run, resume) {
+  if (!run.length) return;
+  if (!resume) ctx.moveTo(run[0][0], run[0][1]);
+  if (run.length === 1) return;
+  if (run.length === 2) {
+    ctx.lineTo(run[1][0], run[1][1]);
+    return;
+  }
+  const m = _monotoneTangents(run);
+  for (let i = 0; i < run.length - 1; i++) {
+    const p0 = run[i], p1 = run[i + 1];
+    const dx = p1[0] - p0[0];
+    ctx.bezierCurveTo(
+      p0[0] + dx / 3, p0[1] + (m[i] * dx) / 3,
+      p1[0] - dx / 3, p1[1] - (m[i + 1] * dx) / 3,
+      p1[0], p1[1],
+    );
+  }
+}
+
+function _smoothPath(ctx, pts, opts) {
+  const resumeFirst = !!(opts && opts.resume);
+  let i = 0;
+  let isFirstRun = true;
   while (i < pts.length) {
-    if (!pts[i]) { started = false; i++; continue; }
-    const p0 = pts[i - 1] && pts[i - 1] || pts[i];
-    const p1 = pts[i];
-    const p2 = pts[i + 1] || p1;
-    const p3 = pts[i + 2] || p2;
-    if (!started) { ctx.moveTo(p1[0], p1[1]); started = true; i++; continue; }
-    const cp1x = p0[0] + (p2[0] - p0[0]) / 6;
-    const cp1y = p0[1] + (p2[1] - p0[1]) / 6;
-    const cp2x = p2[0] - (p3[0] - p1[0]) / 6;
-    const cp2y = p2[1] - (p3[1] - p1[1]) / 6;
-    ctx.bezierCurveTo(cp1x, cp1y, cp2x, cp2y, p2[0], p2[1]);
-    i++;
+    if (!pts[i]) { i++; continue; }
+    let j = i + 1;
+    while (j < pts.length && pts[j]) j++;
+    _strokeRun(ctx, pts.slice(i, j), resumeFirst && isFirstRun);
+    isFirstRun = false;
+    i = j;
   }
 }
 
@@ -5897,7 +6122,7 @@ function drawAreaFill(ctx, points, xs, ys, baseY, color, alphaTop = 0.25) {
         ctx.beginPath();
         ctx.moveTo(run[0][0], baseY);
         ctx.lineTo(run[0][0], run[0][1]);
-        _smoothPath(ctx, run);
+        _smoothPath(ctx, run, { resume: true });
         ctx.lineTo(run[run.length - 1][0], baseY);
         ctx.closePath();
         ctx.fill();
@@ -5960,21 +6185,41 @@ function drawLiveChart(s) {
   ctx.clearRect(0, 0, w, h);
   const padL = 44, padR = 44, padT = 14, padB = 28;
 
-  const hist = (s?.history) || [];
+  const hist = ((s?.history) || []).slice()
+    .filter((p) => p && p.ts != null)
+    .sort((a, b) => (a.ts || 0) - (b.ts || 0));
   if (!hist.length) {
     ctx.fillStyle = '#6b7280'; ctx.font = '12px Inter';
     ctx.fillText('Waiting for data…', padL + 8, padT + 16);
     return;
   }
-  const out = hist.map(p => p.output_power_w);
-  const inp = hist.map(p => p.input_power_w);
-  const bat = hist.map(p => p.battery_percent);
+  const clampW = (v) => (v == null || Number.isNaN(Number(v))) ? 0 : Math.max(0, Number(v));
+  const clampPct = (v) => {
+    if (v == null || Number.isNaN(Number(v))) return null;
+    return Math.max(0, Math.min(100, Number(v)));
+  };
+  const out = hist.map(p => clampW(p.output_power_w));
+  const inp = hist.map(p => clampW(p.input_power_w));
+  const bat = hist.map(p => clampPct(p.battery_percent));
   const maxW = Math.max(50, ...out, ...inp);
 
-  const xs = (i) => padL + (i / Math.max(1, hist.length - 1)) * (w - padL - padR);
+  const t0 = hist[0].ts || 0;
+  const t1 = hist[hist.length - 1].ts || t0;
+  const span = Math.max(1e-6, t1 - t0);
+  const xs = (i) => padL + (((hist[i]?.ts || t0) - t0) / span) * (w - padL - padR);
   const yWatts = (v) => (h - padB) - (v / Math.max(1e-6, maxW)) * (h - padT - padB);
   const yPct   = (v) => (h - padB) - (v / 100) * (h - padT - padB);
   const baseY  = h - padB;
+  const indexForX = (x) => {
+    const t = (x - padL) / Math.max(1e-6, w - padL - padR);
+    const ts = t0 + t * (t1 - t0);
+    let best = 0, bestD = Infinity;
+    for (let i = 0; i < hist.length; i++) {
+      const d = Math.abs((hist[i].ts || 0) - ts);
+      if (d < bestD) { bestD = d; best = i; }
+    }
+    return best;
+  };
 
   // Subtle horizontal gridlines (4)
   ctx.strokeStyle = 'rgba(35,42,51,.7)';
@@ -6003,14 +6248,14 @@ function drawLiveChart(s) {
 
   // X-axis time ticks — first sample timestamp ... last (clamped to "now").
   if (hist.length >= 2) {
-    const first = hist[0].ts || 0, last = hist[hist.length - 1].ts || 0;
     const fmtMs = (ms) => new Date(ms * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
     ctx.fillStyle = '#6b7280';
     ctx.textAlign = 'center';
     const ticks = 5;
     for (let i = 0; i <= ticks; i++) {
-      const ts = first + (last - first) * (i / ticks);
-      ctx.fillText(fmtMs(ts), xs((hist.length - 1) * (i / ticks)), h - 8);
+      const ts = t0 + span * (i / ticks);
+      const x = padL + ((ts - t0) / span) * (w - padL - padR);
+      ctx.fillText(fmtMs(ts), x, h - 8);
     }
     ctx.textAlign = 'start';
   }
@@ -6039,7 +6284,7 @@ function drawLiveChart(s) {
             <div class="cht-row"><i style="background:${SERIES_COLORS.output}"></i> Output <b>${fmt(p.output_power_w)}</b> W</div>
             <div class="cht-row"><i style="background:${SERIES_COLORS.input}"></i> Input <b>${fmt(p.input_power_w)}</b> W</div>
             <div class="cht-row"><i style="background:${SERIES_COLORS.battery}"></i> Battery <b>${fmt(p.battery_percent)}</b> %</div>`;
-  }, () => ({ xs, padL, padR, w, h, baseY: h - padB, padT, padB }));
+  }, () => ({ xs, padL, padR, w, h, baseY: h - padB, padT, padB, indexForX }));
 }
 
 // Generic chart-hover binder. Stores the per-render data + geometry +
@@ -6061,7 +6306,9 @@ function _attachChartHover(canvas, hist, htmlFn, geomFn) {
     const rect = canvas.getBoundingClientRect();
     const x = e.clientX - rect.left;
     const t = (x - geom.padL) / (geom.w - geom.padL - geom.padR);
-    const idx = Math.max(0, Math.min(data.length - 1, Math.round(t * (data.length - 1))));
+    const idx = geom.indexForX
+      ? geom.indexForX(x)
+      : Math.max(0, Math.min(data.length - 1, Math.round(t * (data.length - 1))));
     // Redraw the chart, then overlay the crosshair.
     if (canvas._redraw) canvas._redraw();
     const ctx = canvas.getContext('2d');

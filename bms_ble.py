@@ -23,11 +23,20 @@ NOTIFY_WAIT_S = 5.0
 
 _NAME_HINTS = (
     "jbd", "overkill", "xiaoxiang", "xiao xiang", "smartbms", "smart bms",
+    "temgot", "sp04s", "sp10s", "sp16s", "sp20s",
 )
 
 
 class BleUnavailable(RuntimeError):
     """bleak/BlueZ not usable in this process."""
+
+
+def _adapter_lock() -> asyncio.Lock:
+    lock = getattr(_adapter_lock, "_lock", None)
+    if lock is None:
+        lock = asyncio.Lock()
+        _adapter_lock._lock = lock  # type: ignore[attr-defined]
+    return lock
 
 
 def bleak_status() -> dict[str, Any]:
@@ -38,13 +47,23 @@ def bleak_status() -> dict[str, Any]:
     return {"available": True, "error": None}
 
 
-def looks_like_jbd(name: str | None, service_uuids: list[str] | None = None) -> bool:
+def _uuid_blob(value: Any) -> str:
+    return str(value or "").lower().replace("-", "")
+
+
+def looks_like_jbd(name: str | None, service_uuids: list[str] | None = None,
+                   service_data: Any = None) -> bool:
     n = (name or "").strip().lower()
     if n and any(h in n for h in _NAME_HINTS):
         return True
     for u in service_uuids or []:
-        if str(u).lower().replace("-", "").endswith("ff00") or "ff00" in str(u).lower():
+        blob = _uuid_blob(u)
+        if "ff00" in blob:
             return True
+    if isinstance(service_data, dict):
+        for key in service_data:
+            if "ff00" in _uuid_blob(key):
+                return True
     return False
 
 
@@ -53,38 +72,83 @@ def _adv_uuids(adv: Any) -> list[str]:
     return [str(u) for u in uuids]
 
 
+def iter_scan_results(found: Any) -> list[tuple[Any, Any]]:
+    """Normalize BleakScanner.discover() across bleak versions (dict vs list)."""
+    if not found:
+        return []
+    if isinstance(found, dict):
+        return list(found.items())
+    return [(dev, None) for dev in found]
+
+
+async def _discover(timeout: float) -> Any:
+    from bleak import BleakScanner
+    try:
+        return await BleakScanner.discover(
+            timeout=timeout, return_adv=True, scanning_mode="active",
+        )
+    except TypeError:
+        # Older bleak: no scanning_mode / return_adv kwargs.
+        try:
+            return await BleakScanner.discover(timeout=timeout, return_adv=True)
+        except TypeError:
+            return await BleakScanner.discover(timeout=timeout)
+
+
 async def scan(timeout: float = SCAN_DEFAULT_S) -> list[dict]:
-    """Return BLE advertisements that look like a JBD UART module."""
+    """Return nearby BLE advertisements. Likely JBD modules are flagged.
+
+    JBD UART modules often omit a name and 0xFF00 from the advertisement,
+    so the UI lists every nearby device and highlights likely matches.
+    """
     st = bleak_status()
     if not st["available"]:
         raise BleUnavailable(st["error"])
     try:
-        from bleak import BleakScanner
+        from bleak import BleakScanner  # noqa: F401
     except ImportError as e:
         raise BleUnavailable(str(e)) from e
+    lock = _adapter_lock()
     try:
-        found = await BleakScanner.discover(timeout=timeout, return_adv=True)
-    except Exception as e:
-        raise BleUnavailable(f"BLE scan failed: {e}") from e
+        await asyncio.wait_for(lock.acquire(), timeout=2.0)
+    except asyncio.TimeoutError as e:
+        raise BleUnavailable("BLE adapter busy (another BMS operation is running)") from e
+    try:
+        try:
+            found = await asyncio.wait_for(
+                _discover(timeout), timeout=timeout + 3.0,
+            )
+        except asyncio.TimeoutError as e:
+            raise BleUnavailable(f"BLE scan timed out after {timeout:.0f}s") from e
+        except Exception as e:
+            raise BleUnavailable(f"BLE scan failed: {e}") from e
+    finally:
+        lock.release()
     out: list[dict] = []
     seen: set[str] = set()
-    for dev, adv in (found or {}).items():
+    for dev, adv in iter_scan_results(found):
         addr = (getattr(dev, "address", None) or "").upper()
         if not addr or addr in seen:
             continue
-        name = getattr(adv, "local_name", None) or getattr(dev, "name", None)
-        uuids = _adv_uuids(adv)
-        rssi = getattr(adv, "rssi", None)
-        if not looks_like_jbd(name, uuids):
-            continue
+        name = (
+            (getattr(adv, "local_name", None) if adv is not None else None)
+            or getattr(dev, "name", None)
+        )
+        uuids = _adv_uuids(adv) if adv is not None else []
+        service_data = getattr(adv, "service_data", None) if adv is not None else None
+        rssi = getattr(adv, "rssi", None) if adv is not None else getattr(dev, "rssi", None)
         seen.add(addr)
         out.append({
             "mac": addr,
             "name": name or addr,
             "rssi": rssi,
             "service_uuids": uuids,
+            "likely_jbd": looks_like_jbd(name, uuids, service_data),
         })
-    out.sort(key=lambda d: d.get("rssi") or -999, reverse=True)
+    out.sort(key=lambda d: (
+        0 if d.get("likely_jbd") else 1,
+        -(d.get("rssi") or -999),
+    ))
     return out
 
 
@@ -162,15 +226,17 @@ async def poll_one(address: str, timeout: float = POLL_TIMEOUT_S) -> dict[str, A
 
 async def poll_all(addresses: list[str], timeout: float = POLL_TIMEOUT_S) -> dict[str, dict]:
     """Sequential poll. Failed MACs land as {error, ts} so the UI can show them."""
-    out: dict[str, dict] = {}
-    for addr in addresses:
-        try:
-            out[addr] = await poll_one(addr, timeout=timeout)
-        except Exception as e:
-            log.warning("BMS poll %s failed: %s", addr, e)
-            out[addr] = {
-                "ts": time.time(),
-                "error": str(e)[:240],
-                "soc_pct": None,
-            }
-    return out
+    lock = _adapter_lock()
+    async with lock:
+        out: dict[str, dict] = {}
+        for addr in addresses:
+            try:
+                out[addr] = await poll_one(addr, timeout=timeout)
+            except Exception as e:
+                log.warning("BMS poll %s failed: %s", addr, e)
+                out[addr] = {
+                    "ts": time.time(),
+                    "error": str(e)[:240],
+                    "soc_pct": None,
+                }
+        return out

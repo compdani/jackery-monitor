@@ -43,7 +43,7 @@ IOT_APP_ID = "rBrTRfAPXz"
 IOT_APP_SECRET_ENC = "I4D0KRr2339z3pQ/at91V9BpFAOe54DaTafwSm6suIQ="
 TOKEN_REFRESH_LEAD_SECONDS = 300
 USER_AGENT = (
-    "JackeryMonitor-Siseli/1.0 "
+    "SolarPowMonitor-Siseli/1.0 "
     "(+https://github.com/YanivErel-code/jackery-monitor)"
 )
 DEFAULT_TZ = "UTC"
@@ -166,6 +166,19 @@ CONTROL_DEFINITIONS: list[dict[str, Any]] = [
         "on_value": "1", "off_value": "0",
     },
 ]
+
+KNOWN_CONTROL_CANONICALS = tuple(c["canonical"] for c in CONTROL_DEFINITIONS)
+
+
+def default_live_control_keys(controls: list[dict[str, Any]] | None) -> list[str]:
+    """Known inverter controls this firmware actually exposed — default Live pins."""
+    known = set(KNOWN_CONTROL_CANONICALS)
+    out: list[str] = []
+    for item in controls or []:
+        key = item.get("canonical")
+        if key in known and not item.get("dynamic") and key not in out:
+            out.append(str(key))
+    return out
 
 
 class TokenExpiredError(Exception):

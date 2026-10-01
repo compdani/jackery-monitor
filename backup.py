@@ -90,6 +90,7 @@ SMALL_FILES = (
     "jackery-creds.json",
     "siseli-creds.json",
     "bms_devices.json",
+    "device_prefs.json",
     "settings.json",
     "location.json",
     "anthropic-prefs.json",

@@ -1,5 +1,5 @@
 /**
- * Jackery Monitor service worker.
+ * Solar Pow Monitor service worker.
  *
  * Goal: make the app installable as a PWA and keep the UI shell loading
  * fast even when the NAS is briefly unreachable. We cache the static
@@ -14,7 +14,7 @@
 // standard cache + FastAPI's Last-Modified header handle revalidation
 // fine, and a stale CSS in the SW cache once cost us a "phantom Confirm
 // password field on the login page" debugging spiral.
-const CACHE = 'jackery-shell-v7';
+const CACHE = 'jackery-shell-v9';
 const SHELL = [
   '/',
   '/static/app.js',

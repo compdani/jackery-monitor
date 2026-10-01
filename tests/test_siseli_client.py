@@ -420,6 +420,9 @@ def test_dynamic_settings_are_separate_controls():
     assert battery["value"] == 4
     assert "outputSourcePrioritySetting" in by
     assert by["outputSourcePrioritySetting"]["dynamic"] is False
+    assert sc.default_live_control_keys(controls) == [
+        "outputSourcePrioritySetting", "backupMode",
+    ]
 
     writes = []
 

@@ -1,4 +1,4 @@
-# Build the Jackery Monitor Docker image on every push to main and publish it
+# Build the Solar Pow Monitor Docker image on every push to main and publish it
 # to GitHub Container Registry (ghcr.io). The image is public so Synology
 # Container Manager can pull it without needing any login.
 #

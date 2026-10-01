@@ -1,7 +1,7 @@
 {
-  "name": "Jackery Monitor",
-  "short_name": "Jackery",
-  "description": "Live battery, power, and energy stats for your Jackery power station.",
+  "name": "Solar Pow Monitor",
+  "short_name": "Solar Pow",
+  "description": "Live battery, power, and energy stats for your solar and portable power stations.",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",

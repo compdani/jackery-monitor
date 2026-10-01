@@ -1,4 +1,4 @@
-"""Shared exception hierarchy for the Jackery Monitor.
+"""Shared exception hierarchy for Solar Pow Monitor.
 
 The original codebase had per-module RuntimeError subclasses (KasaError,
 DeviceClientError, CloudAuthError, ...) and ~190 bare `except Exception`

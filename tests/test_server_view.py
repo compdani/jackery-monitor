@@ -41,6 +41,8 @@ def server_state(isolated_data, monkeypatch):
     importlib.reload(siseli_creds)
     import bms_devices
     importlib.reload(bms_devices)
+    import device_prefs
+    importlib.reload(device_prefs)
     import server as server_mod
     importlib.reload(server_mod)
 
@@ -432,6 +434,41 @@ def test_siseli_view_synthesizes_status(server_state):
     assert siseli_row["feed_in_w"] == 200
     assert out["inverter_watchdog"] is None
     assert out["battery_packs"] == []
+    assert out["device"]["portal_name"] == "House inverter"
+    assert out["device_prefs"]["live_controls"] == ["batteryChargeLimit"]
+
+
+def test_device_alias_overlays_status_and_overview(server_state):
+    server_state.state.device_prefs.update("id-A", alias="Garage")
+    out = server_state.serialize_status()
+    assert out["device"]["name"] == "Garage"
+    assert out["device"]["portal_name"] == "Jackery A"
+    assert out["device_prefs"]["alias"] == "Garage"
+    named = next(d for d in out["cloud"]["devices"] if d["device_id"] == "id-A")
+    assert named["name"] == "Garage"
+    assert named["portal_name"] == "Jackery A"
+    row = next(r for r in out["cloud"]["devices_overview"]
+               if r["device_id"] == "id-A")
+    assert row["name"] == "Garage"
+
+    _seed_siseli(server_state)
+    server_state.state.device_prefs.update("siseli:42", alias="Barn")
+    siseli = server_state.serialize_status(view_device_id="siseli:42")
+    assert siseli["device"]["name"] == "Barn"
+    assert siseli["device"]["portal_name"] == "House inverter"
+
+
+def test_siseli_explicit_empty_live_controls(server_state):
+    _seed_siseli(server_state)
+    server_state.state.siseli["settings_by_sn"] = {
+        "siseli:42": [
+            {"canonical": "LoadSwitchSetting", "dynamic": False},
+            {"canonical": "BatteryType", "dynamic": True},
+        ],
+    }
+    server_state.state.device_prefs.update("siseli:42", live_controls=[])
+    out = server_state.serialize_status(view_device_id="siseli:42")
+    assert out["device_prefs"]["live_controls"] == []
 
 
 def _seed_siseli(server_state, soc=64):

@@ -1,4 +1,4 @@
-# Tooling config for the Jackery Monitor.
+# Tooling config for Solar Pow Monitor.
 # - pytest config + paths
 # - ruff config (lint + format on save / pre-commit)
 # - mypy is intentionally NOT configured project-wide; type hints are

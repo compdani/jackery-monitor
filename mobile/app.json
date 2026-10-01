@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "Jackery Monitor",
+    "name": "Solar Pow Monitor",
     "slug": "jackery-monitor",
     "scheme": "jackery-monitor",
     "version": "0.1.0",
@@ -19,7 +19,7 @@
           "NSAllowsArbitraryLoads": true
         },
         "NSLocationWhenInUseUsageDescription": "Used to set the forecast location for solar irradiance.",
-        "NSLocalNetworkUsageDescription": "Connects to your Jackery Monitor server on the local network."
+        "NSLocalNetworkUsageDescription": "Connects to your Solar Pow Monitor server on the local network."
       }
     },
     "android": {

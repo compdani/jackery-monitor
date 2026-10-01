@@ -45,7 +45,7 @@ const StatusWidget = (props: StatusWidgetProps, environment: WidgetEnvironment) 
         </Text>
         <Spacer />
         <Text modifiers={[font({ weight: "medium", size: 15 }), foregroundStyle("#e6eaef"), lineLimit(3)]}>
-          Open Jackery Monitor to connect
+          Open Solar Pow Monitor to connect
         </Text>
       </VStack>
     );

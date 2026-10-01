@@ -1,5 +1,5 @@
 """
-Thin wrapper around python-kasa for Jackery Monitor automations.
+Thin wrapper around python-kasa for Solar Pow Monitor automations.
 
 Two operations matter for our use case:
   - discover()         : find Kasa devices on the LAN (best-effort; depends on

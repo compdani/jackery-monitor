@@ -1,5 +1,5 @@
 """
-Jackery 5000 Plus Monitor — local web app.
+Solar Pow Monitor — local web app.
 
 FastAPI backend that:
   • talks to the device through a pluggable backend (mock / docker bridge)
@@ -74,6 +74,8 @@ from device_client import (
 from energy_db import EnergyDB
 from kasa_devices import KasaRegistry
 from bms_devices import BmsRegistry
+import device_prefs
+from device_prefs import DevicePrefs
 
 logging.basicConfig(level=logging.INFO,
                     format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -270,6 +272,7 @@ class AppState:
         self.bms_live: dict[str, dict[str, Any]] = {}
         self.bms_task: asyncio.Task | None = None
         self.bms_wake: asyncio.Event = asyncio.Event()
+        self.device_prefs: DevicePrefs = DevicePrefs()
 
     @property
     def backend(self) -> str:
@@ -926,7 +929,13 @@ def _merged_cloud_meta() -> dict:
     tele = dict(cloud.get("devices_telemetry") or {})
     siseli_devices = list(state.siseli.get("devices") or [])
     tele.update(state.siseli.get("telemetry_by_sn") or {})
-    cloud["devices"] = jackery_devices + siseli_devices
+    cloud["devices"] = [
+        device_prefs.overlay_device(
+            d, state.device_prefs.get(d.get("device_id") or d.get("device_sn")),
+        )
+        for d in (jackery_devices + siseli_devices)
+        if isinstance(d, dict)
+    ]
     cloud["devices_telemetry"] = tele
     return cloud
 
@@ -1400,6 +1409,7 @@ def serialize_status(view_device_id: str | None = None) -> dict[str, Any]:
         view_id = str(view_meta["device_id"])
         device_info = {
             "name": view_meta.get("name") or view_meta.get("model_name"),
+            "portal_name": view_meta.get("portal_name"),
             "address": "siseli" if viewing_siseli else "cloud",
             "rssi": 0,
             "model_code": view_meta.get("model_code"),
@@ -1483,6 +1493,12 @@ def serialize_status(view_device_id: str | None = None) -> dict[str, Any]:
     if viewing_siseli and view_sn:
         siseli_controls = (state.siseli.get("settings_by_sn") or {}).get(view_sn)
 
+    pref = state.device_prefs.get(view_id)
+    if not pref and device_info:
+        pref = state.device_prefs.get(device_info.get("device_sn"))
+    if device_info:
+        device_info = device_prefs.overlay_device(device_info, pref)
+
     return {
         "connection_status": state.connection_status,
         "connection_error": state.connection_error,
@@ -1499,6 +1515,11 @@ def serialize_status(view_device_id: str | None = None) -> dict[str, Any]:
         "energy": energy,
         "inverter_watchdog": watchdog_state,
         "siseli_controls": siseli_controls,
+        "device_prefs": {
+            "alias": (pref.get("alias") or "") if pref else "",
+            "live_controls": device_prefs.resolved_live_controls(
+                pref, siseli_controls),
+        },
         "siseli": {
             "state": state.siseli.get("state"),
             "error": state.siseli.get("error"),
@@ -3321,7 +3342,7 @@ def _hydrate_battery_packs_from_db() -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    log.info("Starting Jackery monitor on backend=%s", state.backend)
+    log.info("Starting Solar Pow Monitor on backend=%s", state.backend)
     # Pre-load the last persisted pack snapshot so the UI shows something
     # immediately on subsequent boots (live refresh overwrites within seconds).
     _hydrate_battery_packs_from_db()
@@ -3372,7 +3393,7 @@ async def lifespan(app: FastAPI):
         pass
 
 
-app = FastAPI(title="Jackery 5000 Plus Monitor", lifespan=lifespan)
+app = FastAPI(title="Solar Pow Monitor", lifespan=lifespan)
 
 
 @app.middleware("http")
@@ -5460,9 +5481,20 @@ def _enrich_bms_pack(p: dict) -> dict:
 
 
 @app.get("/api/bms/scan")
-async def api_bms_scan(seconds: float = 8.0):
-    """BLE scan for JBD/Overkill/XiaoXiang modules. 8s default; no 500 if BlueZ is missing."""
-    seconds = max(1.0, min(float(seconds or 8.0), 15.0))
+@app.post("/api/bms/scan")
+async def api_bms_scan(request: Request, seconds: float = 8.0):
+    """BLE scan (~8s). POST body `{seconds}` is accepted too. Never 500 on missing BlueZ."""
+    if request.method == "POST":
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        if isinstance(body, dict) and body.get("seconds") is not None:
+            seconds = body.get("seconds")
+    try:
+        seconds = max(1.0, min(float(seconds or 8.0), 15.0))
+    except (TypeError, ValueError):
+        seconds = 8.0
     st = bms_ble.bleak_status()
     if not st["available"]:
         return {"devices": [], "error": st["error"], "ble_available": False}
@@ -5472,7 +5504,13 @@ async def api_bms_scan(seconds: float = 8.0):
         return {"devices": [], "error": str(e), "ble_available": False}
     except Exception as e:
         return {"devices": [], "error": str(e), "ble_available": True}
-    return {"devices": devices, "ble_available": True}
+    likely = sum(1 for d in devices if d.get("likely_jbd"))
+    return {
+        "devices": devices,
+        "ble_available": True,
+        "likely_jbd": likely,
+        "error": None,
+    }
 
 
 @app.get("/api/bms/status")
@@ -5542,6 +5580,32 @@ async def api_bms_inverter_flag(sn: str, body: dict):
         raise HTTPException(400, str(e)) from e
     await broadcast_status("status")
     return {"ok": True, "siseli_device_sn": sn, **row}
+
+
+@app.get("/api/device_prefs")
+def api_device_prefs_list():
+    return {"prefs": state.device_prefs.all()}
+
+
+@app.post("/api/device_prefs")
+async def api_device_prefs_update(body: dict):
+    payload = body or {}
+    did = (payload.get("device_id") or "").strip()
+    if not did:
+        raise HTTPException(400, "device_id is required")
+    kwargs: dict[str, Any] = {}
+    if "alias" in payload:
+        kwargs["alias"] = payload.get("alias")
+    if "live_controls" in payload:
+        kwargs["live_controls"] = payload.get("live_controls")
+    if not kwargs:
+        raise HTTPException(400, "alias or live_controls required")
+    try:
+        row = state.device_prefs.update(did, **kwargs)
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+    await broadcast_status("status")
+    return {"ok": True, "device_id": did, "prefs": row}
 
 
 @app.get("/api/anthropic/key")

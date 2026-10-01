@@ -73,7 +73,7 @@ function authSession(
     throw new ApiError(
       0,
       data,
-      "Server did not return a session token. Update Jackery Monitor and try again.",
+      "Server did not return a session token. Update Solar Pow Monitor and try again.",
     );
   }
   return { ok: true, username, token };

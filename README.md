@@ -1,4 +1,4 @@
-# Jackery Monitor
+# Solar Pow Monitor
 
 [![CI](https://github.com/YanivErel-code/jackery-monitor/actions/workflows/ci.yml/badge.svg)](https://github.com/YanivErel-code/jackery-monitor/actions/workflows/ci.yml)
 [![Docker image](https://github.com/YanivErel-code/jackery-monitor/actions/workflows/docker-publish.yml/badge.svg)](https://github.com/YanivErel-code/jackery-monitor/actions/workflows/docker-publish.yml)
@@ -251,7 +251,7 @@ cd mobile
 npx expo run:ios
 ```
 
-Then long-press the home screen → **Edit / +** → search **Jackery Monitor**
+Then long-press the home screen → **Edit / +** → search **Solar Pow Monitor**
 → add **Jackery**. The widget updates from live telemetry while the app
 is open (debounced so WidgetKit is not spammed). After you leave the
 app it keeps the last snapshot until you open the app again.

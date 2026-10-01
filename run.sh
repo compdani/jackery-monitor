@@ -27,6 +27,6 @@ fi
 PORT="${PORT:-8000}"
 URL="http://localhost:${PORT}"
 
-echo "[launch] Starting Jackery monitor at $URL"
+echo "[launch] Starting Solar Pow Monitor at $URL"
 ( sleep 1 && open "$URL" ) &
 exec python server.py

@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-  <title>Jackery Monitor</title>
+  <title>Solar Pow Monitor</title>
 
   <!-- PWA -->
   <link rel="manifest" href="/manifest.webmanifest" />
@@ -14,7 +14,7 @@
        honor the manifest, so we duplicate the key bits as Apple meta tags. -->
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-  <meta name="apple-mobile-web-app-title" content="Jackery" />
+  <meta name="apple-mobile-web-app-title" content="Solar Pow" />
   <link rel="apple-touch-icon" href="/static/icon.svg" />
 
   <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -28,7 +28,7 @@
     <form id="login-form" class="login-card" autocomplete="on">
       <div class="login-brand">
         <span class="logo-dot"></span>
-        <h1>Jackery Monitor</h1>
+        <h1>Solar Pow Monitor</h1>
       </div>
       <p class="login-sub">Sign in with your Jackery account to pull device data from the cloud. Credentials are encrypted (AES-256-GCM) and stored locally in this container's data volume — never sent anywhere except Jackery.</p>
 
@@ -63,7 +63,7 @@
     <a href="/" class="brand" id="brand-home"
        title="Back to Live (refresh)">
       <span class="logo-dot"></span>
-      <h1>Jackery Monitor</h1>
+      <h1>Solar Pow Monitor</h1>
     </a>
 
     <div class="topbar-right">
@@ -310,7 +310,7 @@
           <span id="siseli-controls-status" class="hint">—</span>
         </div>
         <p class="hint" style="margin:6px 0 12px">
-          Writes go to the Siseli portal (solar.siseli.com). Controls the inverter firmware does not expose stay hidden.
+          Writes go to the Siseli portal (solar.siseli.com). Pin which controls appear here from the Device tab.
         </p>
         <div id="siseli-controls-body" class="siseli-controls"></div>
       </section>
@@ -860,7 +860,12 @@
           <span id="source-badge-2" class="pill pill-source">—</span>
         </div>
         <dl>
-          <dt>Name</dt><dd id="dev-name">—</dd>
+          <dt>Display name</dt>
+          <dd class="dev-alias-dd">
+            <input id="dev-alias" type="text" maxlength="80" placeholder="Local name (optional)" autocomplete="off" />
+            <button type="button" class="btn btn-ghost" id="dev-alias-save">Save</button>
+          </dd>
+          <dt>Portal / cloud name</dt><dd id="dev-portal-name">—</dd>
           <dt>Model</dt><dd id="dev-model">—</dd>
           <dt>Serial</dt><dd id="dev-sn">—</dd>
           <dt>Cloud</dt><dd id="src-cloud">—</dd>
@@ -876,7 +881,9 @@
           <span id="siseli-device-settings-status" class="hint">—</span>
         </div>
         <p class="hint" style="margin:6px 0 12px">
-          Each Send writes only that field to solar.siseli.com. Reset restores the last value read from the portal.
+          All writable inverter fields. Check <strong>Live</strong> to show a control on the Live page.
+          Known switches and limits save on change; other firmware fields use Send (one write per field).
+          Reset restores the last value read from the portal. Display names and pins stay local — they do not change Siseli.
         </p>
         <div id="siseli-device-settings-body" class="siseli-device-settings"></div>
       </section>
@@ -1091,11 +1098,14 @@
             </label>
             <span id="bms-msg" class="hint" hidden></span>
           </div>
-          <div style="margin-top:14px; display:flex; gap:8px; flex-wrap:wrap">
+          <div style="margin-top:14px; display:flex; gap:8px">
             <button class="btn btn-primary" type="submit">Save pack</button>
-            <button id="bms-scan" class="btn btn-ghost" type="button">Scan BLE</button>
           </div>
         </form>
+        <div style="margin-top:12px; display:flex; gap:8px; flex-wrap:wrap; align-items:center">
+          <button id="bms-scan" class="btn btn-ghost" type="button">Scan BLE</button>
+          <span class="hint">Takes ~8s. Lists nearby Bluetooth devices so you can pick a MAC even if the pack does not advertise a JBD name.</span>
+        </div>
         <div id="bms-scan-results" class="auto-discovered" hidden></div>
       </section>
     </section>

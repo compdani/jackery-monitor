@@ -38,7 +38,7 @@ def server_mod(isolated_data, monkeypatch, tmp_path):
         "auth", "settings", "automation", "location", "smart_charge",
         "cost", "anthropic_creds", "anthropic_prefs",
         "kasa_creds", "kasa_devices", "backup_creds", "energy_db",
-        "solar_charge",
+        "solar_charge", "device_prefs",
     ):
         mod = importlib.import_module(name)
         importlib.reload(mod)

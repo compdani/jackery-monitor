@@ -44,7 +44,7 @@ export default function ServerScreen() {
 
   return (
     <Screen safe>
-      <Title large>Jackery Monitor</Title>
+      <Title large>Solar Pow Monitor</Title>
       <Hint>
         This app talks to your self-hosted dashboard. Enter the server URL — LAN
         (http://192.168.x.x:8123) or a Cloudflare Tunnel hostname.

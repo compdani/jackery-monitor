@@ -50,7 +50,7 @@ def app(isolated_data, monkeypatch, tmp_path):
         "cost", "anthropic_creds", "anthropic_prefs",
         "kasa_creds", "kasa_devices", "backup_creds", "energy_db",
         "solar_array", "forecast_solar", "load_schedule",
-        "siseli_creds", "bms_devices",
+        "siseli_creds", "bms_devices", "device_prefs",
     ):
         mod = importlib.import_module(name)
         importlib.reload(mod)
@@ -499,7 +499,7 @@ def test_shell_sends_no_cache_and_forecast_load_markup(client):
     sw = client.get("/sw.js")
     assert sw.status_code == 200
     assert "no-cache" in (sw.headers.get("cache-control") or "").lower()
-    assert "jackery-shell-v7" in sw.text
+    assert "jackery-shell-v9" in sw.text
 
 
 def test_solar_array_validation_and_roundtrip(app, client):
@@ -810,6 +810,9 @@ def test_bms_scan_without_bluez_is_structured(client):
     j = r.json()
     assert "devices" in j
     assert "ble_available" in j
+    posted = client.post("/api/bms/scan", json={"seconds": 2})
+    assert posted.status_code == 200
+    assert "devices" in posted.json()
     st = client.get("/api/bms/status")
     assert st.status_code == 200
     assert "packs" in st.json()
@@ -827,3 +830,26 @@ def test_battery_packs_siseli_does_not_hit_bridge(client, app):
     assert len(j["packs"]) == 1
     assert j["packs"][0]["source"] == "bms"
     assert "bridge not available" not in (j.get("error") or "")
+
+
+def test_device_prefs_alias_and_pins(client):
+    missing = client.post("/api/device_prefs", json={"alias": "House"})
+    assert missing.status_code == 400
+    r = client.post("/api/device_prefs", json={
+        "device_id": "siseli:42",
+        "alias": "House",
+        "live_controls": ["LoadSwitchSetting"],
+    })
+    assert r.status_code == 200, r.text
+    listed = client.get("/api/device_prefs").json()
+    assert listed["prefs"]["siseli:42"]["alias"] == "House"
+    assert listed["prefs"]["siseli:42"]["live_controls"] == ["LoadSwitchSetting"]
+    cleared = client.post("/api/device_prefs", json={
+        "device_id": "siseli:42",
+        "alias": "",
+        "live_controls": [],
+    })
+    assert cleared.status_code == 200
+    prefs = client.get("/api/device_prefs").json()["prefs"]["siseli:42"]
+    assert "alias" not in prefs
+    assert prefs["live_controls"] == []

@@ -100,3 +100,4 @@ def test_backup_includes_siseli_creds():
     import backup
     assert "siseli-creds.json" in backup.SMALL_FILES
     assert "bms_devices.json" in backup.SMALL_FILES
+    assert "device_prefs.json" in backup.SMALL_FILES

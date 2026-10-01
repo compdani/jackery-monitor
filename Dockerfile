@@ -1,4 +1,4 @@
-# Jackery Monitor — container image (cloud-only build).
+# Solar Pow Monitor — container image (cloud-only build).
 #
 # Same image runs either the web server or the cloud bridge — the compose
 # file picks which entrypoint to use per service.

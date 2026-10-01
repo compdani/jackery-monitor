@@ -1,5 +1,5 @@
 """
-Single-user app-level authentication for the Jackery Monitor dashboard.
+Single-user app-level authentication for the Solar Pow Monitor dashboard.
 
 This is layered on top of (or as an alternative to) Cloudflare Access /
 Tailscale / etc. — useful when the dashboard is exposed to the internet
