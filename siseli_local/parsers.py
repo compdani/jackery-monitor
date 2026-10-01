@@ -877,6 +877,11 @@ def log_pi30_diagnostic(blocks: Dict[str, bytes], source_topic: Optional[str] = 
 
 
 class SolarParser:
+    # Block name -> (register index, scale, signed). Filled when a Modbus
+    # payload lines up with a portal sample; not a guessed register map.
+    _MODBUS_MAP: Dict[str, Tuple[str, int, float, bool]] = {}
+    _MODBUS_READY: bool = False
+
     @staticmethod
     def _to_float_or_none(value: object) -> Optional[float]:
         if isinstance(value, (int, float)):
@@ -2290,6 +2295,214 @@ class SolarParser:
 
 
     @staticmethod
+    @staticmethod
+    def _modbus_rows(blocks: Dict[str, bytes]) -> Dict[str, List[int]]:
+        """Function-03 responses whose CRC16 matches, as unsigned registers."""
+        rows: Dict[str, List[int]] = {}
+        for name, body in blocks.items():
+            if len(body) < 5 or body[1] != 0x03:
+                continue
+            count = body[2]
+            if count % 2 or len(body) != 3 + count + 2:
+                continue
+            if SolarParser._crc16_modbus(body[:-2]) != int.from_bytes(body[-2:], "little"):
+                continue
+            data = body[3:3 + count]
+            rows[name] = [
+                int.from_bytes(data[i:i + 2], "big") for i in range(0, len(data), 2)
+            ]
+        return rows
+
+    @staticmethod
+    def _modbus_scales(kind: str) -> Tuple[float, ...]:
+        if kind == "power":
+            return (1.0, 0.1)
+        if kind == "volt":
+            return (0.1, 0.01, 1.0)
+        if kind == "amp":
+            return (0.1, 0.01, 1.0)
+        return (1.0,)
+
+    @staticmethod
+    def _modbus_close(kind: str, target: float, scaled: float) -> bool:
+        err = abs(scaled - target)
+        if kind == "power":
+            return err <= max(80.0, 0.25 * abs(target))
+        if kind == "volt":
+            return err <= 1.5
+        if kind == "soc":
+            return err <= 2.0 and 0.0 <= scaled <= 100.0
+        return err <= 0.5
+
+    @staticmethod
+    def _match_modbus_fields(rows: Dict[str, List[int]], portal: Dict[str, object]) -> Tuple[Dict[str, Tuple[str, int, float, bool]], List[str]]:
+        """Pair portal figures with the one register that agrees.
+
+        A field with two equally close registers is left unmatched.
+        """
+        fields = (
+            ("pv_w", "solar_input_w", "power"),
+            ("load_w", "output_power_w", "power"),
+            ("grid_w", "ac_input_w", "power"),
+            ("feed_w", "feed_in_w", "power"),
+            ("bat_v", "battery_voltage_v", "volt"),
+            ("bat_cap", "battery_percent", "soc"),
+            ("bat_charge_current", "battery_charge_a", "amp"),
+            ("dischg_current", "battery_discharge_a", "amp"),
+        )
+        per_key: Dict[str, List[Tuple[float, str, int, float, bool]]] = {}
+        for key, src, kind in fields:
+            target = SolarParser._to_float_or_none(portal.get(src))
+            if target is None:
+                continue
+            if kind == "power" and abs(target) < 25:
+                continue
+            if kind == "amp" and abs(target) < 0.3:
+                continue
+            if kind == "volt" and not (5.0 < target < 800.0):
+                continue
+            if kind == "soc" and not (0.0 <= target <= 100.0):
+                continue
+            hits: List[Tuple[float, str, int, float, bool]] = []
+            for name, regs in rows.items():
+                for idx, raw_u in enumerate(regs):
+                    readings = [(raw_u, False)]
+                    if raw_u >= 32768:
+                        readings.append((raw_u - 65536, True))
+                    for raw, signed in readings:
+                        for mult in SolarParser._modbus_scales(kind):
+                            scaled = raw * mult
+                            if SolarParser._modbus_close(kind, target, scaled):
+                                hits.append((abs(scaled - target), name, idx, mult, signed))
+            if not hits:
+                continue
+            hits.sort()
+            if len(hits) >= 2:
+                gap = hits[1][0] - hits[0][0]
+                if hits[1][0] <= hits[0][0] * 2 and gap < 15:
+                    per_key[key] = []
+                    continue
+            per_key[key] = hits
+
+        ambiguous = [key for key, hits in per_key.items() if not hits]
+        chosen: Dict[str, Tuple[str, int, float, bool]] = {}
+        used: Set[Tuple[str, int]] = set()
+        flat: List[Tuple[float, str, str, int, float, bool]] = []
+        for key, hits in per_key.items():
+            for err, name, idx, mult, signed in hits:
+                flat.append((err, key, name, idx, mult, signed))
+        flat.sort()
+        for _err, key, name, idx, mult, signed in flat:
+            if key in chosen or (name, idx) in used:
+                continue
+            chosen[key] = (name, idx, mult, signed)
+            used.add((name, idx))
+        return chosen, ambiguous
+
+    @staticmethod
+    def _apply_modbus_map(rows: Dict[str, List[int]]) -> Dict[str, object]:
+        state: Dict[str, object] = {}
+        for key, (block, idx, mult, signed) in SolarParser._MODBUS_MAP.items():
+            regs = rows.get(block)
+            if not regs or idx >= len(regs):
+                continue
+            raw = regs[idx]
+            if signed and raw >= 32768:
+                raw -= 65536
+            val = raw * mult
+            if key in ("bat_v", "bat_charge_current", "dischg_current"):
+                state[key] = round(float(val), 2)
+            elif key == "bat_cap":
+                state[key] = int(round(val))
+            elif key in ("grid_w", "feed_w", "pv_w", "load_w"):
+                state[key] = int(round(val))
+        grid = state.pop("grid_w", None)
+        feed = state.pop("feed_w", None)
+        if isinstance(feed, int) or isinstance(grid, int):
+            feed_w = feed if isinstance(feed, int) else 0
+            grid_w = grid if isinstance(grid, int) else 0
+            if feed_w > grid_w and feed_w > 0:
+                state["mains_power_w"] = feed_w
+                state["mains_current_flow_direction"] = "Inverter To Mains"
+            elif grid_w > 0:
+                state["mains_power_w"] = grid_w
+                state["mains_current_flow_direction"] = "Mains To Inverter"
+            else:
+                state["mains_power_w"] = 0
+                state["mains_current_flow_direction"] = "Idle"
+        if isinstance(state.get("pv_w"), int):
+            state["generation_power_w"] = state["pv_w"]
+        return state
+
+    @staticmethod
+    def _try_modbus_schema(blocks: Dict[str, bytes]) -> Dict[str, object]:
+        """Decode a Modbus dongle once its registers agree with the portal."""
+        rows = SolarParser._modbus_rows(blocks)
+        if len(rows) < 3:
+            return {}
+        portal: Dict[str, object] = {}
+        portal_age = None
+        try:
+            from .runner import http_telemetry
+            tele, tele_ts = http_telemetry()
+            if tele and tele_ts:
+                portal_age = round(time.time() - tele_ts, 1)
+                if portal_age <= 1800:
+                    portal = tele
+        except Exception:
+            portal = {}
+        chosen: Dict[str, Tuple[str, int, float, bool]] = {}
+        ambiguous: List[str] = []
+        required: List[str] = []
+        if portal:
+            chosen, ambiguous = SolarParser._match_modbus_fields(rows, portal)
+            for key, src, kind in (
+                ("pv_w", "solar_input_w", "power"),
+                ("load_w", "output_power_w", "power"),
+                ("grid_w", "ac_input_w", "power"),
+                ("feed_w", "feed_in_w", "power"),
+            ):
+                target = SolarParser._to_float_or_none(portal.get(src))
+                if target is not None and abs(target) >= 25:
+                    required.append(key)
+            if required and all(key in chosen for key in required):
+                SolarParser._MODBUS_MAP.clear()
+                SolarParser._MODBUS_MAP.update(chosen)
+                SolarParser._MODBUS_READY = True
+        state = SolarParser._apply_modbus_map(rows) if SolarParser._MODBUS_READY else {}
+        if SolarParser._MODBUS_READY and "pv_w" not in state and "load_w" not in state:
+            state = {}
+        # #region agent log
+        try:
+            from .core import _agent_dbg
+            _agent_dbg("I", "siseli_local/parsers.py:modbus", "modbus correlated to portal", {
+                "portal_age_s": portal_age,
+                "portal": {
+                    "solar_w": portal.get("solar_input_w"),
+                    "load_w": portal.get("output_power_w"),
+                    "grid_w": portal.get("ac_input_w"),
+                    "feed_w": portal.get("feed_in_w"),
+                    "battery_v": portal.get("battery_voltage_v"),
+                    "soc": portal.get("battery_percent"),
+                },
+                "registers": rows,
+                "matched": {
+                    key: {"block": spec[0], "index": spec[1], "scale": spec[2]}
+                    for key, spec in (chosen or SolarParser._MODBUS_MAP).items()
+                },
+                "ambiguous": ambiguous,
+                "required": required,
+                "ready": SolarParser._MODBUS_READY,
+                "pv_w": state.get("pv_w"),
+                "load_w": state.get("load_w"),
+                "bat_v": state.get("bat_v"),
+                "bat_cap": state.get("bat_cap"),
+            })
+        except Exception:
+            pass
+        # #endregion
+        return state
+
     def parse_payload(payload_bytes: bytes, source_topic: Optional[str] = None) -> bool:
         try:
             idx = payload_bytes.find(b'{"b":')
@@ -2382,6 +2595,8 @@ class SolarParser:
                 return False
 
             state = SolarParser._try_ascii_schema(blocks)
+            if not state:
+                state = SolarParser._try_modbus_schema(blocks)
             if state:
                 # The collector id travels in the MQTT topic of this very payload, so
                 # it is per-payload evidence like any block field.

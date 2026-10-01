@@ -153,3 +153,96 @@ def test_parser_fixture_reaches_the_sink(tmp_path, monkeypatch):
     assert tele["battery_percent"] == 88
     assert tele["output_power_w"] == 267
     assert tele["solar_input_w"] == 200
+
+
+_CAPTURED_MODBUS = {
+    "s2te": "010322483c1e0020202020424d3732363020202020202000000306000000020000000100019115",
+    "WfP8": "01030e0038020c00aa2626000000000000346d",
+    "8eyo": "010306042c005a005d50dd",
+    "bcCu": "010316000001ac02c60000000000000000002a00250866079698fb",
+    "CSu4": "01030200023985",
+    "XCQF": "0103060000000000002175",
+}
+
+
+def _modbus_payload() -> bytes:
+    blocks = [
+        {"cn": name, "co": base64.b64encode(bytes.fromhex(hexbody)).decode()}
+        for name, hexbody in _CAPTURED_MODBUS.items()
+    ]
+    return json.dumps({"b": {"ct": blocks}}).encode()
+
+
+def test_modbus_blocks_follow_the_portal_sample(tmp_path, monkeypatch):
+    """The captured frames decode only by lining registers up with portal watts."""
+    cache = tmp_path / "state.json"
+    monkeypatch.setenv("SISELI_LOCAL_STATE_FILE", str(cache))
+
+    import siseli_local.config as cfg
+    import siseli_local.mqtt as mqtt
+    import siseli_local.parsers as parsers
+    import siseli_local.runner as runner
+    import siseli_local.state as st
+
+    cfg.STATE_CACHE_FILE = str(cache)
+    parsers.STATE_CACHE_FILE = str(cache)
+    st.LAST_STATE.clear()
+    st.DISCOVERY_PUBLISHED = True
+    st.PUBLISHED_SENSOR_KEYS.clear()
+    parsers.LAST_PUBLISH_TS = 0.0
+    parsers.PENDING_PUBLISH = False
+    parsers.SolarParser._MODBUS_MAP.clear()
+    parsers.SolarParser._MODBUS_READY = False
+
+    seen: list[dict] = []
+    mqtt.set_sink(seen.append)
+    try:
+        runner.note_http_telemetry({
+            "solar_input_w": 710,
+            "output_power_w": 1068,
+            "ac_input_w": 0,
+            "feed_in_w": 0,
+            "battery_voltage_v": 52.4,
+            "battery_percent": 56,
+        })
+        assert parsers.SolarParser.parse_payload(_modbus_payload(), source_topic="dtu/x/pub/event/dev_prop_post") is True
+    finally:
+        mqtt.set_sink(None)
+        parsers.SolarParser._MODBUS_MAP.clear()
+        parsers.SolarParser._MODBUS_READY = False
+
+    assert seen, "modbus snapshot was not published"
+    snap = seen[-1]
+    assert snap.get("pv_w") == 710
+    assert snap.get("load_w") == 1068
+    assert snap.get("bat_v") == 52.4
+    assert snap.get("bat_cap") == 56
+
+
+def test_modbus_blocks_stay_undecoded_without_a_portal_match(tmp_path, monkeypatch):
+    cache = tmp_path / "state.json"
+    monkeypatch.setenv("SISELI_LOCAL_STATE_FILE", str(cache))
+
+    import siseli_local.config as cfg
+    import siseli_local.parsers as parsers
+    import siseli_local.runner as runner
+    import siseli_local.state as st
+
+    cfg.STATE_CACHE_FILE = str(cache)
+    parsers.STATE_CACHE_FILE = str(cache)
+    st.LAST_STATE.clear()
+    st.DISCOVERY_PUBLISHED = True
+    parsers.SolarParser._MODBUS_MAP.clear()
+    parsers.SolarParser._MODBUS_READY = False
+    runner.note_http_telemetry({
+        "solar_input_w": 9000,
+        "output_power_w": 8000,
+        "ac_input_w": 0,
+        "feed_in_w": 0,
+    })
+    try:
+        assert parsers.SolarParser.parse_payload(_modbus_payload(), source_topic="dtu/x/pub") is False
+        assert parsers.SolarParser._MODBUS_READY is False
+    finally:
+        parsers.SolarParser._MODBUS_MAP.clear()
+        parsers.SolarParser._MODBUS_READY = False

@@ -988,6 +988,9 @@ def _store_siseli_sample(sn: str, name: str | None, tele: dict, ts: float, *, or
         bucket[sn] = {"telemetry": tele, "ts": ts, "origin": origin}
         if origin == "local":
             state.siseli["local_last_decode_ts"] = ts
+    if origin == "http" and isinstance(tele, dict):
+        import siseli_local.runner as sl_runner
+        sl_runner.note_http_telemetry(tele)
     rec = _apply_bms_overlay(sn, tele) or tele
     state.energy.upsert_device(sn, name, None, None)
     bat = rec.get("battery_percent")

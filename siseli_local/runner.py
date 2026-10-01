@@ -24,6 +24,8 @@ _streams: dict[tuple[str, int], dict] = {}
 _streams_lock = threading.Lock()
 _debug_events: list[dict] = []
 _debug_lock = threading.Lock()
+_http_tele: dict | None = None
+_http_tele_ts: float = 0.0
 
 
 def last_error() -> str | None:
@@ -54,6 +56,23 @@ def saw_inverter_packets(mark: float) -> bool:
         return float(core.LAST_PACKET_TS or 0.0) > float(mark)
     except Exception:
         return False
+
+
+def note_http_telemetry(tele: dict) -> None:
+    """Remember the latest portal sample so a Modbus publish can be lined up with it."""
+    global _http_tele, _http_tele_ts
+    if not isinstance(tele, dict):
+        return
+    with _lock:
+        _http_tele = dict(tele)
+        _http_tele_ts = time.time()
+
+
+def http_telemetry() -> tuple[dict | None, float]:
+    with _lock:
+        if not _http_tele:
+            return None, 0.0
+        return dict(_http_tele), _http_tele_ts
 
 
 def note_snapshot(snapshot: dict) -> None:
