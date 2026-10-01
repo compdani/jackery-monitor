@@ -380,11 +380,18 @@ def _agent_dbg(hypothesis_id: str, location: str, message: str, data: dict) -> N
             "timestamp": int(time.time() * 1000),
             "runId": "pre-fix",
         }
+        line = _json.dumps(rec, default=str)
         try:
             with open("/Volumes/mini512/jackery-monitor/.cursor/debug-3e49f2.log", "a") as _fh:
-                _fh.write(_json.dumps(rec, default=str) + "\n")
+                _fh.write(line + "\n")
         except Exception:
             pass
+        try:
+            with open("/data/debug-3e49f2.log", "a") as _fh:
+                _fh.write(line + "\n")
+        except Exception:
+            pass
+        log(f"[AGENTDBG] {line}")
         import siseli_local.runner as _runner
         _runner.note_debug(rec)
     except Exception:
