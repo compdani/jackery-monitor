@@ -2038,13 +2038,26 @@ function viewingSiseli(s) {
   return isSiseliDevice(dev);
 }
 
+function renderSiseliPanels(t) {
+  const tele = t || {};
+  const set = (id, value, digits) => {
+    const el = $(id);
+    if (el) el.textContent = fmt(value, digits);
+  };
+  set('siseli-pv-w', tele.solar_input_w, 0);
+  set('siseli-pv-v', tele.pv_voltage_v, 1);
+  set('siseli-pv-a', tele.pv_current_a, 2);
+}
+
 function applySiseliChrome(s) {
   const siseli = viewingSiseli(s);
   const power = $('power-card');
+  const panels = $('siseli-panels-card');
   const controls = $('siseli-controls-card');
   const eod = $('eod-forecast');
   if (eod && siseli) eod.hidden = true;
   if (power) power.hidden = siseli;
+  if (panels) panels.hidden = !siseli;
   const prefs = s && s.device_prefs;
   const deviceId = s && s.cloud && s.cloud.selected_device_id;
   if (controls) {
@@ -2391,17 +2404,6 @@ async function loadSiseliCreds() {
     setVal('siseli-router-mac', j.router_mac);
     renderSiseliLocalStatus(j);
     renderSiseliMqttStreams(j.mqtt_streams, j.mqtt_broker_ip);
-    // #region agent log
-    if (Array.isArray(j.mqtt_debug)) {
-      for (const ev of j.mqtt_debug) {
-        fetch('http://127.0.0.1:7679/ingest/b4afa9cc-4f16-49ed-80fa-124b0a0d3e19', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '3e49f2' },
-          body: JSON.stringify(ev),
-        }).catch(() => {});
-      }
-    }
-    // #endregion
   } catch (err) {
     if (status) status.textContent = 'unavailable';
   }
@@ -5238,6 +5240,7 @@ function applyStatus(s) {
   // Telemetry
   const t = s.telemetry || {};
   applySiseliChrome(s);
+  renderSiseliPanels(t);
   if (t.battery_percent != null) {
     // Prefer the server-computed system SOC when packs are attached,
     // so the SOC card lands on the right number on the very first

@@ -367,108 +367,6 @@ def _broker_endpoint(pkt) -> tuple[str, int]:
     return str(pkt[IP].src), int(pkt[TCP].sport)
 
 
-_DBG_SEGMENTS = 0
-_DBG_FLOWS = 0
-
-
-def _agent_dbg(hypothesis_id: str, location: str, message: str, data: dict) -> None:
-    # #region agent log
-    try:
-        import json as _json
-        rec = {
-            "sessionId": "3e49f2",
-            "hypothesisId": hypothesis_id,
-            "location": location,
-            "message": message,
-            "data": data,
-            "timestamp": int(time.time() * 1000),
-            "runId": "pre-fix",
-        }
-        line = _json.dumps(rec, default=str)
-        try:
-            with open("/Volumes/mini512/jackery-monitor/.cursor/debug-3e49f2.log", "a") as _fh:
-                _fh.write(line + "\n")
-        except Exception:
-            pass
-        try:
-            with open("/data/debug-3e49f2.log", "a") as _fh:
-                _fh.write(line + "\n")
-        except Exception:
-            pass
-        log(f"[AGENTDBG] {line}")
-        import siseli_local.runner as _runner
-        _runner.note_debug(rec)
-    except Exception:
-        pass
-    # #endregion
-
-
-def _payload_preview(buf: bytes) -> dict:
-    raw = bytes(buf or b"")[:180]
-    text = "".join(chr(b) if 32 <= b < 127 else "." for b in raw)
-    return {
-        "len": len(buf or b""),
-        "head_hex": raw[:24].hex(),
-        "preview": text,
-        "has_b_block": b'{"b":' in (buf or b"") or b'"b":' in (buf or b""),
-        "has_brace": b"{" in (buf or b""),
-    }
-
-
-def _log_interesting_tcp(direction: str, ip: str, port: int, payload: bytes) -> None:
-    """Skip MQTT keepalives. Those are 2-byte PINGREQ (c000) and hide the publish."""
-    # #region agent log
-    global _DBG_FLOWS
-    if len(payload) <= 2 and payload[:1] in (b"\xc0", b"\xd0"):
-        return
-    if _DBG_FLOWS >= 20:
-        return
-    _DBG_FLOWS += 1
-    _agent_dbg("G", "siseli_local/core.py:flow", "non-ping tcp", {
-        "direction": direction, "ip": ip, "port": port, "n": _DBG_FLOWS,
-        **_payload_preview(payload),
-    })
-    # #endregion
-
-
-def _dbg_modbus_blocks(payload: bytes) -> None:
-    """Dump every cn/co body. The ASCII decoder rejected these as Modbus."""
-    # #region agent log
-    try:
-        import base64
-        idx = payload.find(b"{")
-        if idx < 0:
-            return
-        raw = payload[idx:].decode("utf-8", "ignore")
-        end = raw.rfind("}")
-        if end < 0:
-            return
-        obj = json.loads(raw[: end + 1])
-    except Exception as exc:
-        _agent_dbg("H", "siseli_local/core.py:blocks", "block json failed", {"err": str(exc)})
-        return
-    found = []
-
-    def walk(node) -> None:
-        if isinstance(node, dict):
-            cn, co = node.get("cn"), node.get("co")
-            if isinstance(cn, str) and isinstance(co, str):
-                try:
-                    body = base64.b64decode(co)
-                except Exception:
-                    body = b""
-                found.append({"name": cn, "hex": body.hex(), "len": len(body)})
-            for value in node.values():
-                walk(value)
-        elif isinstance(node, list):
-            for item in node:
-                walk(item)
-
-    walk(obj)
-    _agent_dbg("H", "siseli_local/core.py:blocks", "modbus block bodies", {"blocks": found})
-    # #endregion
-
-
 def _deliver_bound_snapshot() -> None:
     """Hand the latest decode to the dashboard.
 
@@ -528,11 +426,6 @@ def handle_inverter_tcp_packet(pkt) -> None:
         # sitting in this segment.
         if b'{"b":' in payload or b'"b":' in payload:
             fallback_ok = bool(SolarParser.parse_payload(payload))
-            # #region agent log
-            _agent_dbg("D", "siseli_local/core.py:json-fallback", "partial segment counted as publish", {
-                "broker": broker_ip, "port": broker_port, "parsed": fallback_ok, **_payload_preview(payload),
-            })
-            # #endregion
             if fallback_ok:
                 _deliver_bound_snapshot()
             _remember_mqtt_stream(
@@ -555,13 +448,6 @@ def handle_inverter_tcp_packet(pkt) -> None:
         if ((packet[0] >> 4) & 0x0F) == 3:
             publishes += 1
             topic, publish_payload = extract_publish_payload(packet)
-            # #region agent log
-            _agent_dbg("B", "siseli_local/core.py:frame", "publish frame seen", {
-                "broker": broker_ip, "port": broker_port, "topic": topic,
-                "has_body": bool(publish_payload), "packet_len": len(packet),
-                **_payload_preview(publish_payload or packet),
-            })
-            # #endregion
             if topic is not None:
                 count = SEEN_MQTT_TOPICS.get(topic, 0) + 1
                 SEEN_MQTT_TOPICS[topic] = count
@@ -574,16 +460,8 @@ def handle_inverter_tcp_packet(pkt) -> None:
             if publish_payload:
                 this_ok = bool(SolarParser.parse_payload(publish_payload, source_topic=topic))
                 parsed_ok = this_ok or parsed_ok
-                # #region agent log
-                _agent_dbg("A", "siseli_local/core.py:publish", "mqtt publish parse result", {
-                    "broker": broker_ip, "port": broker_port, "topic": topic,
-                    "parsed": this_ok, "packet_flags": packet[0], **_payload_preview(publish_payload),
-                })
-                # #endregion
                 if this_ok:
                     _deliver_bound_snapshot()
-                else:
-                    _dbg_modbus_blocks(publish_payload)
                 if not this_ok and LOG_UNPARSED_PUBLISH:
                     log_payload_preview("[MQTT PAYLOAD NOT PARSED]", publish_payload, topic=topic)
 
@@ -650,8 +528,6 @@ def packet_callback(pkt) -> None:
                 # needs a publish, which may be on this port or another.
                 _remember_mqtt_stream(dst_ip, dport, encrypted=False, payload_bytes=payload_len)
                 if payload_len:
-                    body = _tcp_payload(pkt)
-                    _log_interesting_tcp("out", dst_ip, dport, body)
                     _decode_plain_mqtt(pkt, dst_ip)
                 if AUTO_INTERCEPT and RTR_MAC:
                     try:
@@ -663,7 +539,6 @@ def packet_callback(pkt) -> None:
             elif payload_len:
                 # The dongle's real broker may not be on 1883. Try the bytes;
                 # the stream is recorded only when they are actually MQTT.
-                _log_interesting_tcp("out", dst_ip, dport, _tcp_payload(pkt))
                 _decode_plain_mqtt(pkt, dst_ip)
 
         # Everything else the inverter sends -- DNS, NTP, ICMP, any secondary
@@ -700,10 +575,7 @@ def packet_callback(pkt) -> None:
                 _remember_mqtt_stream(src_ip, sport, encrypted=True, payload_bytes=payload_len)
             elif sport == 1883 and payload_len:
                 _remember_mqtt_stream(src_ip, sport, encrypted=False, payload_bytes=payload_len)
-                _log_interesting_tcp("in", src_ip, sport, _tcp_payload(pkt))
                 _decode_plain_mqtt(pkt, src_ip)
-            elif payload_len:
-                _log_interesting_tcp("in", src_ip, sport, _tcp_payload(pkt))
 
         if AUTO_INTERCEPT and INV_MAC:
             try:

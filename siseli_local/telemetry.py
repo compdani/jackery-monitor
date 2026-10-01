@@ -50,6 +50,12 @@ def decoded_to_canonical(snapshot: dict[str, Any] | None) -> dict[str, Any]:
     soc = _num(snap.get("bat_cap"))
     if soc is not None:
         out["batterySOC"] = soc
+    pv_v = _num(snap.get("pv_v"))
+    if pv_v is not None:
+        out["pvVoltage"] = pv_v
+    pv_a = _num(snap.get("pv_a"))
+    if pv_a is not None:
+        out["pvCurrent"] = pv_a
     return out
 
 

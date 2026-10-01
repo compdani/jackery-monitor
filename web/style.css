@@ -1195,6 +1195,7 @@ input.forecast-input[type="password"] { min-width: 12em; flex: 1; }
   gap: 14px;
   align-items: end;
 }
+.kpi-row.panels { grid-template-columns: repeat(3, 1fr); }
 .kpi-row .kpi-value { font-size: 26px; }
 
 /* Cost savings row inside the TODAY (Live) and Lifetime (Energy) cards.

@@ -22,10 +22,6 @@ _last_decode_ts: float | None = None
 _atexit_registered = False
 _streams: dict[tuple[str, int], dict] = {}
 _streams_lock = threading.Lock()
-_debug_events: list[dict] = []
-_debug_lock = threading.Lock()
-_http_tele: dict | None = None
-_http_tele_ts: float = 0.0
 
 
 def last_error() -> str | None:
@@ -56,23 +52,6 @@ def saw_inverter_packets(mark: float) -> bool:
         return float(core.LAST_PACKET_TS or 0.0) > float(mark)
     except Exception:
         return False
-
-
-def note_http_telemetry(tele: dict) -> None:
-    """Remember the latest portal sample so a Modbus publish can be lined up with it."""
-    global _http_tele, _http_tele_ts
-    if not isinstance(tele, dict):
-        return
-    with _lock:
-        _http_tele = dict(tele)
-        _http_tele_ts = time.time()
-
-
-def http_telemetry() -> tuple[dict | None, float]:
-    with _lock:
-        if not _http_tele:
-            return None, 0.0
-        return dict(_http_tele), _http_tele_ts
 
 
 def note_snapshot(snapshot: dict) -> None:
@@ -118,18 +97,6 @@ def note_stream(
             row["encrypted"] = False
             row["saw_mqtt"] = True
         _streams[key] = row
-
-
-def note_debug(event: dict) -> None:
-    """Keep a short ring of decode diagnostics for the LAN card to forward."""
-    with _debug_lock:
-        _debug_events.append(dict(event))
-        del _debug_events[:-40]
-
-
-def debug_events() -> list[dict]:
-    with _debug_lock:
-        return [dict(event) for event in _debug_events]
 
 
 def mqtt_streams(*, since: float | None = None) -> list[dict]:
@@ -236,11 +203,6 @@ def _run(cfg: dict) -> None:
         core.sniffer = core.build_sniffer()
         core.sniffer.start()
         core.log("[Bridge] Sniffer started", level="info")
-        # #region agent log
-        core._agent_dbg("F", "siseli_local/runner.py:start", "instrumentation armed", {
-            "inverter_ip": str(cfg.get("inverter_ip") or ""),
-        })
-        # #endregion
         _last_error = None
         while st.RUNNING and not st.STOP_REQUESTED:
             time.sleep(1)

@@ -20,7 +20,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/style.css?v=16" />
+  <link rel="stylesheet" href="/static/style.css?v=17" />
 </head>
 <body>
   <!-- =============== LOGIN MODAL =============== -->
@@ -277,6 +277,26 @@
           </div>
         </section>
       </div>
+
+      <section class="card" id="siseli-panels-card" hidden>
+        <div class="card-header">
+          <h2>Solar panels</h2>
+        </div>
+        <div class="kpi-row panels">
+          <div>
+            <div class="kpi-value"><span id="siseli-pv-w">—</span><small>W</small></div>
+            <div class="kpi-sub">power</div>
+          </div>
+          <div>
+            <div class="kpi-value"><span id="siseli-pv-v">—</span><small>V</small></div>
+            <div class="kpi-sub">voltage</div>
+          </div>
+          <div>
+            <div class="kpi-value"><span id="siseli-pv-a">—</span><small>A</small></div>
+            <div class="kpi-sub">current</div>
+          </div>
+        </div>
+      </section>
 
       <!-- Power — output ports (cloud MQTT toggles) plus the
            AC-charge Kasa plug at the end (only rendered when a plug
@@ -2315,6 +2335,6 @@
   </footer>
 
   <script src="/static/sortable.min.js"></script>
-  <script src="/static/app.js?v=18"></script>
+  <script src="/static/app.js?v=19"></script>
 </body>
 </html>

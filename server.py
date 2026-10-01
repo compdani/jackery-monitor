@@ -988,9 +988,6 @@ def _store_siseli_sample(sn: str, name: str | None, tele: dict, ts: float, *, or
         bucket[sn] = {"telemetry": tele, "ts": ts, "origin": origin}
         if origin == "local":
             state.siseli["local_last_decode_ts"] = ts
-    if origin == "http" and isinstance(tele, dict):
-        import siseli_local.runner as sl_runner
-        sl_runner.note_http_telemetry(tele)
     rec = _apply_bms_overlay(sn, tele) or tele
     state.energy.upsert_device(sn, name, None, None)
     bat = rec.get("battery_percent")
@@ -1020,24 +1017,10 @@ def _on_siseli_local_snapshot(snapshot: dict) -> None:
     import siseli_local.telemetry as sl_tele
 
     broker = str((snapshot or {}).get("broker_ip") or "").strip()
-    # #region agent log
-    try:
-        from siseli_local.core import _agent_dbg
-        _agent_dbg("C", "server.py:snapshot", "sink received a decode", {
-            "broker": broker,
-            "keys": sorted(list((snapshot or {}).keys()))[:24],
-            "pv": (snapshot or {}).get("pv_w"),
-            "gen": (snapshot or {}).get("generation_power_w"),
-            "load": (snapshot or {}).get("load_w"),
-        })
-    except Exception:
-        pass
-    # #endregion
     if broker:
         canonical = sl_tele.decoded_to_canonical(snapshot)
         tele = siseli_client.to_telemetry(canonical)
-        # A Modbus payload can identify the pack before any watt register
-        # agrees with the portal. Missing power must stay blank, not zero.
+        # A decode that never carried a watt block must stay blank, not zero.
         if "pv_w" not in snapshot and "generation_power_w" not in snapshot:
             tele["solar_input_w"] = None
         if "load_w" not in snapshot:
@@ -5584,7 +5567,6 @@ def api_siseli_creds_status():
         "router_mac": view.get("router_mac") or "",
         "mqtt_broker_ip": view.get("mqtt_broker_ip") or "",
         "mqtt_streams": sl_runner.mqtt_streams(),
-        "mqtt_debug": sl_runner.debug_events(),
         "local_running": sl_runner.is_running(),
         "local_error": sl_runner.last_error(),
         "local_last_decode_ts": state.siseli.get("local_last_decode_ts"),

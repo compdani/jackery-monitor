@@ -877,11 +877,6 @@ def log_pi30_diagnostic(blocks: Dict[str, bytes], source_topic: Optional[str] = 
 
 
 class SolarParser:
-    # Block name -> (register index, scale, signed). Filled when a Modbus
-    # payload lines up with a portal sample; not a guessed register map.
-    _MODBUS_MAP: Dict[str, Tuple[str, int, float, bool]] = {}
-    _MODBUS_READY: bool = False
-
     @staticmethod
     def _to_float_or_none(value: object) -> Optional[float]:
         if isinstance(value, (int, float)):
@@ -2313,240 +2308,26 @@ class SolarParser:
         return rows
 
     @staticmethod
-    def _modbus_scales(kind: str) -> Tuple[float, ...]:
-        if kind == "power":
-            return (1.0, 0.1)
-        if kind == "volt":
-            return (0.1, 0.01, 1.0)
-        if kind == "amp":
-            return (0.1, 0.01, 1.0)
-        return (1.0,)
-
-    @staticmethod
-    def _modbus_close(kind: str, target: float, scaled: float) -> bool:
-        err = abs(scaled - target)
-        if kind == "power":
-            # 80 W made 50, 40, and 62 all "match" a portal reading of 101 W.
-            return err <= max(15.0, 0.12 * abs(target))
-        if kind == "volt":
-            return err <= 1.5
-        if kind == "soc":
-            return err <= 2.0 and 0.0 <= scaled <= 100.0
-        return err <= 0.5
-
-    @staticmethod
-    def _match_modbus_fields(rows: Dict[str, List[int]], portal: Dict[str, object]) -> Tuple[Dict[str, Tuple[str, int, float, bool]], List[str]]:
-        """Pair portal figures with the one register that agrees.
-
-        A field with two equally close registers is left unmatched.
-        """
-        fields = (
-            ("pv_w", "solar_input_w", "power"),
-            ("load_w", "output_power_w", "power"),
-            ("grid_w", "ac_input_w", "power"),
-            ("feed_w", "feed_in_w", "power"),
-            ("bat_v", "battery_voltage_v", "volt"),
-            ("bat_cap", "battery_percent", "soc"),
-            ("bat_charge_current", "battery_charge_a", "amp"),
-            ("dischg_current", "battery_discharge_a", "amp"),
-        )
-        per_key: Dict[str, List[Tuple[float, str, int, float, bool]]] = {}
-        for key, src, kind in fields:
-            target = SolarParser._to_float_or_none(portal.get(src))
-            if target is None:
-                continue
-            if kind == "power" and abs(target) < 25:
-                continue
-            if kind == "amp" and abs(target) < 0.3:
-                continue
-            if kind == "volt" and not (5.0 < target < 800.0):
-                continue
-            if kind == "soc" and not (0.0 <= target <= 100.0):
-                continue
-            hits: List[Tuple[float, str, int, float, bool]] = []
-            for name, regs in rows.items():
-                for idx, raw_u in enumerate(regs):
-                    readings = [(raw_u, False)]
-                    if raw_u >= 32768:
-                        readings.append((raw_u - 65536, True))
-                    for raw, signed in readings:
-                        for mult in SolarParser._modbus_scales(kind):
-                            scaled = raw * mult
-                            if SolarParser._modbus_close(kind, target, scaled):
-                                hits.append((abs(scaled - target), name, idx, mult, signed))
-            if not hits:
-                continue
-            hits.sort()
-            if len(hits) >= 2:
-                gap = hits[1][0] - hits[0][0]
-                if hits[1][0] <= hits[0][0] * 2 and gap < 15:
-                    per_key[key] = []
-                    continue
-            per_key[key] = hits
-
-        ambiguous = [key for key, hits in per_key.items() if not hits]
-        chosen: Dict[str, Tuple[str, int, float, bool]] = {}
-        used: Set[Tuple[str, int]] = set()
-        flat: List[Tuple[float, str, str, int, float, bool]] = []
-        for key, hits in per_key.items():
-            for err, name, idx, mult, signed in hits:
-                flat.append((err, key, name, idx, mult, signed))
-        flat.sort()
-        for _err, key, name, idx, mult, signed in flat:
-            if key in chosen or (name, idx) in used:
-                continue
-            chosen[key] = (name, idx, mult, signed)
-            used.add((name, idx))
-        return chosen, ambiguous
-
-    @staticmethod
-    def _apply_modbus_map(rows: Dict[str, List[int]]) -> Dict[str, object]:
-        state: Dict[str, object] = {}
-        for key, (block, idx, mult, signed) in SolarParser._MODBUS_MAP.items():
-            regs = rows.get(block)
-            if not regs or idx >= len(regs):
-                continue
-            raw = regs[idx]
-            if signed and raw >= 32768:
-                raw -= 65536
-            val = raw * mult
-            if key in ("bat_v", "bat_charge_current", "dischg_current"):
-                state[key] = round(float(val), 2)
-            elif key == "bat_cap":
-                state[key] = int(round(val))
-            elif key in ("grid_w", "feed_w", "pv_w", "load_w"):
-                state[key] = int(round(val))
-        grid = state.pop("grid_w", None)
-        feed = state.pop("feed_w", None)
-        if isinstance(feed, int) or isinstance(grid, int):
-            feed_w = feed if isinstance(feed, int) else 0
-            grid_w = grid if isinstance(grid, int) else 0
-            if feed_w > grid_w and feed_w > 0:
-                state["mains_power_w"] = feed_w
-                state["mains_current_flow_direction"] = "Inverter To Mains"
-            elif grid_w > 0:
-                state["mains_power_w"] = grid_w
-                state["mains_current_flow_direction"] = "Mains To Inverter"
-            else:
-                state["mains_power_w"] = 0
-                state["mains_current_flow_direction"] = "Idle"
-        if isinstance(state.get("pv_w"), int):
-            state["generation_power_w"] = state["pv_w"]
-        return state
-
-    @staticmethod
     def _try_modbus_schema(blocks: Dict[str, bytes]) -> Dict[str, object]:
-        """Decode a Modbus dongle once its registers agree with the portal."""
-        # #region agent log
-        try:
-            from .core import _agent_dbg
-            _agent_dbg("I", "siseli_local/parsers.py:modbus-enter", "modbus decode entered", {
-                "names": sorted(blocks),
-                "lens": {name: len(body) for name, body in blocks.items()},
-            })
-        except Exception:
-            pass
-        # #endregion
-        try:
-            rows = SolarParser._modbus_rows(blocks)
-        except Exception as exc:
-            # #region agent log
-            try:
-                from .core import _agent_dbg
-                _agent_dbg("J", "siseli_local/parsers.py:modbus-rows", "modbus row decode raised", {
-                    "err": f"{type(exc).__name__}: {exc}",
-                })
-            except Exception:
-                pass
-            # #endregion
-            return {}
-        if len(rows) < 3:
-            # #region agent log
-            try:
-                from .core import _agent_dbg
-                _agent_dbg("I", "siseli_local/parsers.py:modbus-short", "too few CRC-valid frames", {
-                    "rows": len(rows), "names": sorted(rows),
-                })
-            except Exception:
-                pass
-            # #endregion
-            return {}
-        portal: Dict[str, object] = {}
-        portal_age = None
-        try:
-            from .runner import http_telemetry
-            tele, tele_ts = http_telemetry()
-            if tele and tele_ts:
-                portal_age = round(time.time() - tele_ts, 1)
-                if portal_age <= 1800:
-                    portal = tele
-        except Exception:
-            portal = {}
-        chosen: Dict[str, Tuple[str, int, float, bool]] = {}
-        ambiguous: List[str] = []
-        required: List[str] = []
-        if portal:
-            chosen, ambiguous = SolarParser._match_modbus_fields(rows, portal)
-            for key, src, kind in (
-                ("pv_w", "solar_input_w", "power"),
-                ("load_w", "output_power_w", "power"),
-                ("grid_w", "ac_input_w", "power"),
-                ("feed_w", "feed_in_w", "power"),
-            ):
-                target = SolarParser._to_float_or_none(portal.get(src))
-                if target is not None and abs(target) >= 25:
-                    required.append(key)
-            if chosen:
-                # Keep a battery lock when solar is still ambiguous. Replacing
-                # the whole map would drop it on the next partial portal sample.
-                SolarParser._MODBUS_MAP.update(chosen)
-            if required and all(key in SolarParser._MODBUS_MAP for key in required):
-                SolarParser._MODBUS_READY = True
-        state = SolarParser._apply_modbus_map(rows) if SolarParser._MODBUS_MAP else {}
-        if not SolarParser._MODBUS_READY:
-            # Power registers that have not agreed with the portal stay out,
-            # so a battery-only decode cannot be stored as zero watts.
-            for key in ("pv_w", "load_w", "grid_w", "feed_w", "generation_power_w", "mains_power_w", "mains_current_flow_direction"):
-                state.pop(key, None)
-        # #region agent log
-        try:
-            from .core import _agent_dbg
-            _agent_dbg("I", "siseli_local/parsers.py:modbus", "modbus correlated to portal", {
-                "portal_age_s": portal_age,
-                "portal": {
-                    "solar_w": portal.get("solar_input_w"),
-                    "load_w": portal.get("output_power_w"),
-                    "grid_w": portal.get("ac_input_w"),
-                    "feed_w": portal.get("feed_in_w"),
-                    "battery_v": portal.get("battery_voltage_v"),
-                    "soc": portal.get("battery_percent"),
-                    "charge_a": portal.get("battery_charge_a"),
-                    "discharge_a": portal.get("battery_discharge_a"),
-                },
-                "registers": rows,
-                "matched": {
-                    key: {"block": spec[0], "index": spec[1], "scale": spec[2]}
-                    for key, spec in (chosen or SolarParser._MODBUS_MAP).items()
-                },
-                "ambiguous": ambiguous,
-                "required": required,
-                "ready": SolarParser._MODBUS_READY,
-                "pv_w": state.get("pv_w"),
-                "load_w": state.get("load_w"),
-                "bat_v": state.get("bat_v"),
-                "bat_cap": state.get("bat_cap"),
-                "eyo_products_w": [
-                    {"v": round(regs8[0] / 10.0, 1), "i": regs8[idx], "div": div,
-                     "w": round(regs8[0] / 10.0 * regs8[idx] / div, 1)}
-                    for regs8 in (rows.get("8eyo") or [],)
-                    if len(regs8) >= 3
-                    for idx in (1, 2)
-                    for div in (10.0, 100.0)
-                ],
-            })
-        except Exception:
-            pass
-        # #endregion
+        """Read the panel and pack registers this dongle publishes.
+
+        Confirmed against the portal on 2026-10-01 21:11: 8eyo is panel
+        voltage (/10), panel current (/100), and watts. WfP8 is SOC,
+        battery voltage (/10), and charge current (/100).
+        """
+        rows = SolarParser._modbus_rows(blocks)
+        state: Dict[str, object] = {}
+        panel = rows.get("8eyo") or []
+        if len(panel) >= 3:
+            state["pv_v"] = round(panel[0] / 10.0, 1)
+            state["pv_a"] = round(panel[1] / 100.0, 2)
+            state["pv_w"] = int(panel[2])
+            state["generation_power_w"] = int(panel[2])
+        pack = rows.get("WfP8") or []
+        if len(pack) >= 3:
+            state["bat_cap"] = int(pack[0])
+            state["bat_v"] = round(pack[1] / 10.0, 1)
+            state["bat_charge_current"] = round(pack[2] / 100.0, 2)
         return state
 
     def parse_payload(payload_bytes: bytes, source_topic: Optional[str] = None) -> bool:
@@ -2564,15 +2345,6 @@ class SolarParser:
             if idx == -1:
                 if LOG_UNPARSED_PUBLISH:
                     log_payload_preview("[UNPARSED PAYLOAD: NO JSON START]", payload_bytes, topic=source_topic)
-                # #region agent log
-                try:
-                    from .core import _agent_dbg
-                    _agent_dbg("E", "siseli_local/parsers.py:no-json", "parser found no JSON", {
-                        "topic": source_topic, "len": len(payload_bytes or b""),
-                    })
-                except Exception:
-                    pass
-                # #endregion
                 return False
 
             raw = payload_bytes[idx:].decode("utf-8", errors="ignore")
@@ -2628,16 +2400,6 @@ class SolarParser:
             if not blocks:
                 if LOG_UNPARSED_PUBLISH:
                     log_payload_preview("[UNPARSED PAYLOAD: NO BLOCKS]", payload_bytes, topic=source_topic)
-                # #region agent log
-                try:
-                    from .core import _agent_dbg
-                    keys = list(raw_json)[:12] if isinstance(raw_json, dict) else type(raw_json).__name__
-                    _agent_dbg("E", "siseli_local/parsers.py:no-blocks", "JSON had no telemetry blocks", {
-                        "topic": source_topic, "json_keys": keys,
-                    })
-                except Exception:
-                    pass
-                # #endregion
                 return False
 
             state = SolarParser._try_ascii_schema(blocks)
@@ -2794,15 +2556,6 @@ class SolarParser:
 
         except Exception as exc:
             log_error_always(f"[PARSER ERROR] {exc}")
-            # #region agent log
-            try:
-                from .core import _agent_dbg
-                _agent_dbg("J", "siseli_local/parsers.py:parse", "parser raised", {
-                    "err": f"{type(exc).__name__}: {exc}", "topic": source_topic,
-                })
-            except Exception:
-                pass
-            # #endregion
             if LOG_UNPARSED_PUBLISH:
                 log_payload_preview("[PARSER ERROR PAYLOAD]", payload_bytes, topic=source_topic, error=str(exc))
             return False
