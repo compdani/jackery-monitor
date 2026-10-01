@@ -217,6 +217,11 @@ def _run(cfg: dict) -> None:
         core.sniffer = core.build_sniffer()
         core.sniffer.start()
         core.log("[Bridge] Sniffer started", level="info")
+        # #region agent log
+        core._agent_dbg("F", "siseli_local/runner.py:start", "instrumentation armed", {
+            "inverter_ip": str(cfg.get("inverter_ip") or ""),
+        })
+        # #endregion
         _last_error = None
         while st.RUNNING and not st.STOP_REQUESTED:
             time.sleep(1)

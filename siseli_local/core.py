@@ -367,6 +367,9 @@ def _broker_endpoint(pkt) -> tuple[str, int]:
     return str(pkt[IP].src), int(pkt[TCP].sport)
 
 
+_DBG_SEGMENTS = 0
+
+
 def _agent_dbg(hypothesis_id: str, location: str, message: str, data: dict) -> None:
     # #region agent log
     try:
@@ -497,6 +500,13 @@ def handle_inverter_tcp_packet(pkt) -> None:
         if ((packet[0] >> 4) & 0x0F) == 3:
             publishes += 1
             topic, publish_payload = extract_publish_payload(packet)
+            # #region agent log
+            _agent_dbg("B", "siseli_local/core.py:frame", "publish frame seen", {
+                "broker": broker_ip, "port": broker_port, "topic": topic,
+                "has_body": bool(publish_payload), "packet_len": len(packet),
+                **_payload_preview(publish_payload or packet),
+            })
+            # #endregion
             if topic is not None:
                 count = SEEN_MQTT_TOPICS.get(topic, 0) + 1
                 SEEN_MQTT_TOPICS[topic] = count
@@ -583,6 +593,14 @@ def packet_callback(pkt) -> None:
                 # needs a publish, which may be on this port or another.
                 _remember_mqtt_stream(dst_ip, dport, encrypted=False, payload_bytes=payload_len)
                 if payload_len:
+                    global _DBG_SEGMENTS
+                    if _DBG_SEGMENTS < 6:
+                        _DBG_SEGMENTS += 1
+                        # #region agent log
+                        _agent_dbg("A", "siseli_local/core.py:segment", "tcp 1883 payload", {
+                            "dst": dst_ip, "n": _DBG_SEGMENTS, **_payload_preview(_tcp_payload(pkt)),
+                        })
+                        # #endregion
                     _decode_plain_mqtt(pkt, dst_ip)
                 if AUTO_INTERCEPT and RTR_MAC:
                     try:
