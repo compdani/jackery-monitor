@@ -5687,7 +5687,7 @@ async def api_siseli_local_test(body: dict):
     mark = sl_runner.capture_mark()
     cfg = {**existing, **local, "local_read": True}
     try:
-        sl_runner.start(cfg)
+        await asyncio.to_thread(sl_runner.start, cfg)
         await _wait_for_siseli_probe(sl_runner, before_decode)
         decoded_at = sl_runner.last_decode_ts()
         decoded = decoded_at is not None and decoded_at != before_decode
@@ -5710,11 +5710,11 @@ async def api_siseli_local_test(body: dict):
         if not (was_on and same):
             if was_on:
                 try:
-                    _sync_siseli_local()
+                    await asyncio.to_thread(_sync_siseli_local)
                 except Exception as exc:
                     log.warning("siseli local restore after test failed: %s", exc)
             else:
-                sl_runner.stop()
+                await asyncio.to_thread(sl_runner.stop)
     result["local_running"] = sl_runner.is_running()
     result["local_error"] = sl_runner.last_error()
     return result

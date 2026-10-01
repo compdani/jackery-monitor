@@ -474,6 +474,31 @@ document.addEventListener('click', (e) => {
   handleForecastConfigClick(btn);
 });
 
+// LAN card actions. Registered here, with the other early document
+// listeners, so a throw later in this file cannot leave Save and Test
+// unbound. The handlers are function declarations further down.
+document.addEventListener('click', (e) => {
+  const target = e.target;
+  if (!target || !target.closest) return;
+  const readBtn = target.closest('#siseli-local-read');
+  if (readBtn) {
+    e.preventDefault();
+    setSiseliLocalReadUi(readBtn.getAttribute('aria-pressed') !== 'true');
+    return;
+  }
+  const saveBtn = target.closest('#siseli-local-save');
+  if (saveBtn) {
+    e.preventDefault();
+    if (!saveBtn.disabled) void saveSiseliLocal();
+    return;
+  }
+  const testBtn = target.closest('#siseli-local-test');
+  if (testBtn) {
+    e.preventDefault();
+    if (!testBtn.disabled) void testSiseliLocal();
+  }
+});
+
 function switchTab(name, opts = {}) {
   if (!VALID_TABS.has(name)) return;
   activeTab = name;
@@ -2437,9 +2462,17 @@ function setSiseliLocalReadUi(on) {
   btn.textContent = on ? 'on' : 'off';
 }
 
+function setSiseliLocalStatus(text) {
+  const el = $('siseli-local-status');
+  if (el) el.textContent = text;
+}
+
 async function saveSiseliLocal() {
   const msg = $('siseli-local-msg');
-  if (msg) msg.hidden = true;
+  const btn = $('siseli-local-save');
+  if (btn) btn.disabled = true;
+  setSiseliLocalStatus('Saving…');
+  setSiseliCredsMsg(msg, 'Saving…', false);
   try {
     const r = await fetch('/api/siseli/local', {
       method: 'POST',
@@ -2447,19 +2480,32 @@ async function saveSiseliLocal() {
       body: JSON.stringify(siseliLocalBody()),
     });
     const j = await r.json().catch(() => ({}));
-    if (!r.ok) throw new Error(j.detail || r.statusText);
+    if (!r.ok) throw new Error(apiDetail(j, r.statusText));
     renderSiseliLocalStatus(j);
-    setSiseliCredsMsg(msg, j.local_read ? 'LAN read saved.' : 'LAN read turned off.', false);
+    const savedLine = j.local_error && !j.local_running
+      ? j.local_error
+      : (j.local_read ? 'LAN read saved.' : 'LAN read turned off.');
+    if (j.local_read && j.local_running) {
+      const status = $('siseli-local-status');
+      if (status) status.textContent = `LAN read saved · ${status.textContent}`;
+    } else {
+      setSiseliLocalStatus(savedLine);
+    }
+    setSiseliCredsMsg(msg, savedLine, !!(j.local_error && !j.local_running));
   } catch (err) {
-    setSiseliCredsMsg(msg, err.message || 'save failed', true);
+    const text = err.message || 'save failed';
+    setSiseliLocalStatus(text);
+    setSiseliCredsMsg(msg, text, true);
+  } finally {
+    if (btn) btn.disabled = false;
   }
 }
 
 async function testSiseliLocal() {
   const msg = $('siseli-local-msg');
   const btn = $('siseli-local-test');
-  if (msg) msg.hidden = true;
   if (btn) btn.disabled = true;
+  setSiseliLocalStatus('Listening for up to 25 seconds…');
   setSiseliCredsMsg(msg, 'Listening for up to 25 seconds…', false);
   try {
     const r = await fetch('/api/siseli/local/test', {
@@ -2468,34 +2514,21 @@ async function testSiseliLocal() {
       body: JSON.stringify(siseliLocalBody()),
     });
     const j = await r.json().catch(() => ({}));
-    if (!r.ok) throw new Error(j.detail || r.statusText);
-    setSiseliCredsMsg(msg, j.detail || 'Test finished.', !j.ok);
+    if (!r.ok) throw new Error(apiDetail(j, r.statusText));
+    const detail = j.detail || 'Test finished.';
+    setSiseliLocalStatus(detail);
+    setSiseliCredsMsg(msg, detail, !j.ok);
     await loadSiseliCreds();
+    setSiseliLocalStatus(detail);
     if (j.readings) renderSiseliLocalReadings(j.readings);
   } catch (err) {
-    setSiseliCredsMsg(msg, err.message || 'test failed', true);
+    const text = err.message || 'test failed';
+    setSiseliLocalStatus(text);
+    setSiseliCredsMsg(msg, text, true);
   } finally {
     if (btn) btn.disabled = false;
   }
 }
-
-document.addEventListener('click', (e) => {
-  const readBtn = e.target.closest('#siseli-local-read');
-  if (readBtn) {
-    e.preventDefault();
-    setSiseliLocalReadUi(readBtn.getAttribute('aria-pressed') !== 'true');
-    return;
-  }
-  if (e.target.closest('#siseli-local-save')) {
-    e.preventDefault();
-    void saveSiseliLocal();
-    return;
-  }
-  if (e.target.closest('#siseli-local-test')) {
-    e.preventDefault();
-    void testSiseliLocal();
-  }
-});
 
 function setSiseliCredsMsg(msg, text, isError) {
   if (!msg) return;
