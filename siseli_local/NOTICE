@@ -1,0 +1,20 @@
+Local Siseli packet capture and block decoder.
+
+Vendored from https://github.com/fadmaz/siseli-ha version 2.6.25
+(siseli_bridge/src/siseli_bridge/). Files kept from that tree:
+
+  parsers.py, pi30.py, state.py, core.py, config.py, loggers.py, version.py
+
+Those modules are covered by the MIT license in this directory
+(Copyright (c) 2026 fadmaz). The upstream project that repository was
+forked from, yuraantonov11/siseli-ha, publishes no license; fadmaz's
+NOTICE states that the 2.6.x parser, sniffer, and state code are their
+own contributions.
+
+Not imported: Home Assistant MQTT discovery (their mqtt.py), the sensor
+catalog, the add-on Dockerfile, and the test tree. mqtt.py and
+sensors.py in this package are replacements.
+
+One local change in config.py: the state cache path defaults to
+/data/siseli-local-state.json so it does not share a file with anything
+else on this app's data volume.

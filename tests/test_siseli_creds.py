@@ -31,6 +31,15 @@ def test_round_trip_save_and_load(fresh_creds):
     assert d["user_id"] == "alice"
     assert d["password"] == "hunter2"
     assert d["station_id"] == "12345"
+    assert d["local_read"] is False
+    assert sc.save(
+        user_id="alice", password="hunter2", station_id="12345",
+        local_read=True, inverter_ip="192.168.1.50", router_ip="192.168.1.1",
+    )
+    again = sc.load()
+    assert again["local_read"] is True
+    assert again["inverter_ip"] == "192.168.1.50"
+    assert again["password"] == "hunter2"
 
 
 def test_save_rejects_missing_required_fields(fresh_creds):

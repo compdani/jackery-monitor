@@ -98,14 +98,13 @@ services:
       # bluetoothd must be running on DSM; if scan returns nothing, enable
       # host Bluetooth for the dongle and enter the BMS MAC manually.
       - /var/run/dbus:/var/run/dbus:ro
-    # No cap_add / security_opt anymore. The backup feature now uses
-    # smbclient (pure userspace) instead of mount.cifs, so this
-    # container can stay fully unprivileged. The previous SYS_ADMIN +
-    # DAC_READ_SEARCH + apparmor:unconfined combo was needed to let
-    # mount.cifs call the kernel mount syscall and capset() to drop
-    # privileges afterwards — Synology DSM was blocking the latter
-    # ("Unable to apply new capability set"), which is what motivated
-    # the smbclient refactor.
+    # NET_ADMIN + NET_RAW are for optional local Siseli read (ARP path
+    # to the inverter dongle). Backup still uses smbclient and does not
+    # need SYS_ADMIN. Without these caps the sniffer cannot start and
+    # Live watts stay on the HTTP portal.
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
     labels:
       - com.centurylinklabs.watchtower.enable=true
 

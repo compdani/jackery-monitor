@@ -26,6 +26,12 @@ def has_credentials() -> bool:
         return False
 
 
+def _as_bool(value) -> bool:
+    if isinstance(value, bool):
+        return value
+    return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
 def _normalize(d: dict) -> dict:
     return {
         "user_id": str(d.get("user_id") or "").strip(),
@@ -37,6 +43,14 @@ def _normalize(d: dict) -> dict:
         "refresh_token": str(d.get("refresh_token") or ""),
         "access_token_expires": str(d.get("access_token_expires") or ""),
         "refresh_token_expires": str(d.get("refresh_token_expires") or ""),
+        # LAN read of the dongle's existing cloud MQTT. Optional; portal
+        # login still works without it.
+        "local_read": _as_bool(d.get("local_read")),
+        "inverter_ip": str(d.get("inverter_ip") or "").strip(),
+        "router_ip": str(d.get("router_ip") or "").strip(),
+        "sniff_iface": str(d.get("sniff_iface") or "").strip(),
+        "inverter_mac": str(d.get("inverter_mac") or "").strip().lower(),
+        "router_mac": str(d.get("router_mac") or "").strip().lower(),
     }
 
 

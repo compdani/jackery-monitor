@@ -39,6 +39,7 @@ RUN apt-get update \
          openssh-client \
          sshpass \
          libdbus-1-3 \
+         libpcap0.8 \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt ./
@@ -48,6 +49,7 @@ RUN pip install -r requirements.txt
 # enumerating files so adding a new module doesn't silently fail to land in
 # the image (we got bitten once by forgetting to add settings.py here).
 COPY *.py ./
+COPY siseli_local ./siseli_local
 COPY web ./web
 # Static reference data shipped with the image — model_code → capacity
 # catalog (forecaster.py) and the AI advisor's allowed-tunables list

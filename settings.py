@@ -55,7 +55,7 @@ SCHEMA: dict[str, dict[str, Any]] = {
         "min": 30,
         "max": 3600,
         "label": "Siseli poll interval (s)",
-        "hint": "How often the dashboard polls solar.siseli.com for inverter telemetry and settings. The portal is HTTP-only and rate-limited — 300s (5 min) is the default. Lower = fresher Live watts/SOC from the inverter, more API calls. Bluetooth BMS SOC is polled separately and is not affected.",
+        "hint": "How often the dashboard polls solar.siseli.com for the device list, inverter settings, and — when LAN read is off or stale — Live watts. With LAN read on, Live watts follow the dongle instead of this interval. Bluetooth BMS SOC is polled separately.",
     },
     "session_contested_cooldown_s": {
         "env": "SESSION_CONTESTED_COOLDOWN_S",

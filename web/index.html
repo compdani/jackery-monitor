@@ -1053,6 +1053,43 @@
             </label>
             <span id="siseli-creds-msg" class="hint" hidden></span>
           </div>
+          <label class="auto-field siseli-control siseli-switch" style="margin:14px 0 8px">
+            <span class="auto-label">Read watts on the LAN</span>
+            <button type="button" class="switch" id="siseli-local-read" aria-pressed="false">
+              <span class="sw-state">off</span>
+            </button>
+          </label>
+          <p class="hint" style="margin:0 0 12px">
+            Optional. The inverter dongle already sends MQTT to the Siseli cloud.
+            With this on, the dashboard sniffs that stream on the local network
+            and uses it for Live watts. The portal is still used for login, the
+            device list, history, and inverter settings. The dongle reports on
+            its own cadence (often a few minutes); this does not poll it faster.
+            The NAS must be on the same network as the inverter. ARP interception
+            is undone if capture stops. UniFi and similar ARP inspection can block it.
+          </p>
+          <div class="auto-form-grid">
+            <label class="auto-field">
+              <span class="auto-label">Inverter IP</span>
+              <input id="siseli-inverter-ip" type="text" inputmode="decimal" placeholder="192.168.1.50" autocomplete="off" />
+            </label>
+            <label class="auto-field">
+              <span class="auto-label">Router IP</span>
+              <input id="siseli-router-ip" type="text" inputmode="decimal" placeholder="192.168.1.1" autocomplete="off" />
+            </label>
+            <label class="auto-field">
+              <span class="auto-label">Sniff interface</span>
+              <input id="siseli-sniff-iface" type="text" placeholder="blank = auto" autocomplete="off" />
+            </label>
+            <label class="auto-field">
+              <span class="auto-label">Inverter MAC</span>
+              <input id="siseli-inverter-mac" type="text" placeholder="blank = auto" autocomplete="off" />
+            </label>
+            <label class="auto-field">
+              <span class="auto-label">Router MAC</span>
+              <input id="siseli-router-mac" type="text" placeholder="blank = auto" autocomplete="off" />
+            </label>
+          </div>
           <div style="margin-top:14px; display:flex; gap:8px">
             <button class="btn btn-primary" type="submit">Save credentials</button>
             <button id="siseli-creds-clear" class="btn btn-ghost" type="button">Forget</button>

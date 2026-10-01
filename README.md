@@ -406,12 +406,33 @@ Most knobs live in the **Settings tab**, persisted to
 |---|---|---|---|
 | Server poll interval | 2 s | 1-300 | Server → bridge → browser cadence. With MQTT push the bridge has ~500ms-fresh data; this is just the WS broadcast rate. |
 | Cloud poll interval | 15 s | 5-600 | HTTP poll to the Jackery cloud. Now a backstop since MQTT push handles real-time. |
-| Siseli poll interval | 300 s | 30-3600 | HTTP poll to solar.siseli.com for inverter telemetry and settings. Bluetooth BMS SOC is polled separately. |
+| Siseli poll interval | 300 s | 30-3600 | HTTP poll to solar.siseli.com for the device list, inverter settings, and Live watts when LAN read is off or stale. Bluetooth BMS SOC is polled separately. |
 | Session-contested cooldown | 60 s | 10-600 | After the phone app bumps the bridge off, how long before the bridge tries to reclaim. |
 | Low-battery alert threshold | 20 % | 1-99 | Below this, the dashboard shows a low-battery alert banner. |
 
 Env vars (`POLL_INTERVAL_S`, etc.) act as defaults until you save a
 value through the UI.
+
+### Local Siseli read
+
+The Siseli card can read Live watts from the inverter dongle instead of
+waiting on `solar.siseli.com`. The dongle already publishes MQTT to the
+vendor broker at `8.212.18.157:1883`. With **Read watts on the LAN**
+enabled, this app sniffs that stream (ARP, same layer-2 network as the
+inverter), decodes it, and fills Live watts from the result. Login, the
+device list, history, and inverter settings stay on the portal.
+
+The dongle reports on its own cadence, often a few minutes and sometimes
+up to about ten. LAN read removes the portal hop. It does not make the
+inverter publish every 10 seconds. If capture stops, ARP is restored and
+Live watts fall back to the HTTP poll. UniFi and similar ARP inspection
+can block the spoof.
+
+The host-networked dashboard container needs `NET_ADMIN` and `NET_RAW`
+(set in `docker-compose.yml`). Set the inverter IP and the router IP on
+the Siseli card. The decoder is vendored from
+[fadmaz/siseli-ha](https://github.com/fadmaz/siseli-ha) 2.6.25 under
+`siseli_local/` (MIT); see `siseli_local/NOTICE`.
 
 ---
 
@@ -420,6 +441,7 @@ value through the UI.
 ```
 jackery-monitor/
 ├── server.py                 FastAPI dashboard, WS broadcast, REST API
+├── siseli_local/             Vendored dongle sniffer + block decoder (no Home Assistant)
 ├── bridge.py                 Cloud + MQTT bridge (separate container)
 ├── cloud_client.py           Jackery HTTP + MQTT client
 ├── device_client.py          mock | bridge | (legacy native) backends

@@ -21,10 +21,12 @@ Docker: see docker-compose.yml
 from __future__ import annotations
 
 import asyncio
+import ipaddress
 import json
 import logging
 import os
 import re
+import threading
 import time
 from collections import deque
 from contextlib import asynccontextmanager
@@ -264,6 +266,8 @@ class AppState:
         }
         self.siseli_task: asyncio.Task | None = None
         self.siseli_wake: asyncio.Event = asyncio.Event()
+        self.siseli_lock = threading.Lock()
+        self.loop: asyncio.AbstractEventLoop | None = None
         # Bluetooth BMS packs assigned to Siseli inverters. Registry is
         # durable; live readings stay in-process so a BLE miss falls back
         # to portal SOC instead of wiping last-good values from disk.
@@ -949,6 +953,134 @@ def _merged_cloud_meta() -> dict:
     return cloud
 
 
+def _siseli_target_device() -> tuple[str | None, str | None]:
+    """Portal device the single local sniffer writes into.
+
+    Creds may name a portal id. Otherwise the only inverter, otherwise
+    the first one in the station list.
+    """
+    devices = list(state.siseli.get("devices") or [])
+    if not devices:
+        return None, None
+    creds = siseli_creds.load() or {}
+    wanted = str(creds.get("device_id") or "").strip()
+    if wanted:
+        for d in devices:
+            if wanted in (
+                str(d.get("portal_device_id") or ""),
+                str(d.get("device_id") or ""),
+                str(d.get("device_sn") or ""),
+            ):
+                return d.get("device_sn"), d.get("name")
+    d = devices[0]
+    return d.get("device_sn"), d.get("name")
+
+
+def _store_siseli_sample(sn: str, name: str | None, tele: dict, ts: float, *, origin: str) -> None:
+    """Remember one telemetry sample and fold it into the energy DB.
+
+    BMS overlay is applied for the stored Wh sample the same way the
+    HTTP poll does. The cached telemetry stays the raw inverter sample
+    so serialize_status can overlay again at read time.
+    """
+    with state.siseli_lock:
+        bucket = state.siseli.setdefault("telemetry_by_sn", {})
+        bucket[sn] = {"telemetry": tele, "ts": ts, "origin": origin}
+        if origin == "local":
+            state.siseli["local_last_decode_ts"] = ts
+    rec = _apply_bms_overlay(sn, tele) or tele
+    state.energy.upsert_device(sn, name, None, None)
+    bat = rec.get("battery_percent")
+    if rec.get("ignore_inverter_soc") and not rec.get("bms_source"):
+        bat = None
+    elif bat is not None:
+        bat = int(bat)
+    else:
+        bat = 0
+    state.energy.record(
+        sn, ts,
+        float(rec.get("input_power_w") or 0),
+        float(rec.get("output_power_w") or 0),
+        bat,
+        solar_w=float(rec.get("solar_input_w") or 0),
+        ac_input_w=float(rec.get("ac_input_w") or 0),
+    )
+
+
+def _on_siseli_local_snapshot(snapshot: dict) -> None:
+    """Capture-thread callback. Never raise into the vendored parser."""
+    import siseli_local.runner as sl_runner
+    import siseli_local.telemetry as sl_tele
+
+    sl_runner.note_snapshot(snapshot)
+    sn, name = _siseli_target_device()
+    if not sn:
+        return
+    canonical = sl_tele.decoded_to_canonical(snapshot)
+    tele = siseli_client.to_telemetry(canonical)
+    _store_siseli_sample(sn, name, tele, time.time(), origin="local")
+    loop = state.loop
+    if loop is not None and loop.is_running():
+        try:
+            asyncio.run_coroutine_threadsafe(broadcast_status("telemetry"), loop)
+        except Exception as exc:
+            log.debug("siseli local broadcast skipped: %s", exc)
+
+
+def _sync_siseli_local() -> None:
+    """Start or stop the LAN sniffer from the saved Siseli card."""
+    import siseli_local.mqtt as sl_mqtt
+    import siseli_local.runner as sl_runner
+
+    sl_mqtt.set_sink(_on_siseli_local_snapshot)
+    creds = siseli_creds.load()
+    if not creds or not creds.get("local_read"):
+        sl_runner.stop()
+        return
+    if not (creds.get("inverter_ip") and creds.get("router_ip")):
+        sl_runner.stop()
+        return
+    sl_runner.start(creds)
+
+
+def _local_read_settings(body: dict) -> dict:
+    """Validate the optional LAN-read fields on the Siseli card."""
+    enabled = body.get("local_read")
+    if isinstance(enabled, str):
+        enabled = enabled.strip().lower() in {"1", "true", "yes", "on"}
+    enabled = bool(enabled)
+    inverter_ip = str(body.get("inverter_ip") or "").strip()
+    router_ip = str(body.get("router_ip") or "").strip()
+    sniff_iface = str(body.get("sniff_iface") or "").strip()
+    inverter_mac = str(body.get("inverter_mac") or "").strip().lower()
+    router_mac = str(body.get("router_mac") or "").strip().lower()
+    mac_re = re.compile(r"^([0-9a-f]{2}[:-]){5}[0-9a-f]{2}$")
+    iface_re = re.compile(r"^[A-Za-z0-9._:-]{1,32}$")
+    if enabled or inverter_ip or router_ip:
+        for label, value in (("inverter IP", inverter_ip), ("router IP", router_ip)):
+            if not value and not enabled:
+                continue
+            try:
+                ipaddress.IPv4Address(value)
+            except ValueError as exc:
+                raise HTTPException(400, f"{label} must be an IPv4 address") from exc
+    for label, value in (("inverter MAC", inverter_mac), ("router MAC", router_mac)):
+        if value and not mac_re.match(value):
+            raise HTTPException(400, f"{label} must look like aa:bb:cc:dd:ee:ff")
+    if sniff_iface and not iface_re.match(sniff_iface):
+        raise HTTPException(400, "sniff interface must be a short interface name")
+    if enabled and not (inverter_ip and router_ip):
+        raise HTTPException(400, "local read needs the inverter IP and the router IP")
+    return {
+        "local_read": enabled,
+        "inverter_ip": inverter_ip,
+        "router_ip": router_ip,
+        "sniff_iface": sniff_iface,
+        "inverter_mac": inverter_mac,
+        "router_mac": router_mac,
+    }
+
+
 async def siseli_poll_once() -> None:
     """One Siseli portal pass: login if needed, list devices, fetch telemetry."""
     creds = siseli_creds.load()
@@ -986,15 +1118,25 @@ async def siseli_poll_once() -> None:
         settings_by_sn: dict[str, list] = {}
         raw_settings_by_sn: dict[str, dict] = {}
         ts = time.time()
+        import siseli_local.runner as sl_runner
+        import siseli_local.telemetry as sl_tele
+
+        # Devices must be visible before the local sink can pick a target.
+        # Apply a snapshot that arrived before this list once. Replaying it
+        # on later polls would refresh the freshness clock with no new packet.
+        with state.siseli_lock:
+            state.siseli["devices"] = devices
+            already = state.siseli.get("telemetry_by_sn") or {}
+        pending = sl_runner.pending_snapshot()
+        if pending and sl_runner.is_running():
+            target_sn, _name = _siseli_target_device()
+            prior = already.get(target_sn) if target_sn else None
+            if not prior or prior.get("origin") != "local":
+                _on_siseli_local_snapshot(pending)
+
         for d in devices:
             pid = d["portal_device_id"]
             sn = d["device_sn"]
-            try:
-                values = await asyncio.to_thread(api.fetch_latest_data, pid)
-                tele = siseli_client.to_telemetry(values)
-                telemetry_by_sn[sn] = {"telemetry": tele, "ts": ts}
-            except Exception as e:
-                log.warning("siseli fetch %s failed: %s", pid, e)
             try:
                 raw_settings = await asyncio.to_thread(api.get_device_settings, pid)
                 if isinstance(raw_settings, dict):
@@ -1002,34 +1144,46 @@ async def siseli_poll_once() -> None:
                     settings_by_sn[sn] = siseli_client.normalize_controls(raw_settings)
             except Exception as e:
                 log.debug("siseli settings %s failed: %s", pid, e)
+            with state.siseli_lock:
+                live = (state.siseli.get("telemetry_by_sn") or {}).get(sn)
+            if sl_tele.should_skip_portal_latest(
+                running=sl_runner.is_running(), entry=live, now=time.time(),
+            ):
+                telemetry_by_sn[sn] = live
+                continue
+            try:
+                values = await asyncio.to_thread(api.fetch_latest_data, pid)
+                tele = siseli_client.to_telemetry(values)
+                telemetry_by_sn[sn] = {"telemetry": tele, "ts": ts, "origin": "http"}
+            except Exception as e:
+                log.warning("siseli fetch %s failed: %s", pid, e)
+                if live:
+                    telemetry_by_sn[sn] = live
             tele = (telemetry_by_sn.get(sn) or {}).get("telemetry")
-            if tele:
-                rec = _apply_bms_overlay(sn, tele) or tele
-                state.energy.upsert_device(sn, d.get("name"), None, None)
-                bat = rec.get("battery_percent")
-                if rec.get("ignore_inverter_soc") and not rec.get("bms_source"):
-                    bat = None
-                elif bat is not None:
-                    bat = int(bat)
-                else:
-                    bat = 0
-                state.energy.record(
-                    sn, ts,
-                    float(rec.get("input_power_w") or 0),
-                    float(rec.get("output_power_w") or 0),
-                    bat,
-                    solar_w=float(rec.get("solar_input_w") or 0),
-                    ac_input_w=float(rec.get("ac_input_w") or 0),
-                )
-        state.siseli = {
-            "state": "connected",
-            "error": None,
-            "devices": devices,
-            "telemetry_by_sn": telemetry_by_sn,
-            "settings_by_sn": settings_by_sn,
-            "raw_settings_by_sn": raw_settings_by_sn,
-            "last_poll_ts": ts,
-        }
+            origin = (telemetry_by_sn.get(sn) or {}).get("origin")
+            if tele and origin != "local":
+                _store_siseli_sample(sn, d.get("name"), tele, ts, origin="http")
+        kept_local_ts = None
+        with state.siseli_lock:
+            kept_local_ts = state.siseli.get("local_last_decode_ts")
+            # A decode may have landed in the previous dict while we built
+            # this one. Prefer that sample over the HTTP copy.
+            current = state.siseli.get("telemetry_by_sn") or {}
+            for sn, entry in current.items():
+                if sl_tele.should_skip_portal_latest(
+                    running=sl_runner.is_running(), entry=entry, now=time.time(),
+                ):
+                    telemetry_by_sn[sn] = entry
+            state.siseli = {
+                "state": "connected",
+                "error": None,
+                "devices": devices,
+                "telemetry_by_sn": telemetry_by_sn,
+                "settings_by_sn": settings_by_sn,
+                "raw_settings_by_sn": raw_settings_by_sn,
+                "last_poll_ts": ts,
+                "local_last_decode_ts": kept_local_ts,
+            }
     except siseli_client.AuthenticationError as e:
         state.siseli["state"] = "error"
         state.siseli["error"] = str(e)
@@ -1049,6 +1203,7 @@ async def siseli_loop() -> None:
                 await siseli_poll_once()
                 await broadcast_status("telemetry")
             elif state.siseli.get("devices"):
+                _sync_siseli_local()
                 state.siseli = {
                     "state": "idle",
                     "error": None,
@@ -3361,6 +3516,7 @@ def _hydrate_battery_packs_from_db() -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     log.info("Starting Solar Pow Monitor on backend=%s", state.backend)
+    state.loop = asyncio.get_running_loop()
     # Pre-load the last persisted pack snapshot so the UI shows something
     # immediately on subsequent boots (live refresh overwrites within seconds).
     _hydrate_battery_packs_from_db()
@@ -3368,6 +3524,10 @@ async def lifespan(app: FastAPI):
     asyncio.create_task(connect_device())
     state.poll_task = asyncio.create_task(poll_loop())
     state.siseli_task = asyncio.create_task(siseli_loop())
+    try:
+        _sync_siseli_local()
+    except Exception as exc:
+        log.warning("siseli local read not started: %s", exc)
     state.bms_task = asyncio.create_task(bms_loop())
     state.smart_charge_task = asyncio.create_task(smart_charge_loop())
     state.solar_charge_task = asyncio.create_task(solar_charge_loop())
@@ -3389,6 +3549,11 @@ async def lifespan(app: FastAPI):
         ),
     )
     yield
+    try:
+        import siseli_local.runner as sl_runner
+        sl_runner.stop()
+    except Exception as exc:
+        log.warning("siseli local stop failed: %s", exc)
     if state.poll_task:
         state.poll_task.cancel()
     if getattr(state, "siseli_task", None):
@@ -5324,13 +5489,24 @@ def api_kasa_creds_clear():
 @app.get("/api/siseli/credentials")
 def api_siseli_creds_status():
     """Public (redacted) Siseli portal credentials + connection snapshot."""
-    view = siseli_creds.public_view()
+    import siseli_local.runner as sl_runner
+
+    view = siseli_creds.public_view() or {}
     return {
-        "has_credentials": view is not None,
-        "user_id": (view or {}).get("user_id"),
-        "station_id": (view or {}).get("station_id"),
-        "device_id": (view or {}).get("device_id"),
-        "time_zone": (view or {}).get("time_zone"),
+        "has_credentials": bool(view),
+        "user_id": view.get("user_id"),
+        "station_id": view.get("station_id"),
+        "device_id": view.get("device_id"),
+        "time_zone": view.get("time_zone"),
+        "local_read": bool(view.get("local_read")),
+        "inverter_ip": view.get("inverter_ip") or "",
+        "router_ip": view.get("router_ip") or "",
+        "sniff_iface": view.get("sniff_iface") or "",
+        "inverter_mac": view.get("inverter_mac") or "",
+        "router_mac": view.get("router_mac") or "",
+        "local_running": sl_runner.is_running(),
+        "local_error": sl_runner.last_error(),
+        "local_last_decode_ts": state.siseli.get("local_last_decode_ts"),
         "state": state.siseli.get("state"),
         "error": state.siseli.get("error"),
         "last_poll_ts": state.siseli.get("last_poll_ts"),
@@ -5347,6 +5523,7 @@ async def api_siseli_creds_save(body: dict):
     station_id = ((body or {}).get("station_id") or "").strip()
     device_id = ((body or {}).get("device_id") or "").strip()
     time_zone = ((body or {}).get("time_zone") or "").strip()
+    local = _local_read_settings(body or {})
     existing = siseli_creds.load()
     if not password and existing:
         password = existing.get("password") or ""
@@ -5381,12 +5558,22 @@ async def api_siseli_creds_save(body: dict):
         station_id=station_id,
         device_id=device_id,
         time_zone=time_zone,
+        local_read=local["local_read"],
+        inverter_ip=local["inverter_ip"],
+        router_ip=local["router_ip"],
+        sniff_iface=local["sniff_iface"],
+        inverter_mac=local["inverter_mac"],
+        router_mac=local["router_mac"],
         access_token=probe.access_token,
         refresh_token=probe.refresh_token,
         access_token_expires=probe.access_token_expires_iso,
         refresh_token_expires=probe.refresh_token_expires_iso,
     ):
         raise HTTPException(500, "failed to save credentials")
+    try:
+        _sync_siseli_local()
+    except Exception as exc:
+        log.warning("siseli local read not started: %s", exc)
     _kick_siseli_poll()
     names = []
     for raw in devices:
@@ -5406,6 +5593,11 @@ async def api_siseli_creds_save(body: dict):
 @app.delete("/api/siseli/credentials")
 def api_siseli_creds_clear():
     siseli_creds.clear()
+    try:
+        import siseli_local.runner as sl_runner
+        sl_runner.stop()
+    except Exception as exc:
+        log.warning("siseli local stop failed: %s", exc)
     state.siseli = {
         "state": "idle",
         "error": None,

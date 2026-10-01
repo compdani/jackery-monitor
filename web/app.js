@@ -2354,9 +2354,32 @@ async function loadSiseliCreds() {
     if (j.user_id) $('siseli-creds-user').value = j.user_id;
     if (j.station_id) $('siseli-creds-station').value = j.station_id;
     if (j.time_zone) $('siseli-creds-tz').value = j.time_zone;
+    setSiseliLocalReadUi(!!j.local_read);
+    const setVal = (id, value) => {
+      const el = $(id);
+      if (el) el.value = value || '';
+    };
+    setVal('siseli-inverter-ip', j.inverter_ip);
+    setVal('siseli-router-ip', j.router_ip);
+    setVal('siseli-sniff-iface', j.sniff_iface);
+    setVal('siseli-inverter-mac', j.inverter_mac);
+    setVal('siseli-router-mac', j.router_mac);
+    if (status && j.local_read) {
+      const localBit = j.local_running ? 'local' : (j.local_error ? 'local error' : 'local off');
+      status.textContent = `${status.textContent} · ${localBit}`;
+    }
   } catch (err) {
     if (status) status.textContent = 'unavailable';
   }
+}
+
+function setSiseliLocalReadUi(on) {
+  const btn = $('siseli-local-read');
+  if (!btn) return;
+  btn.classList.toggle('on', !!on);
+  btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+  const st = btn.querySelector('.sw-state');
+  if (st) st.textContent = on ? 'on' : 'off';
 }
 
 function setSiseliCredsMsg(msg, text, isError) {
@@ -2366,6 +2389,11 @@ function setSiseliCredsMsg(msg, text, isError) {
   msg.classList.toggle('login-error', isError);
   msg.classList.toggle('hint', !isError);
 }
+
+$('siseli-local-read')?.addEventListener('click', () => {
+  const btn = $('siseli-local-read');
+  setSiseliLocalReadUi(btn?.getAttribute('aria-pressed') !== 'true');
+});
 
 $('siseli-creds-form')?.addEventListener('submit', async (e) => {
   e.preventDefault();
@@ -2381,6 +2409,12 @@ $('siseli-creds-form')?.addEventListener('submit', async (e) => {
         password: $('siseli-creds-password').value,
         station_id: $('siseli-creds-station').value,
         time_zone: $('siseli-creds-tz').value,
+        local_read: $('siseli-local-read')?.getAttribute('aria-pressed') === 'true',
+        inverter_ip: $('siseli-inverter-ip')?.value || '',
+        router_ip: $('siseli-router-ip')?.value || '',
+        sniff_iface: $('siseli-sniff-iface')?.value || '',
+        inverter_mac: $('siseli-inverter-mac')?.value || '',
+        router_mac: $('siseli-router-mac')?.value || '',
       }),
     });
     const j = await r.json().catch(() => ({}));

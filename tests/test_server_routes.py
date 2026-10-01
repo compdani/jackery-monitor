@@ -499,7 +499,7 @@ def test_shell_sends_no_cache_and_forecast_load_markup(client):
     sw = client.get("/sw.js")
     assert sw.status_code == 200
     assert "no-cache" in (sw.headers.get("cache-control") or "").lower()
-    assert "jackery-shell-v10" in sw.text
+    assert "jackery-shell-v11" in sw.text
 
 
 def test_solar_array_validation_and_roundtrip(app, client):
@@ -634,6 +634,19 @@ def test_load_schedule_get_post(app, client):
     assert j["sleep_start"] == "23:00"
     assert j["windows"][0]["watts"] == 800
     assert "learned_profile" in j
+
+
+def test_siseli_local_read_rejects_bad_ip(client):
+    r = client.post("/api/siseli/credentials", json={
+        "user_id": "u",
+        "password": "p",
+        "station_id": "1",
+        "local_read": True,
+        "inverter_ip": "not-an-ip",
+        "router_ip": "192.168.1.1",
+    })
+    assert r.status_code == 400
+    assert "IPv4" in r.json()["detail"]
 
 
 def test_siseli_credentials_status_empty(client):

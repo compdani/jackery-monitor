@@ -21,3 +21,5 @@ openai>=1.40
 # used by jackery-monitor). Import is optional at runtime — scan/status
 # return a structured error when BlueZ isn't available.
 bleak>=0.22
+# Local Siseli read (siseli_local/). Same pin as fadmaz/siseli-ha 2.6.25.
+scapy>=2.5,<2.7
