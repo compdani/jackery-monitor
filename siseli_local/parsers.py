@@ -2326,7 +2326,8 @@ class SolarParser:
     def _modbus_close(kind: str, target: float, scaled: float) -> bool:
         err = abs(scaled - target)
         if kind == "power":
-            return err <= max(80.0, 0.25 * abs(target))
+            # 80 W made 50, 40, and 62 all "match" a portal reading of 101 W.
+            return err <= max(15.0, 0.12 * abs(target))
         if kind == "volt":
             return err <= 1.5
         if kind == "soc":
@@ -2495,13 +2496,18 @@ class SolarParser:
                 target = SolarParser._to_float_or_none(portal.get(src))
                 if target is not None and abs(target) >= 25:
                     required.append(key)
-            if required and all(key in chosen for key in required):
-                SolarParser._MODBUS_MAP.clear()
+            if chosen:
+                # Keep a battery lock when solar is still ambiguous. Replacing
+                # the whole map would drop it on the next partial portal sample.
                 SolarParser._MODBUS_MAP.update(chosen)
+            if required and all(key in SolarParser._MODBUS_MAP for key in required):
                 SolarParser._MODBUS_READY = True
-        state = SolarParser._apply_modbus_map(rows) if SolarParser._MODBUS_READY else {}
-        if SolarParser._MODBUS_READY and "pv_w" not in state and "load_w" not in state:
-            state = {}
+        state = SolarParser._apply_modbus_map(rows) if SolarParser._MODBUS_MAP else {}
+        if not SolarParser._MODBUS_READY:
+            # Power registers that have not agreed with the portal stay out,
+            # so a battery-only decode cannot be stored as zero watts.
+            for key in ("pv_w", "load_w", "grid_w", "feed_w", "generation_power_w", "mains_power_w", "mains_current_flow_direction"):
+                state.pop(key, None)
         # #region agent log
         try:
             from .core import _agent_dbg
@@ -2514,6 +2520,8 @@ class SolarParser:
                     "feed_w": portal.get("feed_in_w"),
                     "battery_v": portal.get("battery_voltage_v"),
                     "soc": portal.get("battery_percent"),
+                    "charge_a": portal.get("battery_charge_a"),
+                    "discharge_a": portal.get("battery_discharge_a"),
                 },
                 "registers": rows,
                 "matched": {

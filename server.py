@@ -1036,12 +1036,26 @@ def _on_siseli_local_snapshot(snapshot: dict) -> None:
     if broker:
         canonical = sl_tele.decoded_to_canonical(snapshot)
         tele = siseli_client.to_telemetry(canonical)
+        # A Modbus payload can identify the pack before any watt register
+        # agrees with the portal. Missing power must stay blank, not zero.
+        if "pv_w" not in snapshot and "generation_power_w" not in snapshot:
+            tele["solar_input_w"] = None
+        if "load_w" not in snapshot:
+            tele["output_power_w"] = None
+        if "mains_power_w" not in snapshot:
+            tele["ac_input_w"] = None
+            tele["feed_in_w"] = None
         sl_runner.note_stream(
             broker, 1883, encrypted=False,
             readings=sl_tele.readings_from_telemetry(tele),
         )
     chosen = str((siseli_creds.load() or {}).get("mqtt_broker_ip") or "").strip()
     if not chosen or broker != chosen:
+        return
+    has_power = any(
+        key in snapshot for key in ("pv_w", "generation_power_w", "load_w", "mains_power_w")
+    )
+    if not has_power:
         return
     sl_runner.note_snapshot(snapshot)
     sn, name = _siseli_target_device()

@@ -219,6 +219,65 @@ def test_modbus_blocks_follow_the_portal_sample(tmp_path, monkeypatch):
     assert snap.get("bat_cap") == 56
 
 
+def test_modbus_publishes_the_pack_when_solar_does_not_agree(tmp_path, monkeypatch):
+    """Portal 101 W matches no register. 52.3 V does, and that still publishes."""
+    cache = tmp_path / "state.json"
+    monkeypatch.setenv("SISELI_LOCAL_STATE_FILE", str(cache))
+
+    import siseli_local.config as cfg
+    import siseli_local.mqtt as mqtt
+    import siseli_local.parsers as parsers
+    import siseli_local.runner as runner
+    import siseli_local.state as st
+
+    cfg.STATE_CACHE_FILE = str(cache)
+    parsers.STATE_CACHE_FILE = str(cache)
+    st.LAST_STATE.clear()
+    st.DISCOVERY_PUBLISHED = True
+    st.PUBLISHED_SENSOR_KEYS.clear()
+    parsers.LAST_PUBLISH_TS = 0.0
+    parsers.PENDING_PUBLISH = False
+    parsers.SolarParser._MODBUS_MAP.clear()
+    parsers.SolarParser._MODBUS_READY = False
+
+    frames = {
+        "s2te": "010322483c1e0020202020424d3732363020202020202000000306000000020000000100019115",
+        "WfP8": "01030e0037020b0032272700000000000020dc",
+        "8eyo": "01030602700028001ba15f",
+        "bcCu": "010316000001ac02c60000000000000000002a00250890079678c9",
+        "CSu4": "01030200023985",
+        "XCQF": "0103060000000000002175",
+    }
+    payload = json.dumps({"b": {"ct": [
+        {"cn": name, "co": base64.b64encode(bytes.fromhex(body)).decode()}
+        for name, body in frames.items()
+    ]}}).encode()
+
+    seen: list[dict] = []
+    mqtt.set_sink(seen.append)
+    try:
+        runner.note_http_telemetry({
+            "solar_input_w": 101,
+            "output_power_w": 0,
+            "ac_input_w": 0,
+            "feed_in_w": 0,
+            "battery_voltage_v": 52.3,
+            "battery_percent": 56,
+        })
+        assert parsers.SolarParser.parse_payload(payload, source_topic="dtu/x/pub/event/dev_prop_post") is True
+    finally:
+        mqtt.set_sink(None)
+        parsers.SolarParser._MODBUS_MAP.clear()
+        parsers.SolarParser._MODBUS_READY = False
+
+    assert seen
+    snap = seen[-1]
+    assert snap.get("bat_v") == 52.3
+    assert snap.get("bat_cap") == 55
+    assert "pv_w" not in snap
+    assert "load_w" not in snap
+
+
 def test_modbus_blocks_stay_undecoded_without_a_portal_match(tmp_path, monkeypatch):
     cache = tmp_path / "state.json"
     monkeypatch.setenv("SISELI_LOCAL_STATE_FILE", str(cache))
