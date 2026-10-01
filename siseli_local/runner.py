@@ -34,6 +34,24 @@ def last_decode_ts() -> float | None:
     return _last_decode_ts
 
 
+def capture_mark() -> float:
+    """Monotonic stamp of the last captured packet, or 0 if capture never started."""
+    try:
+        import siseli_local.core as core
+        return float(core.LAST_PACKET_TS or 0.0)
+    except Exception:
+        return 0.0
+
+
+def saw_inverter_packets(mark: float) -> bool:
+    """True when a packet arrived after `mark`."""
+    try:
+        import siseli_local.core as core
+        return float(core.LAST_PACKET_TS or 0.0) > float(mark)
+    except Exception:
+        return False
+
+
 def note_snapshot(snapshot: dict) -> None:
     global _pending, _last_decode_ts
     _pending = dict(snapshot)

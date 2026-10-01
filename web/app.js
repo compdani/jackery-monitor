@@ -2364,13 +2364,69 @@ async function loadSiseliCreds() {
     setVal('siseli-sniff-iface', j.sniff_iface);
     setVal('siseli-inverter-mac', j.inverter_mac);
     setVal('siseli-router-mac', j.router_mac);
-    if (status && j.local_read) {
-      const localBit = j.local_running ? 'local' : (j.local_error ? 'local error' : 'local off');
-      status.textContent = `${status.textContent} · ${localBit}`;
-    }
+    renderSiseliLocalStatus(j);
   } catch (err) {
     if (status) status.textContent = 'unavailable';
   }
+}
+
+function siseliLocalBody() {
+  return {
+    local_read: $('siseli-local-read')?.getAttribute('aria-pressed') === 'true',
+    inverter_ip: $('siseli-inverter-ip')?.value || '',
+    router_ip: $('siseli-router-ip')?.value || '',
+    sniff_iface: $('siseli-sniff-iface')?.value || '',
+    inverter_mac: $('siseli-inverter-mac')?.value || '',
+    router_mac: $('siseli-router-mac')?.value || '',
+  };
+}
+
+function formatLocalAge(ts) {
+  if (!ts) return 'no decode yet';
+  const sec = Math.max(0, Math.round(Date.now() / 1000 - ts));
+  if (sec < 60) return `decoded ${sec}s ago`;
+  const min = Math.round(sec / 60);
+  return `decoded ${min} min ago`;
+}
+
+function renderSiseliLocalReadings(readings) {
+  const el = $('siseli-local-readings');
+  if (!el) return;
+  if (!readings) {
+    el.hidden = true;
+    el.textContent = '';
+    return;
+  }
+  const parts = [];
+  const add = (label, value, unit) => {
+    if (value === null || value === undefined || value === '') return;
+    parts.push(`${label} ${value}${unit}`);
+  };
+  add('PV', readings.solar_w, ' W');
+  add('load', readings.load_w, ' W');
+  add('grid', readings.grid_w, ' W');
+  add('feed-in', readings.feed_in_w, ' W');
+  add('battery', readings.battery_v, ' V');
+  add('charge', readings.charge_a, ' A');
+  add('discharge', readings.discharge_a, ' A');
+  add('SOC', readings.soc, '%');
+  el.hidden = parts.length === 0;
+  el.textContent = parts.join(' · ');
+}
+
+function renderSiseliLocalStatus(j) {
+  const el = $('siseli-local-status');
+  if (!el || !j) return;
+  if (!j.local_read) {
+    el.textContent = 'LAN read off';
+  } else if (j.local_error && !j.local_running) {
+    el.textContent = j.local_error;
+  } else if (j.local_running) {
+    el.textContent = `running · ${formatLocalAge(j.local_last_decode_ts)}`;
+  } else {
+    el.textContent = j.local_error || 'stopped';
+  }
+  renderSiseliLocalReadings(j.local_readings);
 }
 
 function setSiseliLocalReadUi(on) {
@@ -2378,8 +2434,7 @@ function setSiseliLocalReadUi(on) {
   if (!btn) return;
   btn.classList.toggle('on', !!on);
   btn.setAttribute('aria-pressed', on ? 'true' : 'false');
-  const st = btn.querySelector('.sw-state');
-  if (st) st.textContent = on ? 'on' : 'off';
+  btn.textContent = on ? 'on' : 'off';
 }
 
 function setSiseliCredsMsg(msg, text, isError) {
@@ -2390,9 +2445,53 @@ function setSiseliCredsMsg(msg, text, isError) {
   msg.classList.toggle('hint', !isError);
 }
 
-$('siseli-local-read')?.addEventListener('click', () => {
+$('siseli-local-read')?.addEventListener('click', (e) => {
+  e.preventDefault();
+  e.stopPropagation();
   const btn = $('siseli-local-read');
   setSiseliLocalReadUi(btn?.getAttribute('aria-pressed') !== 'true');
+});
+
+$('siseli-local-save')?.addEventListener('click', async () => {
+  const msg = $('siseli-local-msg');
+  if (msg) msg.hidden = true;
+  try {
+    const r = await fetch('/api/siseli/local', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(siseliLocalBody()),
+    });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.detail || r.statusText);
+    renderSiseliLocalStatus(j);
+    setSiseliCredsMsg(msg, j.local_read ? 'LAN read saved.' : 'LAN read turned off.', false);
+  } catch (err) {
+    setSiseliCredsMsg(msg, err.message || 'save failed', true);
+  }
+});
+
+$('siseli-local-test')?.addEventListener('click', async () => {
+  const msg = $('siseli-local-msg');
+  const btn = $('siseli-local-test');
+  if (msg) msg.hidden = true;
+  if (btn) btn.disabled = true;
+  setSiseliCredsMsg(msg, 'Listening for up to 25 seconds…', false);
+  try {
+    const r = await fetch('/api/siseli/local/test', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(siseliLocalBody()),
+    });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.detail || r.statusText);
+    setSiseliCredsMsg(msg, j.detail || 'Test finished.', !j.ok);
+    await loadSiseliCreds();
+    if (j.readings) renderSiseliLocalReadings(j.readings);
+  } catch (err) {
+    setSiseliCredsMsg(msg, err.message || 'test failed', true);
+  } finally {
+    if (btn) btn.disabled = false;
+  }
 });
 
 $('siseli-creds-form')?.addEventListener('submit', async (e) => {
@@ -2409,12 +2508,6 @@ $('siseli-creds-form')?.addEventListener('submit', async (e) => {
         password: $('siseli-creds-password').value,
         station_id: $('siseli-creds-station').value,
         time_zone: $('siseli-creds-tz').value,
-        local_read: $('siseli-local-read')?.getAttribute('aria-pressed') === 'true',
-        inverter_ip: $('siseli-inverter-ip')?.value || '',
-        router_ip: $('siseli-router-ip')?.value || '',
-        sniff_iface: $('siseli-sniff-iface')?.value || '',
-        inverter_mac: $('siseli-inverter-mac')?.value || '',
-        router_mac: $('siseli-router-mac')?.value || '',
       }),
     });
     const j = await r.json().catch(() => ({}));

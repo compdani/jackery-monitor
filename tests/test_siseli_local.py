@@ -37,6 +37,26 @@ def test_decoded_snapshot_maps_watts_and_soc():
     assert tele["source"] == "siseli"
 
 
+def test_probe_outcome_names_the_three_results():
+    from siseli_local.telemetry import probe_outcome
+    failed = probe_outcome(
+        error="permission denied", running=False, packets=False,
+        decoded=False, readings=None,
+    )
+    assert failed["outcome"] == "capture-failed"
+    assert failed["ok"] is False
+    waiting = probe_outcome(
+        error=None, running=True, packets=True, decoded=False, readings=None,
+    )
+    assert waiting["outcome"] == "packets"
+    decoded = probe_outcome(
+        error=None, running=True, packets=True, decoded=True,
+        readings={"solar_w": 10},
+    )
+    assert decoded["outcome"] == "decoded"
+    assert decoded["readings"]["solar_w"] == 10
+
+
 def test_portal_latest_skipped_only_while_local_is_fresh():
     fresh = {"origin": "local", "ts": 1_000.0}
     assert should_skip_portal_latest(running=True, entry=fresh, now=1_100.0) is True

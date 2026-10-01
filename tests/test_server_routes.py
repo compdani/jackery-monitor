@@ -499,7 +499,7 @@ def test_shell_sends_no_cache_and_forecast_load_markup(client):
     sw = client.get("/sw.js")
     assert sw.status_code == 200
     assert "no-cache" in (sw.headers.get("cache-control") or "").lower()
-    assert "jackery-shell-v11" in sw.text
+    assert "jackery-shell-v12" in sw.text
 
 
 def test_solar_array_validation_and_roundtrip(app, client):
@@ -636,17 +636,184 @@ def test_load_schedule_get_post(app, client):
     assert "learned_profile" in j
 
 
-def test_siseli_local_read_rejects_bad_ip(client):
-    r = client.post("/api/siseli/credentials", json={
-        "user_id": "u",
-        "password": "p",
-        "station_id": "1",
-        "local_read": True,
-        "inverter_ip": "not-an-ip",
-        "router_ip": "192.168.1.1",
+def test_siseli_local_save_rejects_bad_ip(client, app, monkeypatch):
+    import siseli_local.runner as sl
+    monkeypatch.setattr(sl, "start", lambda cfg: None)
+    monkeypatch.setattr(sl, "stop", lambda *a, **k: None)
+    monkeypatch.setattr(sl, "is_running", lambda: False)
+    monkeypatch.setattr(sl, "last_error", lambda: None)
+    need_account = client.post("/api/siseli/local", json={
+        "local_read": True, "inverter_ip": "192.168.1.1", "router_ip": "192.168.1.1",
     })
-    assert r.status_code == 400
-    assert "IPv4" in r.json()["detail"]
+    assert need_account.status_code == 400
+    assert "portal" in need_account.json()["detail"].lower()
+    assert app.siseli_creds.save(user_id="u", password="secret", station_id="1")
+    bad = client.post("/api/siseli/local", json={
+        "local_read": True, "inverter_ip": "not-an-ip", "router_ip": "192.168.1.1",
+    })
+    assert bad.status_code == 400
+    assert "IPv4" in bad.json()["detail"]
+    assert app.siseli_creds.load()["password"] == "secret"
+    ok = client.post("/api/siseli/local", json={
+        "local_read": True, "inverter_ip": "192.168.1.1", "router_ip": "192.168.1.1",
+    })
+    assert ok.status_code == 200
+    saved = app.siseli_creds.load()
+    assert saved["local_read"] is True
+    assert saved["inverter_ip"] == "192.168.1.1"
+    assert saved["password"] == "secret"
+
+
+def test_siseli_local_test_reports_a_decode(client, app, monkeypatch):
+    import siseli_local.runner as sl
+    state = {"decode": None}
+    monkeypatch.setattr(sl, "start", lambda cfg: None)
+    monkeypatch.setattr(sl, "stop", lambda *a, **k: None)
+    monkeypatch.setattr(sl, "is_running", lambda: True)
+    monkeypatch.setattr(sl, "last_error", lambda: None)
+    monkeypatch.setattr(sl, "last_decode_ts", lambda: state["decode"])
+    monkeypatch.setattr(sl, "capture_mark", lambda: 1.0)
+    monkeypatch.setattr(sl, "saw_inverter_packets", lambda mark: True)
+    monkeypatch.setattr(sl, "pending_snapshot", lambda: {
+        "pv_w": 200, "load_w": 50, "bat_cap": 40, "bat_v": 52.0,
+        "bat_charge_current": 1.5, "dischg_current": 0,
+        "mains_power_w": 0, "mains_current_flow_direction": "Idle",
+    })
+
+    async def instant(_runner, _before):
+        state["decode"] = 50.0
+
+    monkeypatch.setattr(app, "_wait_for_siseli_probe", instant)
+    r = client.post("/api/siseli/local/test", json={
+        "inverter_ip": "192.168.2.104", "router_ip": "192.168.2.1",
+    })
+    assert r.status_code == 200
+    body = r.json()
+    assert body["outcome"] == "decoded"
+    assert body["readings"]["solar_w"] == 200
+    assert body["readings"]["load_w"] == 50
+    assert body["readings"]["soc"] == 40
+
+
+def test_siseli_local_test_reports_packets_and_restores(client, app, monkeypatch):
+    import siseli_local.runner as sl
+    calls = {"stop": 0}
+
+    def stop(*_a, **_k):
+        calls["stop"] += 1
+
+    monkeypatch.setattr(sl, "start", lambda cfg: None)
+    monkeypatch.setattr(sl, "stop", stop)
+    monkeypatch.setattr(sl, "is_running", lambda: True)
+    monkeypatch.setattr(sl, "last_error", lambda: None)
+    monkeypatch.setattr(sl, "last_decode_ts", lambda: None)
+    monkeypatch.setattr(sl, "capture_mark", lambda: 1.0)
+    monkeypatch.setattr(sl, "saw_inverter_packets", lambda mark: True)
+    monkeypatch.setattr(sl, "pending_snapshot", lambda: None)
+
+    async def instant(_runner, _before):
+        return None
+
+    monkeypatch.setattr(app, "_wait_for_siseli_probe", instant)
+    body = {
+        "inverter_ip": "192.168.2.104", "router_ip": "192.168.2.1",
+    }
+    waiting = client.post("/api/siseli/local/test", json=body)
+    assert waiting.status_code == 200
+    assert waiting.json()["outcome"] == "packets"
+    assert calls["stop"] == 1
+
+    assert app.siseli_creds.save(
+        user_id="u", password="secret", station_id="1",
+        local_read=True, inverter_ip="192.168.2.104", router_ip="192.168.2.1",
+    )
+    calls["stop"] = 0
+    again = client.post("/api/siseli/local/test", json=body)
+    assert again.status_code == 200
+    assert again.json()["outcome"] == "packets"
+    assert calls["stop"] == 0
+
+
+def test_siseli_credentials_save_keeps_lan_settings(app, client, monkeypatch):
+    import siseli_local.runner as sl
+    monkeypatch.setattr(sl, "start", lambda cfg: None)
+    monkeypatch.setattr(sl, "stop", lambda *a, **k: None)
+    monkeypatch.setattr(sl, "is_running", lambda: False)
+    monkeypatch.setattr(sl, "last_error", lambda: None)
+
+    class FakeAPI:
+        def __init__(self, **kwargs):
+            self.access_token = "tok"
+            self._refresh = "ref"
+
+        @property
+        def refresh_token(self):
+            return self._refresh
+
+        @property
+        def access_token_expires_iso(self):
+            return "2099-01-01T00:00:00+00:00"
+
+        @property
+        def refresh_token_expires_iso(self):
+            return "2099-06-01T00:00:00+00:00"
+
+        def login(self):
+            return None
+
+        def list_devices(self, station_id):
+            return [{"id": "42", "name": "House inverter"}]
+
+        def close(self):
+            return None
+
+    assert app.siseli_creds.save(
+        user_id="alice", password="secret", station_id="111",
+        local_read=True, inverter_ip="192.168.2.104", router_ip="192.168.2.1",
+    )
+    monkeypatch.setattr(app.siseli_client, "SiseliAPI", FakeAPI)
+    r = client.post("/api/siseli/credentials", json={
+        "user_id": "alice",
+        "password": "secret",
+        "station_id": "111",
+        "local_read": False,
+        "inverter_ip": "10.0.0.9",
+        "router_ip": "10.0.0.1",
+    })
+    assert r.status_code == 200, r.text
+    saved = app.siseli_creds.load()
+    assert saved["local_read"] is True
+    assert saved["inverter_ip"] == "192.168.2.104"
+    assert saved["router_ip"] == "192.168.2.1"
+    view = client.get("/api/siseli/credentials").json()
+    assert view["local_read"] is True
+    assert view["inverter_ip"] == "192.168.2.104"
+
+
+def test_siseli_credentials_include_local_readings(client, app):
+    app.state.siseli["telemetry_by_sn"] = {
+        "siseli:1": {
+            "origin": "local",
+            "ts": 10,
+            "telemetry": {
+                "solar_input_w": 12,
+                "output_power_w": 3,
+                "ac_input_w": 0,
+                "feed_in_w": 1,
+                "battery_voltage_v": 51.2,
+                "battery_charge_a": 0,
+                "battery_discharge_a": 2,
+                "battery_percent": 29,
+            },
+        }
+    }
+    readings = client.get("/api/siseli/credentials").json()["local_readings"]
+    assert readings["solar_w"] == 12
+    assert readings["load_w"] == 3
+    assert readings["grid_w"] == 0
+    assert readings["feed_in_w"] == 1
+    assert readings["battery_v"] == 51.2
+    assert readings["soc"] == 29
 
 
 def test_siseli_credentials_status_empty(client):

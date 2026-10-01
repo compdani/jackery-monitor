@@ -1043,6 +1043,32 @@ def _sync_siseli_local() -> None:
     sl_runner.start(creds)
 
 
+def _siseli_local_readings() -> dict | None:
+    """Latest LAN-decoded watts, or None if this process has not decoded one."""
+    import siseli_local.runner as sl_runner
+    import siseli_local.telemetry as sl_tele
+
+    tele = None
+    with state.siseli_lock:
+        best = None
+        for entry in (state.siseli.get("telemetry_by_sn") or {}).values():
+            if not isinstance(entry, dict) or entry.get("origin") != "local":
+                continue
+            if best is None or (entry.get("ts") or 0) >= (best.get("ts") or 0):
+                best = entry
+        if best:
+            tele = best.get("telemetry")
+    if tele is None:
+        snap = sl_runner.pending_snapshot()
+        if not snap:
+            return None
+        tele = siseli_client.to_telemetry(sl_tele.decoded_to_canonical(snap))
+    readings = sl_tele.readings_from_telemetry(tele if isinstance(tele, dict) else {})
+    if not any(v is not None for v in readings.values()):
+        return None
+    return readings
+
+
 def _local_read_settings(body: dict) -> dict:
     """Validate the optional LAN-read fields on the Siseli card."""
     enabled = body.get("local_read")
@@ -5507,6 +5533,7 @@ def api_siseli_creds_status():
         "local_running": sl_runner.is_running(),
         "local_error": sl_runner.last_error(),
         "local_last_decode_ts": state.siseli.get("local_last_decode_ts"),
+        "local_readings": _siseli_local_readings(),
         "state": state.siseli.get("state"),
         "error": state.siseli.get("error"),
         "last_poll_ts": state.siseli.get("last_poll_ts"),
@@ -5523,7 +5550,6 @@ async def api_siseli_creds_save(body: dict):
     station_id = ((body or {}).get("station_id") or "").strip()
     device_id = ((body or {}).get("device_id") or "").strip()
     time_zone = ((body or {}).get("time_zone") or "").strip()
-    local = _local_read_settings(body or {})
     existing = siseli_creds.load()
     if not password and existing:
         password = existing.get("password") or ""
@@ -5558,22 +5584,12 @@ async def api_siseli_creds_save(body: dict):
         station_id=station_id,
         device_id=device_id,
         time_zone=time_zone,
-        local_read=local["local_read"],
-        inverter_ip=local["inverter_ip"],
-        router_ip=local["router_ip"],
-        sniff_iface=local["sniff_iface"],
-        inverter_mac=local["inverter_mac"],
-        router_mac=local["router_mac"],
         access_token=probe.access_token,
         refresh_token=probe.refresh_token,
         access_token_expires=probe.access_token_expires_iso,
         refresh_token_expires=probe.refresh_token_expires_iso,
     ):
         raise HTTPException(500, "failed to save credentials")
-    try:
-        _sync_siseli_local()
-    except Exception as exc:
-        log.warning("siseli local read not started: %s", exc)
     _kick_siseli_poll()
     names = []
     for raw in devices:
@@ -5588,6 +5604,120 @@ async def api_siseli_creds_save(body: dict):
         "device_count": len(names),
         "devices": names,
     }
+
+
+def _local_cfg_same(saved: dict, local: dict) -> bool:
+    def norm(d: dict) -> tuple:
+        return (
+            bool(d.get("local_read")),
+            str(d.get("inverter_ip") or ""),
+            str(d.get("router_ip") or ""),
+            str(d.get("sniff_iface") or ""),
+            str(d.get("inverter_mac") or ""),
+            str(d.get("router_mac") or ""),
+        )
+    return norm(saved) == norm(local)
+
+
+@app.post("/api/siseli/local")
+def api_siseli_local_save(body: dict):
+    """Save LAN-read settings and start or stop the sniffer.
+
+    Does not log in to the portal. The portal account must already be saved,
+    because these fields live in the same encrypted file.
+    """
+    existing = siseli_creds.load()
+    if not existing:
+        raise HTTPException(400, "Save the portal account first")
+    local = _local_read_settings(body or {})
+    if not siseli_creds.save(
+        user_id=existing["user_id"],
+        password=existing["password"],
+        station_id=existing["station_id"],
+        **local,
+    ):
+        raise HTTPException(500, "failed to save LAN read settings")
+    try:
+        _sync_siseli_local()
+    except Exception as exc:
+        log.warning("siseli local read not started: %s", exc)
+    import siseli_local.runner as sl_runner
+    return {
+        "ok": True,
+        "local_read": local["local_read"],
+        "local_running": sl_runner.is_running(),
+        "local_error": sl_runner.last_error(),
+        "local_last_decode_ts": state.siseli.get("local_last_decode_ts"),
+        "local_readings": _siseli_local_readings(),
+    }
+
+
+LOCAL_PROBE_S = 25.0
+
+
+async def _wait_for_siseli_probe(sl_runner, before_decode: float | None) -> None:
+    """Block until a decode, a dead capture, or the listen window ends."""
+    deadline = time.monotonic() + LOCAL_PROBE_S
+    while time.monotonic() < deadline:
+        decoded_at = sl_runner.last_decode_ts()
+        if decoded_at is not None and decoded_at != before_decode:
+            return
+        if sl_runner.last_error() and not sl_runner.is_running():
+            return
+        await asyncio.sleep(0.4)
+
+
+@app.post("/api/siseli/local/test")
+async def api_siseli_local_test(body: dict):
+    """Listen on the LAN path for up to 25s and say what showed up.
+
+    Uses the IPs in the request. Restores ARP afterward unless LAN read
+    is already saved on with this same configuration.
+    """
+    import siseli_local.mqtt as sl_mqtt
+    import siseli_local.runner as sl_runner
+    import siseli_local.telemetry as sl_tele
+
+    local = _local_read_settings({**(body or {}), "local_read": True})
+    existing = siseli_creds.load() or {}
+    was_on = bool(existing.get("local_read"))
+    same = was_on and _local_cfg_same(existing, {**existing, **local, "local_read": True})
+    sl_mqtt.set_sink(_on_siseli_local_snapshot)
+    before_decode = sl_runner.last_decode_ts()
+    mark = sl_runner.capture_mark()
+    cfg = {**existing, **local, "local_read": True}
+    try:
+        sl_runner.start(cfg)
+        await _wait_for_siseli_probe(sl_runner, before_decode)
+        decoded_at = sl_runner.last_decode_ts()
+        decoded = decoded_at is not None and decoded_at != before_decode
+        readings = None
+        if decoded:
+            snap = sl_runner.pending_snapshot()
+            if snap:
+                tele = siseli_client.to_telemetry(sl_tele.decoded_to_canonical(snap))
+                readings = sl_tele.readings_from_telemetry(tele)
+            else:
+                readings = _siseli_local_readings()
+        result = sl_tele.probe_outcome(
+            error=sl_runner.last_error(),
+            running=sl_runner.is_running(),
+            packets=sl_runner.saw_inverter_packets(mark),
+            decoded=decoded,
+            readings=readings,
+        )
+    finally:
+        if not (was_on and same):
+            if was_on:
+                try:
+                    _sync_siseli_local()
+                except Exception as exc:
+                    log.warning("siseli local restore after test failed: %s", exc)
+            else:
+                sl_runner.stop()
+    result["local_running"] = sl_runner.is_running()
+    result["local_error"] = sl_runner.last_error()
+    return result
 
 
 @app.delete("/api/siseli/credentials")

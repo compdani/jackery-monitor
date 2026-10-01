@@ -53,6 +53,73 @@ def decoded_to_canonical(snapshot: dict[str, Any] | None) -> dict[str, Any]:
     return out
 
 
+def readings_from_telemetry(tele: dict[str, Any] | None) -> dict[str, Any]:
+    """The handful of Live figures worth showing on the LAN card."""
+    src = tele or {}
+    return {
+        "solar_w": src.get("solar_input_w"),
+        "load_w": src.get("output_power_w"),
+        "grid_w": src.get("ac_input_w"),
+        "feed_in_w": src.get("feed_in_w"),
+        "battery_v": src.get("battery_voltage_v"),
+        "charge_a": src.get("battery_charge_a"),
+        "discharge_a": src.get("battery_discharge_a"),
+        "soc": src.get("battery_percent"),
+    }
+
+
+def probe_outcome(
+    *,
+    error: str | None,
+    running: bool,
+    packets: bool,
+    decoded: bool,
+    readings: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Three results a 25s listen can honestly report."""
+    if decoded:
+        return {
+            "ok": True,
+            "outcome": "decoded",
+            "detail": "Decoded an MQTT publish from the inverter.",
+            "readings": readings,
+        }
+    if error and not running:
+        return {
+            "ok": False,
+            "outcome": "capture-failed",
+            "detail": error,
+            "readings": None,
+        }
+    if packets:
+        return {
+            "ok": True,
+            "outcome": "packets",
+            "detail": (
+                "Packets from the inverter are on the path, but no MQTT "
+                "publish arrived yet. The dongle often waits a few minutes."
+            ),
+            "readings": None,
+        }
+    if error:
+        return {
+            "ok": False,
+            "outcome": "capture-failed",
+            "detail": error,
+            "readings": None,
+        }
+    return {
+        "ok": False,
+        "outcome": "no-packets",
+        "detail": (
+            "Listened, but no packets arrived from that inverter IP. "
+            "Check the IP, that this host is on the same network, and "
+            "that ARP inspection is not blocking the path."
+        ),
+        "readings": None,
+    }
+
+
 def should_skip_portal_latest(
     *,
     running: bool,
