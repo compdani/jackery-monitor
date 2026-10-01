@@ -374,6 +374,28 @@ def map_latest_state_fields(fields: Any) -> dict[str, float]:
             pv = sum(strings)
     if pv is not None:
         mapped["pvInputPower"] = pv
+    # #region agent log
+    try:
+        interesting: dict[str, dict[str, object]] = {}
+        for key, raw in fields.items():
+            low = str(key).lower()
+            if not any(tok in low for tok in ("pv", "power", "gen", "load", "volt", "curr")):
+                continue
+            number, unit = _field_number(raw)
+            if number is None:
+                continue
+            interesting[str(key)] = {"v": number, "u": unit}
+            if len(interesting) >= 24:
+                break
+        if interesting:
+            from siseli_local.core import _agent_dbg
+            _agent_dbg("S", "siseli_client.py:pv-fields", "portal power fields", {
+                "mapped_pv_w": mapped.get("pvInputPower"),
+                "fields": interesting,
+            })
+    except Exception:
+        pass
+    # #endregion
     load, load_unit = _first_field(fields, ("load_power", "loadPower", "acOutputActivePower"))
     # A bare load_power with no unit is the older energy-flow convention (kW).
     # Leave it for that mapper. A tagged unit is authoritative.

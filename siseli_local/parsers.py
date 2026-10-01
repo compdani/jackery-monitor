@@ -2535,6 +2535,14 @@ class SolarParser:
                 "load_w": state.get("load_w"),
                 "bat_v": state.get("bat_v"),
                 "bat_cap": state.get("bat_cap"),
+                "eyo_products_w": [
+                    {"v": round(regs8[0] / 10.0, 1), "i": regs8[idx], "div": div,
+                     "w": round(regs8[0] / 10.0 * regs8[idx] / div, 1)}
+                    for regs8 in (rows.get("8eyo") or [],)
+                    if len(regs8) >= 3
+                    for idx in (1, 2)
+                    for div in (10.0, 100.0)
+                ],
             })
         except Exception:
             pass
