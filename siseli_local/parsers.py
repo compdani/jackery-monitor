@@ -2295,7 +2295,6 @@ class SolarParser:
 
 
     @staticmethod
-    @staticmethod
     def _modbus_rows(blocks: Dict[str, bytes]) -> Dict[str, List[int]]:
         """Function-03 responses whose CRC16 matches, as unsigned registers."""
         rows: Dict[str, List[int]] = {}
@@ -2437,8 +2436,39 @@ class SolarParser:
     @staticmethod
     def _try_modbus_schema(blocks: Dict[str, bytes]) -> Dict[str, object]:
         """Decode a Modbus dongle once its registers agree with the portal."""
-        rows = SolarParser._modbus_rows(blocks)
+        # #region agent log
+        try:
+            from .core import _agent_dbg
+            _agent_dbg("I", "siseli_local/parsers.py:modbus-enter", "modbus decode entered", {
+                "names": sorted(blocks),
+                "lens": {name: len(body) for name, body in blocks.items()},
+            })
+        except Exception:
+            pass
+        # #endregion
+        try:
+            rows = SolarParser._modbus_rows(blocks)
+        except Exception as exc:
+            # #region agent log
+            try:
+                from .core import _agent_dbg
+                _agent_dbg("J", "siseli_local/parsers.py:modbus-rows", "modbus row decode raised", {
+                    "err": f"{type(exc).__name__}: {exc}",
+                })
+            except Exception:
+                pass
+            # #endregion
+            return {}
         if len(rows) < 3:
+            # #region agent log
+            try:
+                from .core import _agent_dbg
+                _agent_dbg("I", "siseli_local/parsers.py:modbus-short", "too few CRC-valid frames", {
+                    "rows": len(rows), "names": sorted(rows),
+                })
+            except Exception:
+                pass
+            # #endregion
             return {}
         portal: Dict[str, object] = {}
         portal_age = None
@@ -2748,6 +2778,15 @@ class SolarParser:
 
         except Exception as exc:
             log_error_always(f"[PARSER ERROR] {exc}")
+            # #region agent log
+            try:
+                from .core import _agent_dbg
+                _agent_dbg("J", "siseli_local/parsers.py:parse", "parser raised", {
+                    "err": f"{type(exc).__name__}: {exc}", "topic": source_topic,
+                })
+            except Exception:
+                pass
+            # #endregion
             if LOG_UNPARSED_PUBLISH:
                 log_payload_preview("[PARSER ERROR PAYLOAD]", payload_bytes, topic=source_topic, error=str(exc))
             return False
