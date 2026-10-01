@@ -368,6 +368,7 @@ def _broker_endpoint(pkt) -> tuple[str, int]:
 
 
 _DBG_SEGMENTS = 0
+_DBG_FLOWS = 0
 
 
 def _agent_dbg(hypothesis_id: str, location: str, message: str, data: dict) -> None:
@@ -412,6 +413,22 @@ def _payload_preview(buf: bytes) -> dict:
         "has_b_block": b'{"b":' in (buf or b"") or b'"b":' in (buf or b""),
         "has_brace": b"{" in (buf or b""),
     }
+
+
+def _log_interesting_tcp(direction: str, ip: str, port: int, payload: bytes) -> None:
+    """Skip MQTT keepalives. Those are 2-byte PINGREQ (c000) and hide the publish."""
+    # #region agent log
+    global _DBG_FLOWS
+    if len(payload) <= 2 and payload[:1] in (b"\xc0", b"\xd0"):
+        return
+    if _DBG_FLOWS >= 20:
+        return
+    _DBG_FLOWS += 1
+    _agent_dbg("G", "siseli_local/core.py:flow", "non-ping tcp", {
+        "direction": direction, "ip": ip, "port": port, "n": _DBG_FLOWS,
+        **_payload_preview(payload),
+    })
+    # #endregion
 
 
 def _deliver_bound_snapshot() -> None:
@@ -593,14 +610,8 @@ def packet_callback(pkt) -> None:
                 # needs a publish, which may be on this port or another.
                 _remember_mqtt_stream(dst_ip, dport, encrypted=False, payload_bytes=payload_len)
                 if payload_len:
-                    global _DBG_SEGMENTS
-                    if _DBG_SEGMENTS < 6:
-                        _DBG_SEGMENTS += 1
-                        # #region agent log
-                        _agent_dbg("A", "siseli_local/core.py:segment", "tcp 1883 payload", {
-                            "dst": dst_ip, "n": _DBG_SEGMENTS, **_payload_preview(_tcp_payload(pkt)),
-                        })
-                        # #endregion
+                    body = _tcp_payload(pkt)
+                    _log_interesting_tcp("out", dst_ip, dport, body)
                     _decode_plain_mqtt(pkt, dst_ip)
                 if AUTO_INTERCEPT and RTR_MAC:
                     try:
@@ -612,6 +623,7 @@ def packet_callback(pkt) -> None:
             elif payload_len:
                 # The dongle's real broker may not be on 1883. Try the bytes;
                 # the stream is recorded only when they are actually MQTT.
+                _log_interesting_tcp("out", dst_ip, dport, _tcp_payload(pkt))
                 _decode_plain_mqtt(pkt, dst_ip)
 
         # Everything else the inverter sends -- DNS, NTP, ICMP, any secondary
@@ -648,7 +660,10 @@ def packet_callback(pkt) -> None:
                 _remember_mqtt_stream(src_ip, sport, encrypted=True, payload_bytes=payload_len)
             elif sport == 1883 and payload_len:
                 _remember_mqtt_stream(src_ip, sport, encrypted=False, payload_bytes=payload_len)
+                _log_interesting_tcp("in", src_ip, sport, _tcp_payload(pkt))
                 _decode_plain_mqtt(pkt, src_ip)
+            elif payload_len:
+                _log_interesting_tcp("in", src_ip, sport, _tcp_payload(pkt))
 
         if AUTO_INTERCEPT and INV_MAC:
             try:
