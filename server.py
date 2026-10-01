@@ -903,6 +903,14 @@ def _bms_ui_rows(sn: str | None) -> list[dict]:
     return bms_devices.ui_pack_rows(state.bms.list_packs(sn), state.bms_live)
 
 
+def _siseli_pref(sn: str | None, device_id: str | None = None) -> dict:
+    return (
+        state.device_prefs.get(device_id)
+        or state.device_prefs.get(sn)
+        or {}
+    )
+
+
 def _apply_bms_overlay(sn: str | None, tele: dict | None) -> dict | None:
     """Copy Siseli telemetry and overlay capacity-weighted BMS SOC."""
     if tele is None or not sn:
@@ -913,12 +921,14 @@ def _apply_bms_overlay(sn: str | None, tele: dict | None) -> dict | None:
     except Exception:
         override = None
     cap = int(override) if override else None
+    ignore = device_prefs.ignore_inverter_soc(_siseli_pref(sn))
     return bms_devices.overlay_telemetry(
         tele,
         packs=state.bms.list_packs(sn),
         live=state.bms_live,
         use_as_main=state.bms.use_as_main(sn),
         capacity_override_wh=cap,
+        ignore_inverter_soc=ignore,
     )
 
 
@@ -997,11 +1007,18 @@ async def siseli_poll_once() -> None:
             if tele:
                 rec = _apply_bms_overlay(sn, tele) or tele
                 state.energy.upsert_device(sn, d.get("name"), None, None)
+                bat = rec.get("battery_percent")
+                if rec.get("ignore_inverter_soc") and not rec.get("bms_source"):
+                    bat = None
+                elif bat is not None:
+                    bat = int(bat)
+                else:
+                    bat = 0
                 state.energy.record(
                     sn, ts,
                     float(rec.get("input_power_w") or 0),
                     float(rec.get("output_power_w") or 0),
-                    int(rec.get("battery_percent") or 0),
+                    bat,
                     solar_w=float(rec.get("solar_input_w") or 0),
                     ac_input_w=float(rec.get("ac_input_w") or 0),
                 )
@@ -1519,6 +1536,7 @@ def serialize_status(view_device_id: str | None = None) -> dict[str, Any]:
             "alias": (pref.get("alias") or "") if pref else "",
             "live_controls": device_prefs.resolved_live_controls(
                 pref, siseli_controls),
+            "ignore_inverter_soc": device_prefs.ignore_inverter_soc(pref),
         },
         "siseli": {
             "state": state.siseli.get("state"),
@@ -5598,8 +5616,10 @@ async def api_device_prefs_update(body: dict):
         kwargs["alias"] = payload.get("alias")
     if "live_controls" in payload:
         kwargs["live_controls"] = payload.get("live_controls")
+    if "ignore_inverter_soc" in payload:
+        kwargs["ignore_inverter_soc"] = bool(payload.get("ignore_inverter_soc"))
     if not kwargs:
-        raise HTTPException(400, "alias or live_controls required")
+        raise HTTPException(400, "alias, live_controls, or ignore_inverter_soc required")
     try:
         row = state.device_prefs.update(did, **kwargs)
     except ValueError as e:

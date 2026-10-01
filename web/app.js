@@ -2029,6 +2029,11 @@ function applySiseliChrome(s) {
     if (siseli && liveList.length) renderSiseliControls(liveList, deviceId);
   }
   renderSiseliDeviceSettings(s && s.siseli_controls, deviceId, siseli, prefs);
+  const ignoreRow = $('siseli-ignore-soc-row');
+  const ignoreHint = $('siseli-ignore-soc-hint');
+  if (ignoreRow) ignoreRow.hidden = !siseli;
+  if (ignoreHint) ignoreHint.hidden = !siseli;
+  setSiseliIgnoreSocUi(!!(prefs && prefs.ignore_inverter_soc));
   document.querySelectorAll('[data-jackery-only]').forEach((el) => {
     if (el.id === 'unknown-model-banner') {
       if (siseli) el.hidden = true;
@@ -2180,6 +2185,9 @@ async function saveDevicePrefs(patch) {
     lastStatus.device_prefs = lastStatus.device_prefs || {};
     if ('alias' in patch) lastStatus.device_prefs.alias = patch.alias || '';
     if ('live_controls' in patch) lastStatus.device_prefs.live_controls = patch.live_controls;
+    if ('ignore_inverter_soc' in patch) {
+      lastStatus.device_prefs.ignore_inverter_soc = !!patch.ignore_inverter_soc;
+    }
     if ('alias' in patch && lastStatus.device) {
       lastStatus.device.name = patch.alias || lastStatus.device.portal_name || lastStatus.device.name;
     }
@@ -2413,6 +2421,15 @@ function fillBmsSiseliSelect(selectedSn) {
   if (current) sel.value = current;
 }
 
+function setSiseliIgnoreSocUi(on) {
+  const btn = $('siseli-ignore-soc');
+  if (!btn) return;
+  btn.classList.toggle('on', !!on);
+  btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+  const st = btn.querySelector('.sw-state');
+  if (st) st.textContent = on ? 'on' : 'off';
+}
+
 function setBmsUseAsMainUi(on) {
   const btn = $('bms-use-as-main');
   if (!btn) return;
@@ -2607,6 +2624,18 @@ document.addEventListener('click', (e) => {
     return;
   }
   const mainBtn = e.target.closest('#bms-use-as-main');
+  const ignoreBtn = e.target.closest('#siseli-ignore-soc');
+  if (ignoreBtn) {
+    e.preventDefault();
+    const next = !ignoreBtn.classList.contains('on');
+    setSiseliIgnoreSocUi(next);
+    saveDevicePrefs({ ignore_inverter_soc: next }).catch((err) => {
+      setSiseliIgnoreSocUi(!next);
+      const msg = $('bms-msg');
+      if (msg) { msg.hidden = false; msg.textContent = err.message || 'failed'; }
+    });
+    return;
+  }
   if (!mainBtn) return;
   e.preventDefault();
   const sn = $('bms-siseli-sn')?.value || activeJackeryDevice()?.device_sn;
@@ -8039,7 +8068,10 @@ function renderBatteryPacks() {
   const rows = [];
   if (isBms) {
     const inv = t.inverter_soc_pct ?? t.main_soc_pct;
-    if (inv != null) {
+    const ignoreInv = !!(t.ignore_inverter_soc
+      || (typeof lastStatus !== 'undefined' && lastStatus && lastStatus.device_prefs
+          && lastStatus.device_prefs.ignore_inverter_soc));
+    if (inv != null && !ignoreInv) {
       rows.push(packRow({
         idx: '★',
         soc: inv,

@@ -436,6 +436,7 @@ def test_siseli_view_synthesizes_status(server_state):
     assert out["battery_packs"] == []
     assert out["device"]["portal_name"] == "House inverter"
     assert out["device_prefs"]["live_controls"] == ["batteryChargeLimit"]
+    assert out["device_prefs"]["ignore_inverter_soc"] is False
 
 
 def test_device_alias_overlays_status_and_overview(server_state):
@@ -538,6 +539,29 @@ def test_siseli_view_overlays_bms_soc(server_state):
                if r["device_id"] == "siseli:42")
     assert row["soc_pct"] == 50.0
     assert row["pack_count"] == 2
+
+
+def test_siseli_ignore_inverter_soc_strips_portal_from_status(server_state):
+    import time
+    _seed_siseli(server_state, soc=64)
+    now = time.time()
+    server_state.state.bms.upsert(
+        "aa:bb:cc:dd:ee:01", alias="Pack A", capacity_wh=5000,
+        siseli_device_sn="siseli:42",
+    )
+    server_state.state.bms_live = {
+        "AA:BB:CC:DD:EE:01": {
+            "soc_pct": 29, "ts": now, "voltage_v": 53.0, "current_a": 1,
+            "power_w": 50, "temp_c": 22,
+        },
+    }
+    server_state.state.device_prefs.update("siseli:42", ignore_inverter_soc=True)
+    out = server_state.serialize_status(view_device_id="siseli:42")
+    t = out["telemetry"]
+    assert t["battery_percent"] == 29.0
+    assert t.get("inverter_soc_pct") is None
+    assert t["ignore_inverter_soc"] is True
+    assert out["device_prefs"]["ignore_inverter_soc"] is True
 
 
 def test_siseli_bms_stale_falls_back_to_portal(server_state):

@@ -499,7 +499,7 @@ def test_shell_sends_no_cache_and_forecast_load_markup(client):
     sw = client.get("/sw.js")
     assert sw.status_code == 200
     assert "no-cache" in (sw.headers.get("cache-control") or "").lower()
-    assert "jackery-shell-v9" in sw.text
+    assert "jackery-shell-v10" in sw.text
 
 
 def test_solar_array_validation_and_roundtrip(app, client):
@@ -853,3 +853,9 @@ def test_device_prefs_alias_and_pins(client):
     prefs = client.get("/api/device_prefs").json()["prefs"]["siseli:42"]
     assert "alias" not in prefs
     assert prefs["live_controls"] == []
+    flagged = client.post("/api/device_prefs", json={
+        "device_id": "siseli:42",
+        "ignore_inverter_soc": True,
+    })
+    assert flagged.status_code == 200
+    assert client.get("/api/device_prefs").json()["prefs"]["siseli:42"]["ignore_inverter_soc"] is True

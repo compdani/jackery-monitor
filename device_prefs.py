@@ -13,6 +13,8 @@ Storage: /data/device_prefs.json. Format:
 Aliases are display-only — they never write to Siseli or Jackery cloud.
 `live_controls` omitted means "use the known CONTROL_DEFINITIONS this
 inverter exposes". An explicit empty list means nothing on Live.
+`ignore_inverter_soc` (Siseli only) drops voltage-based inverter SOC
+from Live, history, and the packs card.
 """
 
 from __future__ import annotations
@@ -63,6 +65,11 @@ def resolved_live_controls(pref: dict[str, Any] | None,
     return siseli_client.default_live_control_keys(controls)
 
 
+def ignore_inverter_soc(pref: dict[str, Any] | None) -> bool:
+    """True when this Siseli device should never use inverter (voltage) SOC."""
+    return bool((pref or {}).get("ignore_inverter_soc"))
+
+
 class DevicePrefs:
     def __init__(self) -> None:
         self.by_id: dict[str, dict[str, Any]] = {}
@@ -103,7 +110,8 @@ class DevicePrefs:
         return {k: dict(v) for k, v in self.by_id.items()}
 
     def update(self, device_id: str, *, alias: Any = _UNSET,
-               live_controls: Any = _UNSET) -> dict[str, Any]:
+               live_controls: Any = _UNSET,
+               ignore_inverter_soc: Any = _UNSET) -> dict[str, Any]:
         did = _clean_id(device_id)
         if not did:
             raise ValueError("device_id is required")
@@ -126,6 +134,11 @@ class DevicePrefs:
                         seen.add(s)
                         keys.append(s)
                 row["live_controls"] = keys
+        if ignore_inverter_soc is not _UNSET:
+            if ignore_inverter_soc:
+                row["ignore_inverter_soc"] = True
+            else:
+                row.pop("ignore_inverter_soc", None)
         if row:
             self.by_id[did] = row
         else:

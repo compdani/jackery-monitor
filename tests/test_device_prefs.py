@@ -58,6 +58,15 @@ def test_overlay_device_keeps_portal_name(prefs_mod):
     assert untouched["portal_name"] == "Jackery B"
 
 
+def test_ignore_inverter_soc_round_trip(prefs_mod):
+    r = prefs_mod.DevicePrefs()
+    assert prefs_mod.ignore_inverter_soc(r.get("siseli:42")) is False
+    r.update("siseli:42", ignore_inverter_soc=True)
+    assert prefs_mod.ignore_inverter_soc(r.get("siseli:42")) is True
+    r.update("siseli:42", ignore_inverter_soc=False)
+    assert "ignore_inverter_soc" not in r.get("siseli:42")
+
+
 def test_update_requires_device_id(prefs_mod):
     r = prefs_mod.DevicePrefs()
     with pytest.raises(ValueError):

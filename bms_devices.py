@@ -215,6 +215,18 @@ def _is_fresh(live: dict[str, Any] | None, now: float, stale_s: float) -> bool:
     return live.get("soc_pct") is not None
 
 
+def _strip_inverter_soc(tele: dict[str, Any]) -> dict[str, Any]:
+    """Drop voltage-based inverter SOC so it cannot leak into Live/history."""
+    out = dict(tele)
+    out["ignore_inverter_soc"] = True
+    out.pop("inverter_soc_pct", None)
+    out.pop("main_soc_pct", None)
+    if not out.get("bms_source"):
+        out["battery_percent"] = None
+        out["system_soc_pct"] = None
+    return out
+
+
 def overlay_telemetry(
     tele: dict[str, Any] | None,
     *,
@@ -224,16 +236,20 @@ def overlay_telemetry(
     now: float | None = None,
     stale_s: float = STALE_AFTER_S,
     capacity_override_wh: int | None = None,
+    ignore_inverter_soc: bool = False,
 ) -> dict[str, Any] | None:
     """Copy Siseli telemetry and, when enabled, replace headline SOC.
 
-    Portal battery_percent is preserved as inverter_soc_pct / main_soc_pct.
+    Portal battery_percent is preserved as inverter_soc_pct / main_soc_pct
+    unless `ignore_inverter_soc` (voltage-based inverter SOC is unused).
     Does not mutate `tele`.
     """
     if tele is None:
         return None
     out = dict(tele)
-    if not packs or not use_as_main:
+    if not packs:
+        return _strip_inverter_soc(out) if ignore_inverter_soc else out
+    if not use_as_main and not ignore_inverter_soc:
         return out
     now = time.time() if now is None else now
     weights: list[tuple[float, float]] = []
@@ -280,7 +296,7 @@ def overlay_telemetry(
                 hottest = tf
     soc = weighted_soc(weights)
     if soc is None:
-        return out
+        return _strip_inverter_soc(out) if ignore_inverter_soc else out
     portal = out.get("battery_percent")
     out["inverter_soc_pct"] = portal
     out["main_soc_pct"] = portal
@@ -304,7 +320,7 @@ def overlay_telemetry(
         out["battery_status"] = 2
     else:
         out["battery_status"] = 0
-    return out
+    return _strip_inverter_soc(out) if ignore_inverter_soc else out
 
 
 def ui_pack_rows(

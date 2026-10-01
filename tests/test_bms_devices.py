@@ -85,6 +85,35 @@ def test_overlay_falls_back_when_stale_or_disabled(reg):
     assert out2["battery_percent"] == 64
 
 
+def test_overlay_ignore_inverter_soc_hides_portal(reg):
+    tele = {"battery_percent": 55, "solar_input_w": 100}
+    packs = [{"mac": "AA:BB:CC:DD:EE:01", "capacity_wh": 5000, "alias": "A"}]
+    now = 1_700_000_000.0
+    live = {"AA:BB:CC:DD:EE:01": {
+        "soc_pct": 29, "ts": now, "current_a": 1, "power_w": 50, "voltage_v": 53,
+    }}
+    out = reg.overlay_telemetry(
+        tele, packs=packs, live=live, use_as_main=True, now=now,
+        ignore_inverter_soc=True)
+    assert out["battery_percent"] == 29.0
+    assert out["bms_source"] is True
+    assert out["ignore_inverter_soc"] is True
+    assert "inverter_soc_pct" not in out
+    assert tele["battery_percent"] == 55
+
+
+def test_overlay_ignore_inverter_soc_stale_bms_drops_portal(reg):
+    tele = {"battery_percent": 55}
+    packs = [{"mac": "AA:BB:CC:DD:EE:01", "capacity_wh": 5000}]
+    now = 1_700_000_000.0
+    out = reg.overlay_telemetry(
+        tele, packs=packs, live={}, use_as_main=True, now=now,
+        ignore_inverter_soc=True)
+    assert out["battery_percent"] is None
+    assert not out.get("bms_source")
+    assert out["ignore_inverter_soc"] is True
+
+
 def test_ui_pack_rows_keep_stale_with_error(reg):
     packs = [{"mac": "AA:BB:CC:DD:EE:01", "capacity_wh": 1000, "alias": "P1"}]
     now = 1_700_000_000.0
