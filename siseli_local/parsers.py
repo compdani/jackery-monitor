@@ -2313,7 +2313,9 @@ class SolarParser:
 
         Confirmed against the portal on 2026-10-01 21:11: 8eyo is panel
         voltage (/10), panel current (/100), and watts. WfP8 is SOC,
-        battery voltage (/10), and charge current (/100).
+        battery voltage (/10), and charge current (/100). Register 6 of
+        WfP8 is load watts: it was 0 while the portal load was 0, and
+        1218 while the house load was about 1213 W.
         """
         rows = SolarParser._modbus_rows(blocks)
         state: Dict[str, object] = {}
@@ -2328,6 +2330,12 @@ class SolarParser:
             state["bat_cap"] = int(pack[0])
             state["bat_v"] = round(pack[1] / 10.0, 1)
             state["bat_charge_current"] = round(pack[2] / 100.0, 2)
+        if len(pack) >= 6:
+            # Same /100 scale as the charge current. 2350 → 23.5 A,
+            # and 50.9 V × 23.5 A is within a few percent of the watt register.
+            state["dischg_current"] = round(pack[5] / 100.0, 2)
+        if len(pack) >= 7:
+            state["load_w"] = int(pack[6])
         return state
 
     @staticmethod
@@ -2339,7 +2347,7 @@ class SolarParser:
             if not sl_runner.mqtt_capture_enabled():
                 return
             rows = SolarParser._modbus_rows(blocks)
-            used_map = {"8eyo": (0, 1, 2), "WfP8": (0, 1, 2)}
+            used_map = {"8eyo": (0, 1, 2), "WfP8": (0, 1, 2, 5, 6)}
             listed = []
             for name in sorted(rows):
                 regs = rows[name]
@@ -2347,7 +2355,8 @@ class SolarParser:
                 listed.append({"name": name, "registers": regs, "used": used})
             mapped_keys = (
                 "pv_w", "pv_v", "pv_a", "bat_v", "bat_cap",
-                "bat_charge_current", "generation_power_w",
+                "bat_charge_current", "dischg_current", "load_w",
+                "generation_power_w",
             )
             sl_runner.note_mqtt_capture({
                 "ts": time.time(),

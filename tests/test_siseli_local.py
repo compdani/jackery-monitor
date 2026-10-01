@@ -270,3 +270,53 @@ def test_mqtt_capture_ring_keeps_unmapped_load(tmp_path, monkeypatch):
     assert by_name["bcCu"]["registers"] == [0, 428, 710]
     assert by_name["bcCu"]["used"] == []
     assert runner.mqtt_captures() == []
+
+
+def test_wfp8_register_6_is_load_watts(tmp_path, monkeypatch):
+    """The capture: register 6 was 1218 W while the house load was about 1213 W."""
+    cache = tmp_path / "state.json"
+    monkeypatch.setenv("SISELI_LOCAL_STATE_FILE", str(cache))
+
+    import siseli_local.config as cfg
+    import siseli_local.mqtt as mqtt
+    import siseli_local.parsers as parsers
+    import siseli_local.state as st
+
+    cfg.STATE_CACHE_FILE = str(cache)
+    parsers.STATE_CACHE_FILE = str(cache)
+    st.LAST_STATE.clear()
+    st.DISCOVERY_PUBLISHED = True
+    parsers.LAST_PUBLISH_TS = 0.0
+    parsers.PENDING_PUBLISH = False
+
+    def fc03(regs: list[int]) -> str:
+        data = b"".join(int(reg).to_bytes(2, "big") for reg in regs)
+        body = bytes([0x01, 0x03, len(data)]) + data
+        crc = parsers.SolarParser._crc16_modbus(body)
+        return (body + crc.to_bytes(2, "little")).hex()
+
+    frames = {
+        "8eyo": fc03([679, 30, 22]),
+        "WfP8": fc03([40, 509, 0, 10537, 517, 2350, 1218]),
+    }
+    payload = json.dumps({"b": {"ct": [
+        {"cn": name, "co": base64.b64encode(bytes.fromhex(body)).decode()}
+        for name, body in frames.items()
+    ]}}).encode()
+
+    seen: list[dict] = []
+    mqtt.set_sink(seen.append)
+    try:
+        assert parsers.SolarParser.parse_payload(payload, source_topic="dtu/x/pub") is True
+    finally:
+        mqtt.set_sink(None)
+
+    snap = seen[-1]
+    assert snap.get("pv_w") == 22
+    assert snap.get("pv_v") == 67.9
+    assert snap.get("pv_a") == 0.3
+    assert snap.get("bat_cap") == 40
+    assert snap.get("bat_v") == 50.9
+    assert snap.get("bat_charge_current") == 0.0
+    assert snap.get("dischg_current") == 23.5
+    assert snap.get("load_w") == 1218

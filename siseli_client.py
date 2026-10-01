@@ -454,12 +454,17 @@ def apply_derived_values(latest_values: dict[str, Any]) -> None:
     if latest_values.get("loadPower") is None:
         latest_values["loadPower"] = ac_output
     if latest_values.get("gridPower") is None:
+        # Siseli does not publish a grid register. Import is only the
+        # shortfall after solar and battery discharge. A discharging pack
+        # covers the load, so it must not show up as grid.
         pv_power = coerce_number(latest_values.get("pvInputPower")) or 0.0
-        feed_in = coerce_number(latest_values.get("feedInPower")) or 0.0
+        load = coerce_number(latest_values.get("loadPower")) or ac_output
         battery_power = coerce_number(latest_values.get("batteryPower")) or 0.0
-        latest_values["gridPower"] = max(
-            0.0, ac_output - pv_power + battery_power + feed_in,
-        )
+        battery_out = max(0.0, battery_power)
+        if battery_out + pv_power < load:
+            latest_values["gridPower"] = max(0.0, load - pv_power - battery_out)
+        else:
+            latest_values["gridPower"] = 0.0
 
 
 def to_telemetry(values: dict[str, Any]) -> dict[str, Any]:

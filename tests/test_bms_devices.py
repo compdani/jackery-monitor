@@ -106,6 +106,35 @@ def test_overlay_load_is_greater_of_siseli_and_bms_discharge(reg):
     assert charging["output_power_w"] == 90
 
 
+def test_overlay_grid_is_only_the_shortfall(reg):
+    packs = [{"mac": "AA:BB:CC:DD:EE:01", "capacity_wh": 5000, "alias": "A"}]
+    now = 1_700_000_000.0
+    discharging = reg.overlay_telemetry(
+        {
+            "battery_percent": 39,
+            "solar_input_w": 16,
+            "output_power_w": None,
+            "ac_input_w": 1197,
+            "source": "siseli",
+        },
+        packs=packs,
+        live={"AA:BB:CC:DD:EE:01": {
+            "soc_pct": 39, "ts": now, "current_a": -24, "power_w": -1213, "voltage_v": 51.0,
+        }},
+        use_as_main=True, now=now)
+    assert discharging["output_power_w"] == 1213
+    assert discharging["ac_input_w"] == 0
+
+    short = reg.overlay_telemetry(
+        {"battery_percent": 39, "solar_input_w": 16, "output_power_w": 1500, "source": "siseli"},
+        packs=packs,
+        live={"AA:BB:CC:DD:EE:01": {
+            "soc_pct": 39, "ts": now, "current_a": -24, "power_w": -1213, "voltage_v": 51.0,
+        }},
+        use_as_main=True, now=now)
+    assert short["ac_input_w"] == 1500 - 16 - 1213
+
+
 def test_overlay_falls_back_when_stale_or_disabled(reg):
     tele = {"battery_percent": 64}
     packs = [{"mac": "AA:BB:CC:DD:EE:01", "capacity_wh": 5000}]

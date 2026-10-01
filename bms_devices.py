@@ -322,6 +322,16 @@ def overlay_telemetry(
         siseli_load = 0.0
     bms_discharge_w = max(0.0, -powers)
     out["output_power_w"] = int(round(max(siseli_load, bms_discharge_w)))
+    solar_w = max(0.0, float(out.get("solar_input_w") or 0))
+    load_w = max(0.0, float(out.get("output_power_w") or 0))
+    # No Siseli grid register. Import exists only when solar and the
+    # packs' discharge cannot cover the load.
+    if bms_discharge_w + solar_w < load_w:
+        grid_w = int(round(load_w - solar_w - bms_discharge_w))
+    else:
+        grid_w = 0
+    out["ac_input_w"] = grid_w
+    out["input_power_w"] = int(round(solar_w + grid_w))
     if hottest is not None:
         out["battery_temp_c"] = hottest
     if currents > 0.05:
