@@ -332,6 +332,7 @@ function BmsCard({ status }: { status: StatusPayload | null }) {
   const viewing = siseliDeviceId(status);
   const viewingSiseli = isSiseliView(status);
   const ignoreSoc = !!status?.device_prefs?.ignore_inverter_soc;
+  const calcGrid = !!status?.device_prefs?.calc_grid;
   const [packs, setPacks] = useState<BmsPack[]>([]);
   const [inverters, setInverters] = useState<Record<string, BmsInverterFlag>>({});
   const [bleStatus, setBleStatus] = useState("—");
@@ -405,20 +406,36 @@ function BmsCard({ status }: { status: StatusPayload | null }) {
         }}
       />
       {viewingSiseli ? (
-        <RowSwitch
-          label="Ignore inverter SOC"
-          hint="Siseli inverter SOC is voltage-based and often disagrees with the BMS. When on, Live and history use pack SOC only."
-          value={ignoreSoc}
-          onValueChange={(next) => {
-            const id = siseliDeviceId(status);
-            if (!id) return;
-            patchDevicePrefs({ ignore_inverter_soc: next });
-            void endpoints.saveDevicePrefs({ device_id: id, ignore_inverter_soc: next }).catch((e: unknown) => {
-              patchDevicePrefs({ ignore_inverter_soc: !next });
-              setMsg(errText(e));
-            });
-          }}
-        />
+        <>
+          <RowSwitch
+            label="Ignore inverter SOC"
+            hint="Siseli inverter SOC is voltage-based and often disagrees with the BMS. When on, Live and history use pack SOC only."
+            value={ignoreSoc}
+            onValueChange={(next) => {
+              const id = siseliDeviceId(status);
+              if (!id) return;
+              patchDevicePrefs({ ignore_inverter_soc: next });
+              void endpoints.saveDevicePrefs({ device_id: id, ignore_inverter_soc: next }).catch((e: unknown) => {
+                patchDevicePrefs({ ignore_inverter_soc: !next });
+                setMsg(errText(e));
+              });
+            }}
+          />
+          <RowSwitch
+            label="Calculate grid"
+            hint="Estimates grid watts on this dashboard when solar plus battery discharge is less than the load. Does not write anything to Siseli."
+            value={calcGrid}
+            onValueChange={(next) => {
+              const id = siseliDeviceId(status);
+              if (!id) return;
+              patchDevicePrefs({ calc_grid: next });
+              void endpoints.saveDevicePrefs({ device_id: id, calc_grid: next }).catch((e: unknown) => {
+                patchDevicePrefs({ calc_grid: !next });
+                setMsg(errText(e));
+              });
+            }}
+          />
+        </>
       ) : null}
       {packs.length ? (
         packs.map((p) => {

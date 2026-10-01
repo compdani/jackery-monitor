@@ -121,7 +121,7 @@ def test_overlay_grid_is_only_the_shortfall(reg):
         live={"AA:BB:CC:DD:EE:01": {
             "soc_pct": 39, "ts": now, "current_a": -24, "power_w": -1213, "voltage_v": 51.0,
         }},
-        use_as_main=True, now=now)
+        use_as_main=True, now=now, calc_grid=True)
     assert discharging["output_power_w"] == 1213
     assert discharging["ac_input_w"] == 0
 
@@ -131,8 +131,18 @@ def test_overlay_grid_is_only_the_shortfall(reg):
         live={"AA:BB:CC:DD:EE:01": {
             "soc_pct": 39, "ts": now, "current_a": -24, "power_w": -1213, "voltage_v": 51.0,
         }},
-        use_as_main=True, now=now)
+        use_as_main=True, now=now, calc_grid=True)
     assert short["ac_input_w"] == 1500 - 16 - 1213
+
+    off = reg.overlay_telemetry(
+        {"battery_percent": 39, "solar_input_w": 16, "output_power_w": 1500,
+         "ac_input_w": 1197, "source": "siseli"},
+        packs=packs,
+        live={"AA:BB:CC:DD:EE:01": {
+            "soc_pct": 39, "ts": now, "current_a": -24, "power_w": -1213, "voltage_v": 51.0,
+        }},
+        use_as_main=True, now=now, calc_grid=False)
+    assert off["ac_input_w"] == 0
 
 
 def test_overlay_falls_back_when_stale_or_disabled(reg):

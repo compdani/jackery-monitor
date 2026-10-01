@@ -227,6 +227,32 @@ def _strip_inverter_soc(tele: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
+def apply_grid_estimate(tele: dict[str, Any], *, enabled: bool) -> dict[str, Any]:
+    """Dashboard-only grid watts. Never a value to send to Siseli.
+
+    Off leaves grid at 0. On, grid is the shortfall after solar and
+    battery discharge. `battery_discharge_w` is the positive watts the
+    BMS overlay recorded.
+    """
+    solar = max(0.0, float(tele.get("solar_input_w") or 0))
+    if not enabled:
+        tele["ac_input_w"] = 0
+        tele["input_power_w"] = int(round(solar))
+        return tele
+    load = max(0.0, float(tele.get("output_power_w") or 0))
+    try:
+        battery_out = max(0.0, float(tele.get("battery_discharge_w") or 0))
+    except (TypeError, ValueError):
+        battery_out = 0.0
+    if battery_out + solar < load:
+        grid = int(round(load - solar - battery_out))
+    else:
+        grid = 0
+    tele["ac_input_w"] = grid
+    tele["input_power_w"] = int(round(solar + grid))
+    return tele
+
+
 def overlay_telemetry(
     tele: dict[str, Any] | None,
     *,
@@ -237,6 +263,7 @@ def overlay_telemetry(
     stale_s: float = STALE_AFTER_S,
     capacity_override_wh: int | None = None,
     ignore_inverter_soc: bool = False,
+    calc_grid: bool = False,
 ) -> dict[str, Any] | None:
     """Copy Siseli telemetry and, when enabled, replace headline SOC.
 
@@ -247,10 +274,14 @@ def overlay_telemetry(
     if tele is None:
         return None
     out = dict(tele)
+
+    def finish(row: dict[str, Any]) -> dict[str, Any]:
+        return apply_grid_estimate(row, enabled=calc_grid)
+
     if not packs:
-        return _strip_inverter_soc(out) if ignore_inverter_soc else out
+        return finish(_strip_inverter_soc(out) if ignore_inverter_soc else out)
     if not use_as_main and not ignore_inverter_soc:
-        return out
+        return finish(out)
     now = time.time() if now is None else now
     weights: list[tuple[float, float]] = []
     currents = 0.0
@@ -296,7 +327,7 @@ def overlay_telemetry(
                 hottest = tf
     soc = weighted_soc(weights)
     if soc is None:
-        return _strip_inverter_soc(out) if ignore_inverter_soc else out
+        return finish(_strip_inverter_soc(out) if ignore_inverter_soc else out)
     portal = out.get("battery_percent")
     out["inverter_soc_pct"] = portal
     out["main_soc_pct"] = portal
@@ -322,16 +353,7 @@ def overlay_telemetry(
         siseli_load = 0.0
     bms_discharge_w = max(0.0, -powers)
     out["output_power_w"] = int(round(max(siseli_load, bms_discharge_w)))
-    solar_w = max(0.0, float(out.get("solar_input_w") or 0))
-    load_w = max(0.0, float(out.get("output_power_w") or 0))
-    # No Siseli grid register. Import exists only when solar and the
-    # packs' discharge cannot cover the load.
-    if bms_discharge_w + solar_w < load_w:
-        grid_w = int(round(load_w - solar_w - bms_discharge_w))
-    else:
-        grid_w = 0
-    out["ac_input_w"] = grid_w
-    out["input_power_w"] = int(round(solar_w + grid_w))
+    out["battery_discharge_w"] = int(round(bms_discharge_w))
     if hottest is not None:
         out["battery_temp_c"] = hottest
     if currents > 0.05:
@@ -340,7 +362,7 @@ def overlay_telemetry(
         out["battery_status"] = 2
     else:
         out["battery_status"] = 0
-    return _strip_inverter_soc(out) if ignore_inverter_soc else out
+    return finish(_strip_inverter_soc(out) if ignore_inverter_soc else out)
 
 
 def ui_pack_rows(

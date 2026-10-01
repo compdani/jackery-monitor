@@ -65,6 +65,11 @@ def test_ignore_inverter_soc_round_trip(prefs_mod):
     assert prefs_mod.ignore_inverter_soc(r.get("siseli:42")) is True
     r.update("siseli:42", ignore_inverter_soc=False)
     assert "ignore_inverter_soc" not in r.get("siseli:42")
+    assert prefs_mod.calc_grid(r.get("siseli:42")) is False
+    r.update("siseli:42", calc_grid=True)
+    assert prefs_mod.calc_grid(r.get("siseli:42")) is True
+    r.update("siseli:42", calc_grid=False)
+    assert "calc_grid" not in r.get("siseli:42")
 
 
 def test_update_requires_device_id(prefs_mod):

@@ -135,6 +135,7 @@ export type DevicePrefs = {
   alias?: string;
   live_controls?: string[];
   ignore_inverter_soc?: boolean;
+  calc_grid?: boolean;
 };
 
 export type SiseliReadings = {

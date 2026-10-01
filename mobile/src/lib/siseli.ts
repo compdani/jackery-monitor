@@ -70,6 +70,7 @@ export function applySiseliControls(controls: SiseliControl[]) {
 export function patchDevicePrefs(patch: {
   live_controls?: string[];
   ignore_inverter_soc?: boolean;
+  calc_grid?: boolean;
   alias?: string;
 }) {
   useLive.setState((s) => {

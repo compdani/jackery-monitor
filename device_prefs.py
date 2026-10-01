@@ -15,6 +15,8 @@ Aliases are display-only — they never write to Siseli or Jackery cloud.
 inverter exposes". An explicit empty list means nothing on Live.
 `ignore_inverter_soc` (Siseli only) drops voltage-based inverter SOC
 from Live, history, and the packs card.
+`calc_grid` (Siseli only) estimates grid watts on this dashboard from
+solar, battery discharge, and load. It never writes to Siseli.
 """
 
 from __future__ import annotations
@@ -70,6 +72,11 @@ def ignore_inverter_soc(pref: dict[str, Any] | None) -> bool:
     return bool((pref or {}).get("ignore_inverter_soc"))
 
 
+def calc_grid(pref: dict[str, Any] | None) -> bool:
+    """True when this dashboard should estimate Siseli grid watts."""
+    return bool((pref or {}).get("calc_grid"))
+
+
 class DevicePrefs:
     def __init__(self) -> None:
         self.by_id: dict[str, dict[str, Any]] = {}
@@ -111,7 +118,8 @@ class DevicePrefs:
 
     def update(self, device_id: str, *, alias: Any = _UNSET,
                live_controls: Any = _UNSET,
-               ignore_inverter_soc: Any = _UNSET) -> dict[str, Any]:
+               ignore_inverter_soc: Any = _UNSET,
+               calc_grid: Any = _UNSET) -> dict[str, Any]:
         did = _clean_id(device_id)
         if not did:
             raise ValueError("device_id is required")
@@ -139,6 +147,11 @@ class DevicePrefs:
                 row["ignore_inverter_soc"] = True
             else:
                 row.pop("ignore_inverter_soc", None)
+        if calc_grid is not _UNSET:
+            if calc_grid:
+                row["calc_grid"] = True
+            else:
+                row.pop("calc_grid", None)
         if row:
             self.by_id[did] = row
         else:

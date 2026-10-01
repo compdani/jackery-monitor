@@ -925,6 +925,7 @@ def _apply_bms_overlay(sn: str | None, tele: dict | None) -> dict | None:
         override = None
     cap = int(override) if override else None
     ignore = device_prefs.ignore_inverter_soc(_siseli_pref(sn))
+    estimate = device_prefs.calc_grid(_siseli_pref(sn))
     return bms_devices.overlay_telemetry(
         tele,
         packs=state.bms.list_packs(sn),
@@ -932,6 +933,7 @@ def _apply_bms_overlay(sn: str | None, tele: dict | None) -> dict | None:
         use_as_main=state.bms.use_as_main(sn),
         capacity_override_wh=cap,
         ignore_inverter_soc=ignore,
+        calc_grid=estimate,
     )
 
 
@@ -1757,6 +1759,7 @@ def serialize_status(view_device_id: str | None = None) -> dict[str, Any]:
             "live_controls": device_prefs.resolved_live_controls(
                 pref, siseli_controls),
             "ignore_inverter_soc": device_prefs.ignore_inverter_soc(pref),
+            "calc_grid": device_prefs.calc_grid(pref),
         },
         "siseli": {
             "state": state.siseli.get("state"),
@@ -6028,8 +6031,10 @@ async def api_device_prefs_update(body: dict):
         kwargs["live_controls"] = payload.get("live_controls")
     if "ignore_inverter_soc" in payload:
         kwargs["ignore_inverter_soc"] = bool(payload.get("ignore_inverter_soc"))
+    if "calc_grid" in payload:
+        kwargs["calc_grid"] = bool(payload.get("calc_grid"))
     if not kwargs:
-        raise HTTPException(400, "alias, live_controls, or ignore_inverter_soc required")
+        raise HTTPException(400, "alias, live_controls, ignore_inverter_soc, or calc_grid required")
     try:
         row = state.device_prefs.update(did, **kwargs)
     except ValueError as e:

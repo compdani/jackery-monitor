@@ -437,6 +437,7 @@ def test_siseli_view_synthesizes_status(server_state):
     assert out["device"]["portal_name"] == "House inverter"
     assert out["device_prefs"]["live_controls"] == ["batteryChargeLimit"]
     assert out["device_prefs"]["ignore_inverter_soc"] is False
+    assert out["device_prefs"]["calc_grid"] is False
 
 
 def test_device_alias_overlays_status_and_overview(server_state):

@@ -2076,9 +2076,14 @@ function applySiseliChrome(s) {
   renderSiseliDeviceSettings(s && s.siseli_controls, deviceId, siseli, prefs);
   const ignoreRow = $('siseli-ignore-soc-row');
   const ignoreHint = $('siseli-ignore-soc-hint');
+  const gridRow = $('siseli-calc-grid-row');
+  const gridHint = $('siseli-calc-grid-hint');
   if (ignoreRow) ignoreRow.hidden = !siseli;
   if (ignoreHint) ignoreHint.hidden = !siseli;
+  if (gridRow) gridRow.hidden = !siseli;
+  if (gridHint) gridHint.hidden = !siseli;
   setSiseliIgnoreSocUi(!!(prefs && prefs.ignore_inverter_soc));
+  setSiseliCalcGridUi(!!(prefs && prefs.calc_grid));
   document.querySelectorAll('[data-jackery-only]').forEach((el) => {
     if (el.id === 'unknown-model-banner') {
       if (siseli) el.hidden = true;
@@ -2232,6 +2237,9 @@ async function saveDevicePrefs(patch) {
     if ('live_controls' in patch) lastStatus.device_prefs.live_controls = patch.live_controls;
     if ('ignore_inverter_soc' in patch) {
       lastStatus.device_prefs.ignore_inverter_soc = !!patch.ignore_inverter_soc;
+    }
+    if ('calc_grid' in patch) {
+      lastStatus.device_prefs.calc_grid = !!patch.calc_grid;
     }
     if ('alias' in patch && lastStatus.device) {
       lastStatus.device.name = patch.alias || lastStatus.device.portal_name || lastStatus.device.name;
@@ -2762,6 +2770,15 @@ function setSiseliIgnoreSocUi(on) {
   if (st) st.textContent = on ? 'on' : 'off';
 }
 
+function setSiseliCalcGridUi(on) {
+  const btn = $('siseli-calc-grid');
+  if (!btn) return;
+  btn.classList.toggle('on', !!on);
+  btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+  const st = btn.querySelector('.sw-state');
+  if (st) st.textContent = on ? 'on' : 'off';
+}
+
 function setBmsUseAsMainUi(on) {
   const btn = $('bms-use-as-main');
   if (!btn) return;
@@ -2957,6 +2974,18 @@ document.addEventListener('click', (e) => {
   }
   const mainBtn = e.target.closest('#bms-use-as-main');
   const ignoreBtn = e.target.closest('#siseli-ignore-soc');
+  const gridBtn = e.target.closest('#siseli-calc-grid');
+  if (gridBtn) {
+    e.preventDefault();
+    const next = !gridBtn.classList.contains('on');
+    setSiseliCalcGridUi(next);
+    saveDevicePrefs({ calc_grid: next }).catch((err) => {
+      setSiseliCalcGridUi(!next);
+      const msg = $('bms-msg');
+      if (msg) { msg.hidden = false; msg.textContent = err.message || 'failed'; }
+    });
+    return;
+  }
   if (ignoreBtn) {
     e.preventDefault();
     const next = !ignoreBtn.classList.contains('on');

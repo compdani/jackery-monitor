@@ -89,7 +89,7 @@ def test_apply_derived_values_gap_fill():
     sc.apply_derived_values(values)
     assert values["batteryPower"] == 100.0
     assert values["loadPower"] == 800
-    assert values["gridPower"] == 500.0
+    assert "gridPower" not in values
 
 
 def test_normalize_device():

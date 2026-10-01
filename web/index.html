@@ -1156,6 +1156,16 @@
           When on, Live, history, and the packs card use pack SOC only — the
           inverter’s voltage-based reading is hidden and never stored.
         </p>
+        <label id="siseli-calc-grid-row" class="auto-field siseli-control siseli-switch" hidden style="margin-bottom:12px">
+          <span class="auto-label">Calculate grid</span>
+          <button type="button" class="switch" id="siseli-calc-grid" aria-pressed="false">
+            <span class="sw-state">off</span>
+          </button>
+        </label>
+        <p id="siseli-calc-grid-hint" class="hint" hidden style="margin:-4px 0 12px">
+          Estimates grid watts on this dashboard when solar plus battery discharge
+          is less than the load. This does not write anything to Siseli.
+        </p>
         <div id="bms-list" class="kasa-list"></div>
         <form id="bms-add-form" style="margin-top:14px">
           <div class="auto-form-grid">
@@ -2337,6 +2347,6 @@
   </footer>
 
   <script src="/static/sortable.min.js"></script>
-  <script src="/static/app.js?v=20"></script>
+  <script src="/static/app.js?v=21"></script>
 </body>
 </html>

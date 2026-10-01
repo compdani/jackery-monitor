@@ -419,6 +419,7 @@ export const endpoints = {
     alias?: string;
     live_controls?: string[];
     ignore_inverter_soc?: boolean;
+    calc_grid?: boolean;
   }) => api("/api/device_prefs", { method: "POST", body }),
   bmsSaved: () => api<BmsSaved>("/api/bms/saved"),
   saveBmsPack: (body: {
