@@ -48,6 +48,15 @@ SCHEMA: dict[str, dict[str, Any]] = {
         "label": "Cloud poll interval (s)",
         "hint": "How often the bridge polls the Jackery cloud. Lower = fresher data on fields not covered by MQTT (battery %, port states, AC/car input split), but more API calls. Tokens are JWTs valid ~30 days; a single login serves many polls, so this knob is purely a freshness-vs-API-load tradeoff. MQTT pushes update ip/op/temp every 2-3s independent of this, so the live power flow stays fresh regardless.",
     },
+    "siseli_poll_interval_s": {
+        "env": "SISELI_POLL_INTERVAL_S",
+        "default": 300,
+        "type": "int",
+        "min": 30,
+        "max": 3600,
+        "label": "Siseli poll interval (s)",
+        "hint": "How often the dashboard polls solar.siseli.com for inverter telemetry and settings. The portal is HTTP-only and rate-limited — 300s (5 min) is the default. Lower = fresher Live watts/SOC from the inverter, more API calls. Bluetooth BMS SOC is polled separately and is not affected.",
+    },
     "session_contested_cooldown_s": {
         "env": "SESSION_CONTESTED_COOLDOWN_S",
         "default": 60,

@@ -77,6 +77,7 @@ def test_schema_includes_all_keys(isolated_data):
     keys = {entry["key"] for entry in schema}
     assert "poll_interval_s" in keys
     assert "cloud_poll_interval_s" in keys
+    assert "siseli_poll_interval_s" in keys
     assert "session_contested_cooldown_s" in keys
     assert "low_battery_threshold" in keys
     # Each entry has the fields the UI expects.

@@ -128,9 +128,8 @@ FORECASTER_BREAKING_CHANGE_TS = int(
 CLOUD_STALL_ALERT_S = 8 * 60
 
 # Siseli (Solar of Things) cloud poll — independent of the Jackery
-# bridge. The portal is HTTP-only and rate-limited; 5 min matches the
-# upstream Home Assistant integration's default.
-SISELI_POLL_INTERVAL_S = 300
+# bridge. Interval is user-tunable via Settings (`siseli_poll_interval_s`,
+# default 300s). The portal is HTTP-only and rate-limited.
 # Bluetooth BMS (Overkill/JBD) poll — sequential connect-query-disconnect
 # on the host BlueZ adapter. Independent of the 5-minute Siseli portal poll
 # so Live SOC can move at BLE cadence.
@@ -1065,8 +1064,9 @@ async def siseli_loop() -> None:
             log.warning("siseli_loop: %s", e)
         state.siseli_wake.clear()
         try:
+            wait_s = max(30, int(user_settings.get("siseli_poll_interval_s") or 300))
             await asyncio.wait_for(
-                state.siseli_wake.wait(), timeout=SISELI_POLL_INTERVAL_S,
+                state.siseli_wake.wait(), timeout=wait_s,
             )
         except asyncio.TimeoutError:
             pass
@@ -6141,6 +6141,7 @@ def api_settings_post(body: dict):
     if not isinstance(body, dict):
         raise HTTPException(400, "body must be a JSON object")
     new_values = user_settings.update(body)
+    _kick_siseli_poll()
     return {"ok": True, "settings": new_values}
 
 

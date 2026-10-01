@@ -406,6 +406,7 @@ Most knobs live in the **Settings tab**, persisted to
 |---|---|---|---|
 | Server poll interval | 2 s | 1-300 | Server → bridge → browser cadence. With MQTT push the bridge has ~500ms-fresh data; this is just the WS broadcast rate. |
 | Cloud poll interval | 15 s | 5-600 | HTTP poll to the Jackery cloud. Now a backstop since MQTT push handles real-time. |
+| Siseli poll interval | 300 s | 30-3600 | HTTP poll to solar.siseli.com for inverter telemetry and settings. Bluetooth BMS SOC is polled separately. |
 | Session-contested cooldown | 60 s | 10-600 | After the phone app bumps the bridge off, how long before the bridge tries to reclaim. |
 | Low-battery alert threshold | 20 % | 1-99 | Below this, the dashboard shows a low-battery alert banner. |
 
