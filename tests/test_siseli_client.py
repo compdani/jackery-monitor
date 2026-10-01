@@ -175,6 +175,53 @@ def test_login_rejects_bad_credentials():
     api.close()
 
 
+def test_controller_latest_state_maps_live_readings():
+    """Charge-controller devices publish SOC and PV on the device latest
+    endpoint the portal uses, not on station history."""
+    calls = {"history": 0, "flow": 0, "latest": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        path = request.url.path
+        if path.endswith("/state/latest/v1"):
+            calls["latest"] += 1
+            assert request.url.params.get("deviceId") == "525039200608948225"
+            assert request.url.params.get("dataSource") == "1"
+            return httpx.Response(200, json={
+                "code": 0,
+                "data": {"fields": {
+                    "batteryRemainingCapacitySOC": {"value": 42, "unit": "%"},
+                    "BatteryVoltage": {"value": 51.6, "unit": "V"},
+                    "generationPower": {"value": 0.152, "unit": "kW"},
+                    "load_power": {"value": 0, "unit": "W"},
+                    "ChargingCurrent": {"value": 2.9, "unit": "A"},
+                    "batteryTemperature1": {"value": 39, "unit": "°C"},
+                }},
+            })
+        if path.endswith("/history/v1"):
+            calls["history"] += 1
+            return httpx.Response(200, json={"code": 0, "data": {"payload": {"fields": {}}}})
+        if path.endswith("/energy/flow/v1"):
+            calls["flow"] += 1
+            return httpx.Response(200, json={"code": 0, "data": {}})
+        return httpx.Response(404)
+
+    http = httpx.Client(transport=_transport(handler))
+    api = sc.SiseliAPI(user_id="alice", password="p", iot_token="tok", http=http)
+    values = api.fetch_latest_data("525039200608948225")
+    tele = sc.to_telemetry(values)
+    assert calls == {"latest": 1, "history": 0, "flow": 0}
+    assert values["batterySOC"] == 42
+    assert values["pvInputPower"] == 152
+    assert values["loadPower"] == 0
+    assert values["batteryVoltage"] == 51.6
+    assert tele["battery_percent"] == 42
+    assert tele["solar_input_w"] == 152
+    assert tele["output_power_w"] == 0
+    assert tele["battery_status"] == 1
+    assert tele["battery_temp_c"] == 39
+    api.close()
+
+
 def test_fetch_latest_data_uses_energy_flow_fallback():
     def handler(request: httpx.Request) -> httpx.Response:
         path = request.url.path

@@ -37,6 +37,7 @@ API_SETTINGS_GET = "/apis/remote/device/configs/cache/get"
 API_SETTINGS_SET = "/apis/remote/device/config/write"
 API_DEVICE_LIST = "/apis/device/list"
 API_ENERGY_FLOW = "/apis/deviceState/simple/energy/flow/v1"
+API_STATE_LATEST = "/apis/deviceState/simple/state/latest/v1"
 
 IOT_APP_ID = "rBrTRfAPXz"
 IOT_APP_SECRET_ENC = "I4D0KRr2339z3pQ/at91V9BpFAOe54DaTafwSm6suIQ="
@@ -291,6 +292,88 @@ def coerce_number(value: Any) -> float | None:
     return None
 
 
+def _field_number(raw: Any) -> tuple[float | None, str]:
+    """Return (number, unit) from a bare value or a portal ``{value, unit}`` object."""
+    if isinstance(raw, dict):
+        return coerce_number(raw.get("value")), str(raw.get("unit") or "")
+    return coerce_number(raw), ""
+
+
+def _first_field(fields: dict[str, Any], keys: tuple[str, ...]) -> tuple[float | None, str]:
+    for key in keys:
+        if key not in fields:
+            continue
+        number, unit = _field_number(fields.get(key))
+        if number is not None:
+            return number, unit
+    return None, ""
+
+
+def _as_watts(number: float | None, unit: str) -> float | None:
+    if number is None:
+        return None
+    if unit.strip().lower() == "kw":
+        return number * 1000.0
+    return number
+
+
+def map_latest_state_fields(fields: Any) -> dict[str, float]:
+    """Map the device latest-state payload onto canonical sensor keys.
+
+    Charge controllers (the portal's Devices details page) report live
+    values here under names the station history endpoint never uses:
+    ``batteryRemainingCapacitySOC``, ``BatteryVoltage``, ``generationPower``
+    (kW), and ``load_power``. Watts follow the payload's own unit tag so a
+    kW field is not left as a fraction of a watt and a W field is not
+    multiplied by 1000.
+    """
+    if not isinstance(fields, dict) or not fields:
+        return {}
+    mapped: dict[str, float] = {}
+    soc, _unit = _first_field(fields, (
+        "batteryRemainingCapacitySOC", "batteryPercentage", "bmsSOC", "batterySOC",
+    ))
+    if soc is not None:
+        mapped["batterySOC"] = soc
+    volts, _unit = _first_field(fields, (
+        "BatteryVoltage", "bmsBatteryVoltage", "positiveTerminalBatteryVoltage",
+        "batteryVoltage",
+    ))
+    if volts is not None:
+        mapped["batteryVoltage"] = volts
+    gen, gen_unit = _first_field(fields, ("generationPower",))
+    pv = _as_watts(gen, gen_unit) if gen_unit.strip() else None
+    if pv is None:
+        named, named_unit = _first_field(fields, ("pvInputPower", "pvPower"))
+        pv = _as_watts(named, named_unit)
+    if pv is None:
+        strings = [
+            number for key in ("pv1Power", "pv2Power", "pv3Power", "pv4Power")
+            if (number := _field_number(fields.get(key))[0]) is not None
+        ]
+        if strings:
+            pv = sum(strings)
+    if pv is not None:
+        mapped["pvInputPower"] = pv
+    load, load_unit = _first_field(fields, ("load_power", "loadPower", "acOutputActivePower"))
+    # A bare load_power with no unit is the older energy-flow convention (kW).
+    # Leave it for that mapper. A tagged unit is authoritative.
+    load_w = _as_watts(load, load_unit) if load_unit.strip() else None
+    if load_w is not None:
+        mapped["acOutputActivePower"] = load_w
+        mapped["loadPower"] = load_w
+    charge_a, _unit = _first_field(fields, ("ChargingCurrent", "batteryChargingCurrent"))
+    if charge_a is not None:
+        mapped["batteryChargingCurrent"] = charge_a
+    discharge_a, _unit = _first_field(fields, ("batteryDischargeCurrent",))
+    if discharge_a is not None:
+        mapped["batteryDischargeCurrent"] = discharge_a
+    temp, _unit = _first_field(fields, ("batteryTemperature1", "batteryTemperature2"))
+    if temp is not None:
+        mapped["batteryTempC"] = temp
+    return mapped
+
+
 def map_energy_flow_fields(fields: Any) -> dict[str, float]:
     """Translate energy-flow ``fields`` into canonical sensor keys."""
     if not isinstance(fields, dict) or not fields:
@@ -384,6 +467,7 @@ def to_telemetry(values: dict[str, Any]) -> dict[str, Any]:
         "battery_charge_a": charge_a,
         "battery_discharge_a": discharge_a,
         "battery_power_w": coerce_number(values.get("batteryPower")),
+        "battery_temp_c": coerce_number(values.get("batteryTempC")),
         "ac_on": False,
         "dc_on": False,
         "usb_on": False,
@@ -698,16 +782,29 @@ class SiseliAPI:
         return devices
 
     def fetch_latest_data(self, device_id: str) -> dict[str, Any]:
+        # The portal's device page reads live values from the per-device
+        # latest-state endpoint. Station history is only a gap fill for
+        # inverter firmware that still publishes the older key names.
         try:
-            latest_values = self._fetch_time_series_values(device_id)
+            latest_values = self._fetch_latest_state(device_id)
         except TokenExpiredError:
             raise
         except Exception as err:
-            log.warning("device %s: time-series unavailable: %s", device_id, err)
+            log.warning("device %s: latest state unavailable: %s", device_id, err)
             latest_values = {}
+        if latest_values.get("batterySOC") is None:
+            try:
+                history = self._fetch_time_series_values(device_id)
+            except TokenExpiredError:
+                raise
+            except Exception as err:
+                log.warning("device %s: time-series unavailable: %s", device_id, err)
+                history = {}
+            for key, value in history.items():
+                latest_values.setdefault(key, value)
         # One history key, even a zero, used to skip this fallback entirely
         # and leave battery SOC empty. Fill gaps only — setdefault below
-        # keeps a real history reading.
+        # keeps a real reading.
         if (
             not has_realtime_values(latest_values)
             or latest_values.get("batterySOC") is None
@@ -725,7 +822,11 @@ class SiseliAPI:
                 log.debug("device %s: energy-flow fallback unavailable: %s",
                           device_id, err)
             else:
-                mapped = map_energy_flow_fields(fields)
+                mapped = map_latest_state_fields(fields)
+                mapped.update({
+                    k: v for k, v in map_energy_flow_fields(fields).items()
+                    if k not in mapped
+                })
                 if mapped:
                     for key, value in mapped.items():
                         latest_values.setdefault(key, value)
@@ -737,6 +838,17 @@ class SiseliAPI:
                     )
         apply_derived_values(latest_values)
         return latest_values
+
+    def _fetch_latest_state(self, device_id: str) -> dict[str, Any]:
+        data = self._get(API_STATE_LATEST, {"deviceId": device_id, "dataSource": 1})
+        if data.get("code") not in (0, None, "0"):
+            raise RuntimeError(
+                f"Latest state error code={data.get('code')} "
+                f"message={data.get('message')}"
+            )
+        payload = data.get("data") or {}
+        fields = payload.get("fields") if isinstance(payload, dict) else None
+        return map_latest_state_fields(fields)
 
     def _fetch_time_series_values(self, device_id: str) -> dict[str, Any]:
         end_time = self._now()
