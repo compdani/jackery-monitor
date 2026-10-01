@@ -75,6 +75,20 @@ def test_describe_mqtt_streams_names_plain_and_encrypted():
     assert stale.startswith("Saw MQTT to 203.0.113.10:1883")
 
 
+def test_stream_counts_tcp_bytes_separately_from_a_decode():
+    import siseli_local.runner as runner
+    runner.note_stream("198.51.100.8", 1883, encrypted=False, payload_bytes=120)
+    row = next(item for item in runner.mqtt_streams() if item["ip"] == "198.51.100.8")
+    assert row["payload_bytes"] == 120
+    assert not row.get("readings")
+    assert not row.get("saw_mqtt")
+    runner.note_stream("198.51.100.8", 1883, payload_bytes=10, saw_mqtt=True, mqtt_packets=2)
+    row = next(item for item in runner.mqtt_streams() if item["ip"] == "198.51.100.8")
+    assert row["payload_bytes"] == 130
+    assert row["mqtt_packets"] == 2
+    assert row["saw_mqtt"] is True
+
+
 def test_publish_labels_the_bound_broker():
     import siseli_local.mqtt as mqtt
     got = {}

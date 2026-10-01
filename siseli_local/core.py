@@ -345,13 +345,54 @@ TCP_RST = 0x04
 TCP_ACK = 0x10
 
 
-def _remember_mqtt_stream(ip: str, port: int, *, encrypted: bool) -> None:
+def _remember_mqtt_stream(ip: str, port: int, **kwargs) -> None:
     """Record a broker the inverter is talking to. Never raises into the callback."""
     try:
         import siseli_local.runner as runner
-        runner.note_stream(ip, port, encrypted=encrypted)
+        runner.note_stream(ip, port, **kwargs)
     except Exception as exc:
         log(f"[MQTT STREAM] {exc}", level="error")
+
+
+def _tcp_payload(pkt) -> bytes:
+    if Raw not in pkt:
+        return b""
+    return bytes(pkt[Raw].load) or b""
+
+
+def _broker_endpoint(pkt) -> tuple[str, int]:
+    """The far end of an inverter TCP flow. Outbound uses the destination."""
+    if pkt[IP].src == INVERTER_IP:
+        return str(pkt[IP].dst), int(pkt[TCP].dport)
+    return str(pkt[IP].src), int(pkt[TCP].sport)
+
+
+def _deliver_bound_snapshot() -> None:
+    """Hand the latest decode to the dashboard.
+
+    The vendored parser only calls the sink when its Home Assistant throttle
+    is due, and it skips the sink entirely when the new values match the
+    cached state. Either way the card would stay on "no decode yet" while
+    the dongle is publishing.
+    """
+    from . import mqtt as sl_mqtt
+    from . import state as st
+
+    snap = st.snapshot_state()
+    if snap:
+        sl_mqtt.publish_grouped_state(snap)
+
+
+def _decode_plain_mqtt(pkt, broker_ip: str) -> None:
+    import siseli_local.mqtt as sl_mqtt
+
+    token = sl_mqtt.bind_broker(broker_ip)
+    try:
+        handle_inverter_tcp_packet(pkt)
+    except Exception as exc:
+        log(f"[TCP PARSE ERROR] {exc}", level="error")
+    finally:
+        sl_mqtt.unbind_broker(token)
 
 
 def handle_inverter_tcp_packet(pkt) -> None:
@@ -370,20 +411,30 @@ def handle_inverter_tcp_packet(pkt) -> None:
         reset_flow(flow_key, initial_seq=int(pkt[TCP].seq) + 1)
         return
 
-    if Raw not in pkt:
-        return
-
-    payload = bytes(pkt[Raw].load)
+    payload = _tcp_payload(pkt)
     if not payload:
         return
 
     seq = int(pkt[TCP].seq)
 
     packets = append_stream_data(flow_key, seq, payload)
+    broker_ip, broker_port = _broker_endpoint(pkt)
 
     if not packets:
+        # Capture often joins the dongle's existing session mid-frame, so the
+        # MQTT scanner has nothing to emit yet. The Siseli body can still be
+        # sitting in this segment.
+        if b'{"b":' in payload or b'"b":' in payload:
+            if SolarParser.parse_payload(payload):
+                _deliver_bound_snapshot()
+            _remember_mqtt_stream(
+                broker_ip, broker_port, encrypted=False,
+                saw_mqtt=True, mqtt_packets=1,
+            )
         return
-
+    saw_mqtt = bool(packets)
+    publishes = 0
+    parsed_ok = False
     for packet in packets:
         if LOG_PACKETS:
             ptype = mqtt_type_name(packet[0])
@@ -394,6 +445,7 @@ def handle_inverter_tcp_packet(pkt) -> None:
             )
 
         if ((packet[0] >> 4) & 0x0F) == 3:
+            publishes += 1
             topic, publish_payload = extract_publish_payload(packet)
             if topic is not None:
                 count = SEEN_MQTT_TOPICS.get(topic, 0) + 1
@@ -405,9 +457,26 @@ def handle_inverter_tcp_packet(pkt) -> None:
             if publish_payload and LOG_MQTT_PAYLOAD_PREVIEW:
                 log_payload_preview("[MQTT PAYLOAD]", publish_payload, topic=topic)
             if publish_payload:
-                parsed_ok = SolarParser.parse_payload(publish_payload, source_topic=topic)
-                if not parsed_ok and LOG_UNPARSED_PUBLISH:
+                parsed_ok = SolarParser.parse_payload(publish_payload, source_topic=topic) or parsed_ok
+                if parsed_ok:
+                    _deliver_bound_snapshot()
+                elif LOG_UNPARSED_PUBLISH:
                     log_payload_preview("[MQTT PAYLOAD NOT PARSED]", publish_payload, topic=topic)
+
+    # Some sessions carry the Siseli JSON without a frame the MQTT scanner
+    # will lock onto when capture joins mid-connection.
+    if not parsed_ok and (b'{"b":' in payload or b'"b":' in payload):
+        saw_mqtt = True
+        publishes += 1
+        if SolarParser.parse_payload(payload):
+            parsed_ok = True
+            _deliver_bound_snapshot()
+
+    if saw_mqtt:
+        _remember_mqtt_stream(
+            broker_ip, broker_port, encrypted=False,
+            saw_mqtt=True, mqtt_packets=publishes,
+        )
 
 
 def packet_callback(pkt) -> None:
@@ -447,22 +516,17 @@ def packet_callback(pkt) -> None:
         if src_mac:
             KNOWN_INVERTER_MACS.add(src_mac)
 
-        if TCP in pkt and int(pkt[TCP].dport) in (1883, 8883):
+        if TCP in pkt:
             dport = int(pkt[TCP].dport)
-            encrypted = dport == 8883
-            _remember_mqtt_stream(dst_ip, dport, encrypted=encrypted)
-            # Plain MQTT to any broker is decoded. 8883 is TLS: listed, not parsed.
-            # TARGET_HOST stays the old cloud label; it is no longer the only match.
-            if not encrypted:
-                import siseli_local.mqtt as sl_mqtt
-                token = sl_mqtt.bind_broker(dst_ip)
-                try:
-                    handle_inverter_tcp_packet(pkt)
-                except Exception as exc:
-                    log(f"[TCP PARSE ERROR] {exc}", level="error")
-                finally:
-                    sl_mqtt.unbind_broker(token)
-
+            payload_len = len(_tcp_payload(pkt))
+            if dport == 8883:
+                _remember_mqtt_stream(dst_ip, dport, encrypted=True, payload_bytes=payload_len)
+            elif dport == 1883:
+                # Listed as soon as the TCP connection exists. A decode still
+                # needs a publish, which may be on this port or another.
+                _remember_mqtt_stream(dst_ip, dport, encrypted=False, payload_bytes=payload_len)
+                if payload_len:
+                    _decode_plain_mqtt(pkt, dst_ip)
                 if AUTO_INTERCEPT and RTR_MAC:
                     try:
                         fwd_pkt = Ether(src=own_mac, dst=RTR_MAC) / pkt[IP]
@@ -470,6 +534,10 @@ def packet_callback(pkt) -> None:
                     except Exception as exc:
                         log(f"[FWD ERROR] inverter->router {exc}", level="error")
                 return
+            elif payload_len:
+                # The dongle's real broker may not be on 1883. Try the bytes;
+                # the stream is recorded only when they are actually MQTT.
+                _decode_plain_mqtt(pkt, dst_ip)
 
         # Everything else the inverter sends -- DNS, NTP, ICMP, any secondary
         # endpoint. ARP interception made us its gateway for all of it, but only
@@ -497,6 +565,15 @@ def packet_callback(pkt) -> None:
 
         if src_mac:
             KNOWN_ROUTER_MACS.add(src_mac)
+
+        if TCP in pkt:
+            sport = int(pkt[TCP].sport)
+            payload_len = len(_tcp_payload(pkt))
+            if sport == 8883:
+                _remember_mqtt_stream(src_ip, sport, encrypted=True, payload_bytes=payload_len)
+            elif sport == 1883 and payload_len:
+                _remember_mqtt_stream(src_ip, sport, encrypted=False, payload_bytes=payload_len)
+                _decode_plain_mqtt(pkt, src_ip)
 
         if AUTO_INTERCEPT and INV_MAC:
             try:

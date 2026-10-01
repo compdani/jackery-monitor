@@ -2474,7 +2474,13 @@ function renderSiseliMqttStreams(streams, selected) {
     if (row.ip === chosen) input.checked = true;
     wrap.append(input, document.createTextNode(` ${label}`));
     const watts = siseliReadingLine(row.readings);
-    if (watts) wrap.append(document.createTextNode(` · ${watts}`));
+    let note = '';
+    if (watts) note = ` · ${watts}`;
+    else if (row.mqtt_packets) note = ' · MQTT publish, not decoded';
+    else if (row.saw_mqtt) note = ' · MQTT, no data publish yet';
+    else if (row.payload_bytes) note = ' · TCP data, no MQTT publish';
+    else note = ' · no data yet';
+    wrap.append(document.createTextNode(note));
     el.append(wrap);
   }
   if (!el.childElementCount) el.hidden = true;

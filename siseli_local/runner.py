@@ -60,7 +60,16 @@ def note_snapshot(snapshot: dict) -> None:
     _last_decode_ts = time.time()
 
 
-def note_stream(ip: str, port: int, *, encrypted: bool = False, readings: dict | None = None) -> None:
+def note_stream(
+    ip: str,
+    port: int,
+    *,
+    encrypted: bool = False,
+    readings: dict | None = None,
+    payload_bytes: int = 0,
+    mqtt_packets: int = 0,
+    saw_mqtt: bool = False,
+) -> None:
     """Remember a broker the inverter contacted. Readings attach when a publish decodes."""
     host = str(ip or "").strip()
     try:
@@ -76,10 +85,17 @@ def note_stream(ip: str, port: int, *, encrypted: bool = False, readings: dict |
         row["port"] = port_n
         row["encrypted"] = bool(encrypted) or bool(row.get("encrypted"))
         row["last_seen"] = time.time()
+        if payload_bytes:
+            row["payload_bytes"] = int(row.get("payload_bytes") or 0) + int(payload_bytes)
+        if mqtt_packets:
+            row["mqtt_packets"] = int(row.get("mqtt_packets") or 0) + int(mqtt_packets)
+        if saw_mqtt or mqtt_packets:
+            row["saw_mqtt"] = True
         if readings:
             row["readings"] = dict(readings)
             row["readings_ts"] = time.time()
             row["encrypted"] = False
+            row["saw_mqtt"] = True
         _streams[key] = row
 
 
