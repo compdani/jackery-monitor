@@ -20,7 +20,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/style.css" />
+  <link rel="stylesheet" href="/static/style.css?v=13" />
 </head>
 <body>
   <!-- =============== LOGIN MODAL =============== -->
@@ -1058,9 +1058,12 @@
             <button id="siseli-creds-clear" class="btn btn-ghost" type="button">Forget</button>
           </div>
         </form>
-        <div class="lan-row">
-          <span class="auto-label">Read watts on the LAN</span>
-          <button type="button" class="lan-toggle" id="siseli-local-read" aria-pressed="false">off</button>
+      </section>
+
+      <section class="card device-card">
+        <div class="card-header">
+          <h2>LAN read</h2>
+          <button type="button" class="btn" id="siseli-local-read" aria-pressed="false">off</button>
         </div>
         <p class="hint" style="margin:0 0 12px">
           Optional. The inverter dongle already sends MQTT to the Siseli cloud.

@@ -2432,27 +2432,12 @@ function renderSiseliLocalStatus(j) {
 function setSiseliLocalReadUi(on) {
   const btn = $('siseli-local-read');
   if (!btn) return;
-  btn.classList.toggle('on', !!on);
+  btn.classList.toggle('btn-primary', !!on);
   btn.setAttribute('aria-pressed', on ? 'true' : 'false');
   btn.textContent = on ? 'on' : 'off';
 }
 
-function setSiseliCredsMsg(msg, text, isError) {
-  if (!msg) return;
-  msg.hidden = false;
-  msg.textContent = text;
-  msg.classList.toggle('login-error', isError);
-  msg.classList.toggle('hint', !isError);
-}
-
-$('siseli-local-read')?.addEventListener('click', (e) => {
-  e.preventDefault();
-  e.stopPropagation();
-  const btn = $('siseli-local-read');
-  setSiseliLocalReadUi(btn?.getAttribute('aria-pressed') !== 'true');
-});
-
-$('siseli-local-save')?.addEventListener('click', async () => {
+async function saveSiseliLocal() {
   const msg = $('siseli-local-msg');
   if (msg) msg.hidden = true;
   try {
@@ -2468,9 +2453,9 @@ $('siseli-local-save')?.addEventListener('click', async () => {
   } catch (err) {
     setSiseliCredsMsg(msg, err.message || 'save failed', true);
   }
-});
+}
 
-$('siseli-local-test')?.addEventListener('click', async () => {
+async function testSiseliLocal() {
   const msg = $('siseli-local-msg');
   const btn = $('siseli-local-test');
   if (msg) msg.hidden = true;
@@ -2492,7 +2477,33 @@ $('siseli-local-test')?.addEventListener('click', async () => {
   } finally {
     if (btn) btn.disabled = false;
   }
+}
+
+document.addEventListener('click', (e) => {
+  const readBtn = e.target.closest('#siseli-local-read');
+  if (readBtn) {
+    e.preventDefault();
+    setSiseliLocalReadUi(readBtn.getAttribute('aria-pressed') !== 'true');
+    return;
+  }
+  if (e.target.closest('#siseli-local-save')) {
+    e.preventDefault();
+    void saveSiseliLocal();
+    return;
+  }
+  if (e.target.closest('#siseli-local-test')) {
+    e.preventDefault();
+    void testSiseliLocal();
+  }
 });
+
+function setSiseliCredsMsg(msg, text, isError) {
+  if (!msg) return;
+  msg.hidden = false;
+  msg.textContent = text;
+  msg.classList.toggle('login-error', isError);
+  msg.classList.toggle('hint', !isError);
+}
 
 $('siseli-creds-form')?.addEventListener('submit', async (e) => {
   e.preventDefault();
