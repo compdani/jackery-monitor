@@ -431,6 +431,44 @@ def _log_interesting_tcp(direction: str, ip: str, port: int, payload: bytes) -> 
     # #endregion
 
 
+def _dbg_modbus_blocks(payload: bytes) -> None:
+    """Dump every cn/co body. The ASCII decoder rejected these as Modbus."""
+    # #region agent log
+    try:
+        import base64
+        idx = payload.find(b"{")
+        if idx < 0:
+            return
+        raw = payload[idx:].decode("utf-8", "ignore")
+        end = raw.rfind("}")
+        if end < 0:
+            return
+        obj = json.loads(raw[: end + 1])
+    except Exception as exc:
+        _agent_dbg("H", "siseli_local/core.py:blocks", "block json failed", {"err": str(exc)})
+        return
+    found = []
+
+    def walk(node) -> None:
+        if isinstance(node, dict):
+            cn, co = node.get("cn"), node.get("co")
+            if isinstance(cn, str) and isinstance(co, str):
+                try:
+                    body = base64.b64decode(co)
+                except Exception:
+                    body = b""
+                found.append({"name": cn, "hex": body.hex(), "len": len(body)})
+            for value in node.values():
+                walk(value)
+        elif isinstance(node, list):
+            for item in node:
+                walk(item)
+
+    walk(obj)
+    _agent_dbg("H", "siseli_local/core.py:blocks", "modbus block bodies", {"blocks": found})
+    # #endregion
+
+
 def _deliver_bound_snapshot() -> None:
     """Hand the latest decode to the dashboard.
 
@@ -544,7 +582,9 @@ def handle_inverter_tcp_packet(pkt) -> None:
                 # #endregion
                 if this_ok:
                     _deliver_bound_snapshot()
-                elif LOG_UNPARSED_PUBLISH:
+                else:
+                    _dbg_modbus_blocks(publish_payload)
+                if not this_ok and LOG_UNPARSED_PUBLISH:
                     log_payload_preview("[MQTT PAYLOAD NOT PARSED]", publish_payload, topic=topic)
 
     # Some sessions carry the Siseli JSON without a frame the MQTT scanner
