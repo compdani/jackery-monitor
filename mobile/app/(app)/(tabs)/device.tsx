@@ -2,8 +2,10 @@ import * as Clipboard from "expo-clipboard";
 import { useCallback, useEffect, useState } from "react";
 import { Text } from "react-native";
 import { activeSn, endpoints } from "../../../src/api/client";
+import { SiseliAccountCards, SiseliControllerCard } from "../../../src/components/SiseliDevice";
 import { Btn, Card, Eyebrow, Field, Hint, Screen, Segmented, Title } from "../../../src/components/ui";
 import { timeAgo } from "../../../src/lib/format";
+import { isSiseliView, siseliDeviceId } from "../../../src/lib/siseli";
 import { useLive } from "../../../src/store/live";
 import { colors } from "../../../src/theme";
 
@@ -25,6 +27,7 @@ export default function DeviceScreen() {
   const [f7Events, setF7Events] = useState<{ ts?: number; level?: string; message?: string }[]>([]);
 
   const sn = (d?.device_sn as string) || activeSn();
+  const isSiseli = isSiseliView(status);
 
   const load = useCallback(async () => {
     try {
@@ -88,6 +91,15 @@ export default function DeviceScreen() {
         </Hint>
       </Card>
 
+      {isSiseli ? (
+        <SiseliControllerCard
+          controls={status?.siseli_controls || []}
+          pins={status?.device_prefs?.live_controls || []}
+          deviceId={siseliDeviceId(status)}
+        />
+      ) : null}
+
+      {!isSiseli ? (
       <Card>
         <Eyebrow>F7 AC reset</Eyebrow>
         <Hint>
@@ -136,6 +148,7 @@ export default function DeviceScreen() {
           </Hint>
         ))}
       </Card>
+      ) : null}
 
       <Card>
         <Eyebrow>Battery capacity</Eyebrow>
@@ -154,6 +167,8 @@ export default function DeviceScreen() {
         />
       </Card>
 
+      {!isSiseli ? (
+      <>
       <Card>
         <Eyebrow>Learned parameters</Eyebrow>
         {params.map((p) => (
@@ -212,6 +227,8 @@ export default function DeviceScreen() {
         <Btn title="Pause polling" onPress={() => void endpoints.pausePolling(Number(pause)).then(() => setMsg("Paused"))} />
         <Btn title="Resume" kind="ghost" onPress={() => void endpoints.resumePolling().then(() => setMsg("Resumed"))} />
       </Card>
+      </>
+      ) : null}
 
       <Card>
         <Eyebrow>Jackery account</Eyebrow>
@@ -222,6 +239,8 @@ export default function DeviceScreen() {
         />
         {msg ? <Hint>{msg}</Hint> : null}
       </Card>
+
+      <SiseliAccountCards status={status} />
     </Screen>
   );
 }

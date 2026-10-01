@@ -22,6 +22,9 @@ _last_decode_ts: float | None = None
 _atexit_registered = False
 _streams: dict[tuple[str, int], dict] = {}
 _streams_lock = threading.Lock()
+_capture_on = False
+_captures: list[dict] = []
+_capture_lock = threading.Lock()
 
 
 def last_error() -> str | None:
@@ -97,6 +100,36 @@ def note_stream(
             row["encrypted"] = False
             row["saw_mqtt"] = True
         _streams[key] = row
+
+
+def set_mqtt_capture(enabled: bool) -> bool:
+    """Arm or disarm the in-memory publish ring. Off clears what was kept."""
+    global _capture_on
+    with _capture_lock:
+        _capture_on = bool(enabled)
+        if not _capture_on:
+            _captures.clear()
+        return _capture_on
+
+
+def mqtt_capture_enabled() -> bool:
+    return _capture_on
+
+
+def note_mqtt_capture(event: dict) -> None:
+    """Keep the last few publishes. No-op unless capture is on. Nothing is logged."""
+    if not isinstance(event, dict) or not _capture_on:
+        return
+    with _capture_lock:
+        if not _capture_on:
+            return
+        _captures.append(dict(event))
+        del _captures[:-8]
+
+
+def mqtt_captures() -> list[dict]:
+    with _capture_lock:
+        return [dict(row) for row in reversed(_captures)]
 
 
 def mqtt_streams(*, since: float | None = None) -> list[dict]:

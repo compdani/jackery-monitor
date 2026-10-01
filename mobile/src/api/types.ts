@@ -10,6 +10,9 @@ export type Telemetry = {
   ac_input_w?: number | null;
   car_input_w?: number | null;
   solar_input_w?: number | null;
+  pv_voltage_v?: number | null;
+  pv_current_a?: number | null;
+  inverter_soc_pct?: number | null;
   ac_output_v?: number | null;
   ac_output_hz?: number | null;
   ac_on?: boolean | number | null;
@@ -107,7 +110,112 @@ export type StatusPayload = {
   };
   energy?: EnergyTotals | null;
   inverter_watchdog?: Json | null;
+  siseli_controls?: SiseliControl[] | null;
+  device_prefs?: DevicePrefs | null;
   [key: string]: unknown;
+};
+
+export type SiseliControl = {
+  canonical: string;
+  kind: "number" | "select" | "switch" | string;
+  name?: string;
+  unit?: string;
+  hint?: string;
+  min?: number;
+  max?: number;
+  step?: number;
+  value?: number | boolean | string | null;
+  options?: { value: number; label: string }[];
+  on_value?: number | string;
+  off_value?: number | string;
+  dynamic?: boolean;
+};
+
+export type DevicePrefs = {
+  alias?: string;
+  live_controls?: string[];
+  ignore_inverter_soc?: boolean;
+};
+
+export type SiseliReadings = {
+  solar_w?: number | null;
+  load_w?: number | null;
+  grid_w?: number | null;
+  feed_in_w?: number | null;
+  battery_v?: number | null;
+  charge_a?: number | null;
+  discharge_a?: number | null;
+  soc?: number | null;
+};
+
+export type SiseliMqttStream = {
+  ip?: string;
+  port?: number;
+  encrypted?: boolean;
+  readings?: SiseliReadings | null;
+  mqtt_packets?: number;
+  saw_mqtt?: boolean;
+  payload_bytes?: number;
+  readings_ts?: number;
+};
+
+export type SiseliCreds = {
+  has_credentials?: boolean;
+  user_id?: string | null;
+  station_id?: string | null;
+  device_id?: string | null;
+  time_zone?: string | null;
+  local_read?: boolean;
+  inverter_ip?: string;
+  router_ip?: string;
+  sniff_iface?: string;
+  inverter_mac?: string;
+  router_mac?: string;
+  mqtt_broker_ip?: string;
+  mqtt_streams?: SiseliMqttStream[];
+  local_running?: boolean;
+  local_error?: string | null;
+  local_last_decode_ts?: number | null;
+  local_readings?: SiseliReadings | null;
+  state?: string | null;
+  error?: string | null;
+};
+
+export type SiseliLocalBody = {
+  local_read: boolean;
+  inverter_ip: string;
+  router_ip: string;
+  sniff_iface: string;
+  inverter_mac: string;
+  router_mac: string;
+  mqtt_broker_ip: string;
+};
+
+export type BmsPack = {
+  mac: string;
+  alias?: string;
+  capacity_wh?: number | null;
+  siseli_device_sn?: string | null;
+  error?: string | null;
+  reading?: {
+    soc_pct?: number | null;
+    error?: string | null;
+  };
+};
+
+export type BmsInverterFlag = { use_as_main?: boolean };
+
+export type BmsSaved = {
+  packs?: BmsPack[];
+  inverters?: Record<string, BmsInverterFlag>;
+  ble?: { available?: boolean; error?: string | null };
+};
+
+export type BmsScanDevice = {
+  mac: string;
+  name?: string;
+  rssi?: number | null;
+  likely_jbd?: boolean;
 };
 
 export type DailyRow = {

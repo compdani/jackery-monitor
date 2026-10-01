@@ -22,21 +22,26 @@ export default function RootLayout() {
 
   useEffect(() => {
     void (async () => {
-      await Promise.all([
-        useConnection.getState().hydrate(),
-        useSession.getState().hydrate(),
-        usePrefs.getState().hydrate(),
-      ]);
-      const t = useSession.getState().token;
-      if (t && useConnection.getState().baseUrl) {
-        try {
-          await endpoints.me();
-        } catch {
-          await useSession.getState().clear();
+      try {
+        await Promise.all([
+          useConnection.getState().hydrate(),
+          useSession.getState().hydrate(),
+          usePrefs.getState().hydrate(),
+        ]);
+        const t = useSession.getState().token;
+        if (t && useConnection.getState().baseUrl) {
+          try {
+            await endpoints.me();
+          } catch {
+            await useSession.getState().clear();
+          }
         }
+        if (!useLive.getState().status) clearWidgetSnapshot();
+      } catch {
+        /* SecureStore or keep-awake can fail; still show the app */
+      } finally {
+        setReady(true);
       }
-      if (!useLive.getState().status) clearWidgetSnapshot();
-      setReady(true);
     })();
   }, []);
 

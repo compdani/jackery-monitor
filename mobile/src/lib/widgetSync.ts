@@ -1,7 +1,23 @@
 import { Platform } from "react-native";
 import type { StatusPayload } from "../api/types";
+import type { StatusWidgetProps } from "../../widgets/StatusWidget";
 import { etaLabel, headlineSoc } from "./format";
-import StatusWidget, { type StatusWidgetProps } from "../../widgets/StatusWidget";
+
+type WidgetHandle = { updateSnapshot: (props: StatusWidgetProps) => void };
+
+let widgetHandle: WidgetHandle | null | undefined;
+
+/** Load the native widget only when a snapshot is pushed. Expo Go has no ExpoWidgets module. */
+function loadWidget(): WidgetHandle | null {
+  if (widgetHandle !== undefined) return widgetHandle;
+  try {
+    const mod = require("../../widgets/StatusWidget") as { default?: WidgetHandle };
+    widgetHandle = mod.default && typeof mod.default.updateSnapshot === "function" ? mod.default : null;
+  } catch {
+    widgetHandle = null;
+  }
+  return widgetHandle;
+}
 
 const MIN_INTERVAL_MS = 15_000;
 const MEANINGFUL_THROTTLE_MS = 2_000;
@@ -84,11 +100,14 @@ function push(props: StatusWidgetProps, force: boolean) {
     }
   }
   try {
-    StatusWidget.updateSnapshot(props);
+    const widget = loadWidget();
+    if (!widget) return;
+    widget.updateSnapshot(props);
     lastPushed = props;
     lastPushedAt = now;
   } catch {
-    /* widget target missing until a native rebuild */
+    widgetHandle = null;
+    /* widget target missing until a native rebuild, or Expo Go */
   }
 }
 

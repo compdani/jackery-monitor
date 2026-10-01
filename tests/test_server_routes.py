@@ -499,7 +499,7 @@ def test_shell_sends_no_cache_and_forecast_load_markup(client):
     sw = client.get("/sw.js")
     assert sw.status_code == 200
     assert "no-cache" in (sw.headers.get("cache-control") or "").lower()
-    assert "jackery-shell-v19" in sw.text
+    assert "jackery-shell-v20" in sw.text
 
 
 def test_solar_array_validation_and_roundtrip(app, client):
@@ -804,6 +804,53 @@ def test_live_watts_follow_only_the_saved_broker(app, monkeypatch):
     assert stored == []
     app._on_siseli_local_snapshot(snap)
     assert stored and stored[-1][0] == "siseli:1"
+
+
+def test_missing_mqtt_load_is_stored_blank(app, monkeypatch):
+    stored = []
+    monkeypatch.setattr(app, "_store_siseli_sample", lambda *a, **k: stored.append(a))
+    monkeypatch.setattr(app, "_siseli_target_device", lambda: ("siseli:1", "House"))
+    assert app.siseli_creds.save(
+        user_id="u", password="secret", station_id="1", mqtt_broker_ip="203.0.113.10",
+    )
+    app._on_siseli_local_snapshot({
+        "broker_ip": "203.0.113.10",
+        "pv_w": 39,
+        "bat_cap": 55,
+        "bat_v": 51.0,
+        "bat_charge_current": 0,
+    })
+    assert stored
+    tele = stored[-1][2]
+    assert tele["solar_input_w"] == 39
+    assert tele["output_power_w"] is None
+
+
+def test_mqtt_capture_routes_toggle_the_ring(client, app):
+    import siseli_local.runner as sl
+
+    sl.set_mqtt_capture(False)
+    off = client.get("/api/siseli/mqtt-capture")
+    assert off.status_code == 200
+    assert off.json() == {"enabled": False, "captures": []}
+
+    on = client.post("/api/siseli/mqtt-capture", json={"enabled": True})
+    assert on.status_code == 200
+    assert on.json()["enabled"] is True
+    sl.note_mqtt_capture({
+        "ts": 1, "topic": "dtu/x/pub", "broker": "203.0.113.10",
+        "mapped": {"pv_w": 39}, "load": "not mapped",
+        "blocks": [{"name": "bcCu", "registers": [0, 428, 710], "used": []}],
+    })
+    viewed = client.get("/api/siseli/mqtt-capture").json()
+    assert viewed["enabled"] is True
+    assert viewed["captures"][0]["load"] == "not mapped"
+    assert viewed["captures"][0]["blocks"][0]["name"] == "bcCu"
+
+    stopped = client.post("/api/siseli/mqtt-capture", json={"enabled": False})
+    assert stopped.json()["enabled"] is False
+    assert stopped.json()["captures"] == []
+    assert client.get("/api/siseli/mqtt-capture").json()["captures"] == []
 
 
 def test_siseli_credentials_save_keeps_lan_settings(app, client, monkeypatch):

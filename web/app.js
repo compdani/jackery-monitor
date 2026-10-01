@@ -496,6 +496,12 @@ document.addEventListener('click', (e) => {
   if (testBtn) {
     e.preventDefault();
     if (!testBtn.disabled) void testSiseliLocal();
+    return;
+  }
+  const captureBtn = target.closest('#siseli-mqtt-capture-toggle');
+  if (captureBtn) {
+    e.preventDefault();
+    if (!captureBtn.disabled) void toggleMqttCapture();
   }
 });
 
@@ -532,6 +538,7 @@ function switchTab(name, opts = {}) {
     setAutomationDot(false);
   }
   if (name === 'device')   { loadDeviceCapacity(); loadDeviceParams(); loadF7AcReset(); loadSiseliCreds(); loadBms(); }
+  else stopMqttCapturePoll();
 }
 
 // Boot path: pull the tab from the URL hash. Defer the actual switch
@@ -2404,6 +2411,7 @@ async function loadSiseliCreds() {
     setVal('siseli-router-mac', j.router_mac);
     renderSiseliLocalStatus(j);
     renderSiseliMqttStreams(j.mqtt_streams, j.mqtt_broker_ip);
+    void refreshMqttCapture();
   } catch (err) {
     if (status) status.textContent = 'unavailable';
   }
@@ -2575,6 +2583,109 @@ async function testSiseliLocal() {
     if (j.readings) renderSiseliLocalReadings(j.readings);
   } catch (err) {
     setSiseliLocalStatus(err.message || 'test failed');
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+let _mqttCaptureTimer = null;
+
+function setMqttCaptureUi(on) {
+  const btn = $('siseli-mqtt-capture-toggle');
+  if (!btn) return;
+  btn.classList.toggle('btn-primary', !!on);
+  btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+  btn.textContent = on ? 'Capturing' : 'Capture MQTT';
+}
+
+function stopMqttCapturePoll() {
+  if (_mqttCaptureTimer) {
+    clearInterval(_mqttCaptureTimer);
+    _mqttCaptureTimer = null;
+  }
+}
+
+function startMqttCapturePoll() {
+  if (_mqttCaptureTimer || activeTab !== 'device') return;
+  _mqttCaptureTimer = setInterval(() => {
+    if (activeTab !== 'device') {
+      stopMqttCapturePoll();
+      return;
+    }
+    void refreshMqttCapture();
+  }, 5000);
+}
+
+function renderMqttCapture(payload) {
+  const panel = $('siseli-mqtt-capture');
+  const on = !!(payload && payload.enabled);
+  setMqttCaptureUi(on);
+  if (!panel) return;
+  const rows = Array.isArray(payload && payload.captures) ? payload.captures : [];
+  if (!on) {
+    panel.hidden = true;
+    panel.textContent = '';
+    stopMqttCapturePoll();
+    return;
+  }
+  panel.hidden = false;
+  if (!rows.length) {
+    panel.textContent = 'waiting for a publish';
+  } else {
+    panel.textContent = rows.map(formatMqttCapture).join('\n\n');
+  }
+  startMqttCapturePoll();
+}
+
+function formatMqttCapture(rec) {
+  const mapped = (rec && rec.mapped) || {};
+  const bits = [];
+  if (mapped.pv_w != null) bits.push(`PV ${mapped.pv_w} W`);
+  if (mapped.pv_v != null) bits.push(`${mapped.pv_v} V`);
+  if (mapped.pv_a != null) bits.push(`${mapped.pv_a} A`);
+  if (mapped.bat_v != null) bits.push(`battery ${mapped.bat_v} V`);
+  if (mapped.bat_cap != null) bits.push(`SOC ${mapped.bat_cap}`);
+  if (mapped.bat_charge_current != null) bits.push(`charge ${mapped.bat_charge_current} A`);
+  const load = rec && rec.load === 'not mapped' ? 'not mapped' : `${rec && rec.load} W`;
+  bits.push(`load ${load}`);
+  const when = rec && rec.ts ? formatLocalAge(rec.ts).replace('decoded ', '') : '';
+  const head = [when, rec && rec.broker, rec && rec.topic].filter(Boolean).join(' · ');
+  const lines = [head, bits.join(' · ')];
+  for (const block of (rec && rec.blocks) || []) {
+    const regs = (block.registers || []).join(', ');
+    const used = (block.used || []).length ? `  used ${block.used.join(',')}` : '';
+    lines.push(`${block.name}  ${regs}${used}`);
+  }
+  return lines.join('\n');
+}
+
+async function refreshMqttCapture() {
+  try {
+    const r = await fetch('/api/siseli/mqtt-capture');
+    if (!r.ok) return;
+    renderMqttCapture(await r.json());
+  } catch (_) { /* the LAN card stays as it was */ }
+}
+
+async function toggleMqttCapture() {
+  const btn = $('siseli-mqtt-capture-toggle');
+  const next = btn?.getAttribute('aria-pressed') !== 'true';
+  if (btn) btn.disabled = true;
+  try {
+    const r = await fetch('/api/siseli/mqtt-capture', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ enabled: next }),
+    });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(apiDetail(j, r.statusText));
+    renderMqttCapture(j);
+  } catch (err) {
+    const panel = $('siseli-mqtt-capture');
+    if (panel) {
+      panel.hidden = false;
+      panel.textContent = err.message || 'capture failed';
+    }
   } finally {
     if (btn) btn.disabled = false;
   }

@@ -4,6 +4,7 @@ import { endpoints } from "../../../src/api/client";
 import { reconnectLive } from "../../../src/api/ws";
 import { LineChart } from "../../../src/components/LineChart";
 import { PowerFlow } from "../../../src/components/PowerFlow";
+import { SiseliLiveControls } from "../../../src/components/SiseliControls";
 import {
   Btn,
   Card,
@@ -16,7 +17,8 @@ import {
   Screen,
 } from "../../../src/components/ui";
 import { buildEodForecast, type ForecastPayload } from "../../../src/lib/forecast";
-import { etaLabel, fmtKwh, fmtTemp, headlineSoc } from "../../../src/lib/format";
+import { etaLabel, fmt, fmtKwh, fmtTemp, headlineSoc } from "../../../src/lib/format";
+import { isSiseliView, pinnedControls, siseliDeviceId } from "../../../src/lib/siseli";
 import { useLive } from "../../../src/store/live";
 import { usePrefs } from "../../../src/store/prefs";
 import { colors } from "../../../src/theme";
@@ -236,11 +238,8 @@ export default function LiveScreen() {
   const conn = status?.connection_status || (connected ? "connected" : "disconnected");
   const source = status?.source ? String(status.source).toUpperCase() : null;
   const sn = status?.device?.device_sn as string | undefined;
-  const isSiseli =
-    status?.source === "siseli" ||
-    (status?.device as { source?: string } | null)?.source === "siseli" ||
-    String(sn || "").startsWith("siseli:") ||
-    String(selected || "").startsWith("siseli:");
+  const isSiseli = isSiseliView(status);
+  const siseliId = siseliDeviceId(status);
   const watchdog = status?.inverter_watchdog as { active?: boolean; message?: string } | null;
   const eod = useMemo(() => buildEodForecast(eodFc), [eodFc]);
 
@@ -256,18 +255,23 @@ export default function LiveScreen() {
   }, [sn]);
 
   useEffect(() => {
+    if (isSiseli) {
+      setEodFc(null);
+      return;
+    }
     void loadEod();
     const id = setInterval(() => void loadEod(), EOD_INTERVAL_MS);
     return () => clearInterval(id);
-  }, [loadEod]);
+  }, [loadEod, isSiseli]);
 
   useEffect(() => {
+    if (isSiseli) return;
     const anchor = eodAnchorRef.current;
     if (soc == null || anchor == null) return;
     if (Date.now() - eodLastFetchRef.current < EOD_MIN_REFRESH_MS) return;
     if (Math.abs(soc - anchor) < EOD_DRIFT_THRESHOLD_PCT) return;
     void loadEod();
-  }, [soc, loadEod]);
+  }, [soc, loadEod, isSiseli]);
 
   useEffect(() => {
     if (isSiseli) {
@@ -472,7 +476,7 @@ export default function LiveScreen() {
                 : ""}
             </Hint>
           </View>
-          <EodForecastPill view={eod} />
+          {!isSiseli ? <EodForecastPill view={eod} /> : null}
         </View>
       </Card>
 
@@ -499,6 +503,29 @@ export default function LiveScreen() {
           currency={energy?.cost_plan?.currency}
         />
       </EnergyKpi>
+
+      {isSiseli ? (
+        <Card>
+          <Eyebrow>Solar panels</Eyebrow>
+          <View style={{ flexDirection: "row", gap: 12 }}>
+            {(
+              [
+                ["Power", fmt(t?.solar_input_w, 0), "W"],
+                ["Voltage", fmt(t?.pv_voltage_v, 1), "V"],
+                ["Current", fmt(t?.pv_current_a, 2), "A"],
+              ] as const
+            ).map(([label, value, unit]) => (
+              <View key={label} style={{ flex: 1 }}>
+                <Text style={{ color: colors.text, fontSize: 22, fontWeight: "700" }}>
+                  {value}
+                  <Text style={{ fontSize: 13, color: colors.textDim }}> {unit}</Text>
+                </Text>
+                <Hint>{label}</Hint>
+              </View>
+            ))}
+          </View>
+        </Card>
+      ) : null}
 
       {!isSiseli ? (
       <Card>
@@ -553,6 +580,15 @@ export default function LiveScreen() {
           <Text style={{ color: colors.danger, fontSize: 12 }}>{toggleErr}</Text>
         ) : null}
       </Card>
+      ) : pinnedControls(status?.siseli_controls, status?.device_prefs?.live_controls).length ? (
+        <Card>
+          <Eyebrow>Inverter controls</Eyebrow>
+          <SiseliLiveControls
+            controls={status?.siseli_controls}
+            pins={status?.device_prefs?.live_controls}
+            deviceId={siseliId}
+          />
+        </Card>
       ) : null}
 
       {watchdog?.active && !isSiseli ? (

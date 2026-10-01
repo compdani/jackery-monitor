@@ -209,3 +209,64 @@ def test_modbus_panel_registers_decode_without_the_portal(tmp_path, monkeypatch)
     assert tele["solar_input_w"] == 50
     assert tele["pv_voltage_v"] == 64.5
     assert tele["pv_current_a"] == 0.8
+
+
+def test_mqtt_capture_ring_keeps_unmapped_load(tmp_path, monkeypatch):
+    cache = tmp_path / "state.json"
+    monkeypatch.setenv("SISELI_LOCAL_STATE_FILE", str(cache))
+
+    import siseli_local.config as cfg
+    import siseli_local.mqtt as mqtt
+    import siseli_local.parsers as parsers
+    import siseli_local.runner as runner
+    import siseli_local.state as st
+
+    cfg.STATE_CACHE_FILE = str(cache)
+    parsers.STATE_CACHE_FILE = str(cache)
+    st.LAST_STATE.clear()
+    st.DISCOVERY_PUBLISHED = True
+    parsers.LAST_PUBLISH_TS = 0.0
+    parsers.PENDING_PUBLISH = False
+    runner.set_mqtt_capture(False)
+
+    def fc03(regs: list[int]) -> str:
+        data = b"".join(int(reg).to_bytes(2, "big") for reg in regs)
+        body = bytes([0x01, 0x03, len(data)]) + data
+        crc = parsers.SolarParser._crc16_modbus(body)
+        return (body + crc.to_bytes(2, "little")).hex()
+
+    frames = {
+        "WfP8": fc03([55, 523, 90]),
+        "8eyo": fc03([645, 80, 50]),
+        "bcCu": fc03([0, 428, 710]),
+    }
+    payload = json.dumps({"b": {"ct": [
+        {"cn": name, "co": base64.b64encode(bytes.fromhex(body)).decode()}
+        for name, body in frames.items()
+    ]}}).encode()
+
+    mqtt.set_sink(lambda _snap: None)
+    token = mqtt.bind_broker("203.0.113.10")
+    try:
+        assert parsers.SolarParser.parse_payload(payload, source_topic="dtu/x/pub") is True
+        assert runner.mqtt_captures() == []
+        runner.set_mqtt_capture(True)
+        assert parsers.SolarParser.parse_payload(payload, source_topic="dtu/x/pub") is True
+        rows = runner.mqtt_captures()
+    finally:
+        mqtt.unbind_broker(token)
+        mqtt.set_sink(None)
+        runner.set_mqtt_capture(False)
+
+    assert len(rows) == 1
+    rec = rows[0]
+    assert rec["broker"] == "203.0.113.10"
+    assert rec["topic"] == "dtu/x/pub"
+    assert rec["load"] == "not mapped"
+    assert rec["mapped"]["pv_w"] == 50
+    by_name = {block["name"]: block for block in rec["blocks"]}
+    assert by_name["8eyo"]["registers"] == [645, 80, 50]
+    assert by_name["8eyo"]["used"] == [0, 1, 2]
+    assert by_name["bcCu"]["registers"] == [0, 428, 710]
+    assert by_name["bcCu"]["used"] == []
+    assert runner.mqtt_captures() == []

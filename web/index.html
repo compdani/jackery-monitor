@@ -20,7 +20,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/style.css?v=17" />
+  <link rel="stylesheet" href="/static/style.css?v=18" />
 </head>
 <body>
   <!-- =============== LOGIN MODAL =============== -->
@@ -1120,9 +1120,11 @@
         <p id="siseli-local-status" class="hint" style="margin:10px 0 4px">LAN read off</p>
         <div id="siseli-mqtt-streams" class="lan-streams" hidden></div>
         <div id="siseli-local-readings" class="lan-readings" hidden></div>
+        <pre id="siseli-mqtt-capture" class="mqtt-capture" hidden>waiting for a publish</pre>
         <div style="margin-top:14px; display:flex; gap:8px; flex-wrap:wrap">
           <button id="siseli-local-save" class="btn btn-primary" type="button">Save LAN read</button>
           <button id="siseli-local-test" class="btn btn-ghost" type="button">Test MQTT</button>
+          <button id="siseli-mqtt-capture-toggle" class="btn btn-ghost" type="button" aria-pressed="false">Capture MQTT</button>
         </div>
       </section>
 
@@ -2335,6 +2337,6 @@
   </footer>
 
   <script src="/static/sortable.min.js"></script>
-  <script src="/static/app.js?v=19"></script>
+  <script src="/static/app.js?v=20"></script>
 </body>
 </html>

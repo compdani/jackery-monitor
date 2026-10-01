@@ -1,7 +1,17 @@
 import { useConnection } from "../store/connection";
 import { useLive } from "../store/live";
 import { useSession } from "../store/session";
-import type { ProbeResult, StatusPayload } from "./types";
+import type {
+  BmsSaved,
+  BmsScanDevice,
+  ProbeResult,
+  SiseliControl,
+  SiseliCreds,
+  SiseliLocalBody,
+  SiseliMqttStream,
+  SiseliReadings,
+  StatusPayload,
+} from "./types";
 
 export class ApiError extends Error {
   status: number;
@@ -379,6 +389,56 @@ export const endpoints = {
     api("/api/backup/setup_restore/snapshots", { method: "POST", auth: false, body }),
   setupRestore: (body: unknown) =>
     api("/api/backup/setup_restore/restore", { method: "POST", auth: false, body }),
+
+  siseliCreds: () => api<SiseliCreds>("/api/siseli/credentials"),
+  saveSiseliCreds: (body: {
+    user_id: string;
+    password: string;
+    station_id: string;
+    time_zone?: string;
+  }) =>
+    api<{ ok?: boolean; device_count?: number }>("/api/siseli/credentials", { method: "POST", body }),
+  forgetSiseliCreds: () => api("/api/siseli/credentials", { method: "DELETE" }),
+  saveSiseliLocal: (body: SiseliLocalBody) =>
+    api<SiseliCreds>("/api/siseli/local", { method: "POST", body }),
+  testSiseliLocal: (body: SiseliLocalBody) =>
+    api<{
+      detail?: string;
+      readings?: SiseliReadings | null;
+      mqtt_streams?: SiseliMqttStream[];
+      local_running?: boolean;
+      local_error?: string | null;
+    }>("/api/siseli/local/test", { method: "POST", body }),
+  setSiseliSetting: (device_id: string, key: string, value: number | string) =>
+    api<{ ok?: boolean; controls?: SiseliControl[] }>("/api/siseli/settings", {
+      method: "POST",
+      body: { device_id, key, value },
+    }),
+  saveDevicePrefs: (body: {
+    device_id: string;
+    alias?: string;
+    live_controls?: string[];
+    ignore_inverter_soc?: boolean;
+  }) => api("/api/device_prefs", { method: "POST", body }),
+  bmsSaved: () => api<BmsSaved>("/api/bms/saved"),
+  saveBmsPack: (body: {
+    mac: string;
+    alias: string;
+    capacity_wh: number | null;
+    siseli_device_sn: string;
+  }) => api("/api/bms/saved", { method: "POST", body }),
+  deleteBmsPack: (mac: string) =>
+    api(`/api/bms/saved/${encodeURIComponent(mac)}`, { method: "DELETE" }),
+  bmsScan: (seconds = 8) =>
+    api<{ devices?: BmsScanDevice[]; error?: string | null; ble_available?: boolean }>(
+      "/api/bms/scan",
+      { method: "POST", body: { seconds } },
+    ),
+  bmsUseAsMain: (sn: string, use_as_main: boolean) =>
+    api(`/api/bms/inverter/${encodeURIComponent(sn)}`, {
+      method: "POST",
+      body: { use_as_main },
+    }),
 };
 
 export function activeSn(): string | undefined {

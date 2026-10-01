@@ -312,6 +312,16 @@ def overlay_telemetry(
     out["battery_charge_a"] = max(0.0, currents)
     out["battery_discharge_a"] = max(0.0, -currents)
     out["battery_power_w"] = round(powers, 1)
+    # Live load is the larger of the inverter's output and the packs'
+    # discharge. Siseli often has no load register; a discharging pack
+    # still knows the watts leaving the battery. Charging stays out of
+    # this figure.
+    try:
+        siseli_load = float(out["output_power_w"]) if out.get("output_power_w") is not None else 0.0
+    except (TypeError, ValueError):
+        siseli_load = 0.0
+    bms_discharge_w = max(0.0, -powers)
+    out["output_power_w"] = int(round(max(siseli_load, bms_discharge_w)))
     if hottest is not None:
         out["battery_temp_c"] = hottest
     if currents > 0.05:

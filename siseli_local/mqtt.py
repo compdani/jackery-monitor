@@ -31,6 +31,10 @@ def publish_sensor_discovery(key: str) -> None:
     _state.PUBLISHED_SENSOR_KEYS.add(key)
 
 
+def current_broker() -> str | None:
+    return _broker_ip.get()
+
+
 def bind_broker(ip: str | None):
     """Label publishes on this thread with the broker IP. Returns a reset token."""
     return _broker_ip.set(ip or None)

@@ -69,6 +69,43 @@ def test_overlay_replaces_headline_keeps_portal(reg):
     assert out["battery_status"] == 1  # charging
 
 
+def test_overlay_load_is_greater_of_siseli_and_bms_discharge(reg):
+    packs = [
+        {"mac": "AA:BB:CC:DD:EE:01", "capacity_wh": 5000, "alias": "A"},
+        {"mac": "AA:BB:CC:DD:EE:02", "capacity_wh": 5000, "alias": "B"},
+    ]
+    now = 1_700_000_000.0
+    live = {
+        "AA:BB:CC:DD:EE:01": {"soc_pct": 60, "ts": now, "current_a": -4,
+                              "power_w": -200, "voltage_v": 52.0},
+        "AA:BB:CC:DD:EE:02": {"soc_pct": 55, "ts": now, "current_a": -2,
+                              "power_w": -100, "voltage_v": 52.0},
+    }
+    higher_bms = reg.overlay_telemetry(
+        {"battery_percent": 55, "output_power_w": 80, "source": "siseli"},
+        packs=packs, live=live, use_as_main=True, now=now)
+    assert higher_bms["output_power_w"] == 300
+
+    higher_siseli = reg.overlay_telemetry(
+        {"battery_percent": 55, "output_power_w": 500, "source": "siseli"},
+        packs=packs, live=live, use_as_main=True, now=now)
+    assert higher_siseli["output_power_w"] == 500
+
+    missing_siseli = reg.overlay_telemetry(
+        {"battery_percent": 55, "output_power_w": None, "source": "siseli"},
+        packs=packs, live=live, use_as_main=True, now=now)
+    assert missing_siseli["output_power_w"] == 300
+
+    charging = reg.overlay_telemetry(
+        {"battery_percent": 55, "output_power_w": 90, "source": "siseli"},
+        packs=[{"mac": "AA:BB:CC:DD:EE:01", "capacity_wh": 5000}],
+        live={"AA:BB:CC:DD:EE:01": {
+            "soc_pct": 60, "ts": now, "current_a": 8, "power_w": 400, "voltage_v": 52.0,
+        }},
+        use_as_main=True, now=now)
+    assert charging["output_power_w"] == 90
+
+
 def test_overlay_falls_back_when_stale_or_disabled(reg):
     tele = {"battery_percent": 64}
     packs = [{"mac": "AA:BB:CC:DD:EE:01", "capacity_wh": 5000}]

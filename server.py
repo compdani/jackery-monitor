@@ -1007,6 +1007,18 @@ def _store_siseli_sample(sn: str, name: str | None, tele: dict, ts: float, *, or
     )
 
 
+def _blank_unmapped_siseli_watts(snapshot: dict, tele: dict) -> dict:
+    """A missing register stays blank. to_telemetry would otherwise store 0 W."""
+    if "pv_w" not in snapshot and "generation_power_w" not in snapshot:
+        tele["solar_input_w"] = None
+    if "load_w" not in snapshot:
+        tele["output_power_w"] = None
+    if "mains_power_w" not in snapshot:
+        tele["ac_input_w"] = None
+        tele["feed_in_w"] = None
+    return tele
+
+
 def _on_siseli_local_snapshot(snapshot: dict) -> None:
     """Capture-thread callback. Never raise into the vendored parser.
 
@@ -1019,15 +1031,7 @@ def _on_siseli_local_snapshot(snapshot: dict) -> None:
     broker = str((snapshot or {}).get("broker_ip") or "").strip()
     if broker:
         canonical = sl_tele.decoded_to_canonical(snapshot)
-        tele = siseli_client.to_telemetry(canonical)
-        # A decode that never carried a watt block must stay blank, not zero.
-        if "pv_w" not in snapshot and "generation_power_w" not in snapshot:
-            tele["solar_input_w"] = None
-        if "load_w" not in snapshot:
-            tele["output_power_w"] = None
-        if "mains_power_w" not in snapshot:
-            tele["ac_input_w"] = None
-            tele["feed_in_w"] = None
+        tele = _blank_unmapped_siseli_watts(snapshot, siseli_client.to_telemetry(canonical))
         sl_runner.note_stream(
             broker, 1883, encrypted=False,
             readings=sl_tele.readings_from_telemetry(tele),
@@ -1045,7 +1049,7 @@ def _on_siseli_local_snapshot(snapshot: dict) -> None:
     if not sn:
         return
     canonical = sl_tele.decoded_to_canonical(snapshot)
-    tele = siseli_client.to_telemetry(canonical)
+    tele = _blank_unmapped_siseli_watts(snapshot, siseli_client.to_telemetry(canonical))
     _store_siseli_sample(sn, name, tele, time.time(), origin="local")
     loop = state.loop
     if loop is not None and loop.is_running():
@@ -5690,6 +5694,29 @@ def api_siseli_local_save(body: dict):
         "mqtt_broker_ip": local.get("mqtt_broker_ip") or "",
         "mqtt_streams": sl_runner.mqtt_streams(),
     }
+
+
+@app.get("/api/siseli/mqtt-capture")
+def api_siseli_mqtt_capture_status():
+    """Latest sniffed publishes, only while the LAN card capture is on."""
+    import siseli_local.runner as sl_runner
+
+    return {
+        "enabled": sl_runner.mqtt_capture_enabled(),
+        "captures": sl_runner.mqtt_captures(),
+    }
+
+
+@app.post("/api/siseli/mqtt-capture")
+def api_siseli_mqtt_capture_set(body: dict):
+    """Turn the in-memory register viewer on or off. Off drops the ring."""
+    import siseli_local.runner as sl_runner
+
+    enabled = (body or {}).get("enabled")
+    if isinstance(enabled, str):
+        enabled = enabled.strip().lower() in {"1", "true", "yes", "on"}
+    on = sl_runner.set_mqtt_capture(bool(enabled))
+    return {"enabled": on, "captures": sl_runner.mqtt_captures()}
 
 
 LOCAL_PROBE_S = 25.0

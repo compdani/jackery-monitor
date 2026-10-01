@@ -2330,6 +2330,36 @@ class SolarParser:
             state["bat_charge_current"] = round(pack[2] / 100.0, 2)
         return state
 
+    @staticmethod
+    def _note_modbus_capture(blocks: Dict[str, bytes], state: Dict[str, object], source_topic: Optional[str]) -> None:
+        """Remember this publish's registers while the LAN card capture is on."""
+        try:
+            from . import mqtt as sl_mqtt
+            from . import runner as sl_runner
+            if not sl_runner.mqtt_capture_enabled():
+                return
+            rows = SolarParser._modbus_rows(blocks)
+            used_map = {"8eyo": (0, 1, 2), "WfP8": (0, 1, 2)}
+            listed = []
+            for name in sorted(rows):
+                regs = rows[name]
+                used = [idx for idx in used_map.get(name, ()) if idx < len(regs)]
+                listed.append({"name": name, "registers": regs, "used": used})
+            mapped_keys = (
+                "pv_w", "pv_v", "pv_a", "bat_v", "bat_cap",
+                "bat_charge_current", "generation_power_w",
+            )
+            sl_runner.note_mqtt_capture({
+                "ts": time.time(),
+                "topic": source_topic or "",
+                "broker": sl_mqtt.current_broker() or "",
+                "mapped": {key: state[key] for key in mapped_keys if key in state},
+                "load": state["load_w"] if "load_w" in state else "not mapped",
+                "blocks": listed,
+            })
+        except Exception:
+            return
+
     def parse_payload(payload_bytes: bytes, source_topic: Optional[str] = None) -> bool:
         try:
             idx = payload_bytes.find(b'{"b":')
@@ -2405,6 +2435,7 @@ class SolarParser:
             state = SolarParser._try_ascii_schema(blocks)
             if not state:
                 state = SolarParser._try_modbus_schema(blocks)
+            SolarParser._note_modbus_capture(blocks, state or {}, source_topic)
             if state:
                 # The collector id travels in the MQTT topic of this very payload, so
                 # it is per-payload evidence like any block field.

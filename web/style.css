@@ -3028,6 +3028,18 @@ body.device-switching .tab-panel { opacity: .45; pointer-events: none;
   font-family: var(--font-mono);
   font-size: 13px;
 }
+.mqtt-capture {
+  margin: 8px 0 0;
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-elev-2);
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-x: auto;
+}
 .lan-readings {
   display: flex;
   flex-wrap: wrap;
