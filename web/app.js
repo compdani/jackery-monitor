@@ -2391,6 +2391,17 @@ async function loadSiseliCreds() {
     setVal('siseli-router-mac', j.router_mac);
     renderSiseliLocalStatus(j);
     renderSiseliMqttStreams(j.mqtt_streams, j.mqtt_broker_ip);
+    // #region agent log
+    if (Array.isArray(j.mqtt_debug)) {
+      for (const ev of j.mqtt_debug) {
+        fetch('http://127.0.0.1:7679/ingest/b4afa9cc-4f16-49ed-80fa-124b0a0d3e19', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '3e49f2' },
+          body: JSON.stringify(ev),
+        }).catch(() => {});
+      }
+    }
+    // #endregion
   } catch (err) {
     if (status) status.textContent = 'unavailable';
   }

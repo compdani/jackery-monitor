@@ -1017,6 +1017,19 @@ def _on_siseli_local_snapshot(snapshot: dict) -> None:
     import siseli_local.telemetry as sl_tele
 
     broker = str((snapshot or {}).get("broker_ip") or "").strip()
+    # #region agent log
+    try:
+        from siseli_local.core import _agent_dbg
+        _agent_dbg("C", "server.py:snapshot", "sink received a decode", {
+            "broker": broker,
+            "keys": sorted(list((snapshot or {}).keys()))[:24],
+            "pv": (snapshot or {}).get("pv_w"),
+            "gen": (snapshot or {}).get("generation_power_w"),
+            "load": (snapshot or {}).get("load_w"),
+        })
+    except Exception:
+        pass
+    # #endregion
     if broker:
         canonical = sl_tele.decoded_to_canonical(snapshot)
         tele = siseli_client.to_telemetry(canonical)
@@ -5554,6 +5567,7 @@ def api_siseli_creds_status():
         "router_mac": view.get("router_mac") or "",
         "mqtt_broker_ip": view.get("mqtt_broker_ip") or "",
         "mqtt_streams": sl_runner.mqtt_streams(),
+        "mqtt_debug": sl_runner.debug_events(),
         "local_running": sl_runner.is_running(),
         "local_error": sl_runner.last_error(),
         "local_last_decode_ts": state.siseli.get("local_last_decode_ts"),

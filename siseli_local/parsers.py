@@ -2305,6 +2305,15 @@ class SolarParser:
             if idx == -1:
                 if LOG_UNPARSED_PUBLISH:
                     log_payload_preview("[UNPARSED PAYLOAD: NO JSON START]", payload_bytes, topic=source_topic)
+                # #region agent log
+                try:
+                    from .core import _agent_dbg
+                    _agent_dbg("E", "siseli_local/parsers.py:no-json", "parser found no JSON", {
+                        "topic": source_topic, "len": len(payload_bytes or b""),
+                    })
+                except Exception:
+                    pass
+                # #endregion
                 return False
 
             raw = payload_bytes[idx:].decode("utf-8", errors="ignore")
@@ -2360,6 +2369,16 @@ class SolarParser:
             if not blocks:
                 if LOG_UNPARSED_PUBLISH:
                     log_payload_preview("[UNPARSED PAYLOAD: NO BLOCKS]", payload_bytes, topic=source_topic)
+                # #region agent log
+                try:
+                    from .core import _agent_dbg
+                    keys = list(raw_json)[:12] if isinstance(raw_json, dict) else type(raw_json).__name__
+                    _agent_dbg("E", "siseli_local/parsers.py:no-blocks", "JSON had no telemetry blocks", {
+                        "topic": source_topic, "json_keys": keys,
+                    })
+                except Exception:
+                    pass
+                # #endregion
                 return False
 
             state = SolarParser._try_ascii_schema(blocks)

@@ -367,6 +367,43 @@ def _broker_endpoint(pkt) -> tuple[str, int]:
     return str(pkt[IP].src), int(pkt[TCP].sport)
 
 
+def _agent_dbg(hypothesis_id: str, location: str, message: str, data: dict) -> None:
+    # #region agent log
+    try:
+        import json as _json
+        rec = {
+            "sessionId": "3e49f2",
+            "hypothesisId": hypothesis_id,
+            "location": location,
+            "message": message,
+            "data": data,
+            "timestamp": int(time.time() * 1000),
+            "runId": "pre-fix",
+        }
+        try:
+            with open("/Volumes/mini512/jackery-monitor/.cursor/debug-3e49f2.log", "a") as _fh:
+                _fh.write(_json.dumps(rec, default=str) + "\n")
+        except Exception:
+            pass
+        import siseli_local.runner as _runner
+        _runner.note_debug(rec)
+    except Exception:
+        pass
+    # #endregion
+
+
+def _payload_preview(buf: bytes) -> dict:
+    raw = bytes(buf or b"")[:180]
+    text = "".join(chr(b) if 32 <= b < 127 else "." for b in raw)
+    return {
+        "len": len(buf or b""),
+        "head_hex": raw[:24].hex(),
+        "preview": text,
+        "has_b_block": b'{"b":' in (buf or b"") or b'"b":' in (buf or b""),
+        "has_brace": b"{" in (buf or b""),
+    }
+
+
 def _deliver_bound_snapshot() -> None:
     """Hand the latest decode to the dashboard.
 
@@ -425,7 +462,13 @@ def handle_inverter_tcp_packet(pkt) -> None:
         # MQTT scanner has nothing to emit yet. The Siseli body can still be
         # sitting in this segment.
         if b'{"b":' in payload or b'"b":' in payload:
-            if SolarParser.parse_payload(payload):
+            fallback_ok = bool(SolarParser.parse_payload(payload))
+            # #region agent log
+            _agent_dbg("D", "siseli_local/core.py:json-fallback", "partial segment counted as publish", {
+                "broker": broker_ip, "port": broker_port, "parsed": fallback_ok, **_payload_preview(payload),
+            })
+            # #endregion
+            if fallback_ok:
                 _deliver_bound_snapshot()
             _remember_mqtt_stream(
                 broker_ip, broker_port, encrypted=False,
@@ -457,8 +500,15 @@ def handle_inverter_tcp_packet(pkt) -> None:
             if publish_payload and LOG_MQTT_PAYLOAD_PREVIEW:
                 log_payload_preview("[MQTT PAYLOAD]", publish_payload, topic=topic)
             if publish_payload:
-                parsed_ok = SolarParser.parse_payload(publish_payload, source_topic=topic) or parsed_ok
-                if parsed_ok:
+                this_ok = bool(SolarParser.parse_payload(publish_payload, source_topic=topic))
+                parsed_ok = this_ok or parsed_ok
+                # #region agent log
+                _agent_dbg("A", "siseli_local/core.py:publish", "mqtt publish parse result", {
+                    "broker": broker_ip, "port": broker_port, "topic": topic,
+                    "parsed": this_ok, "packet_flags": packet[0], **_payload_preview(publish_payload),
+                })
+                # #endregion
+                if this_ok:
                     _deliver_bound_snapshot()
                 elif LOG_UNPARSED_PUBLISH:
                     log_payload_preview("[MQTT PAYLOAD NOT PARSED]", publish_payload, topic=topic)

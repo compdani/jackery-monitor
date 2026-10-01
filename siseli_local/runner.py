@@ -22,6 +22,8 @@ _last_decode_ts: float | None = None
 _atexit_registered = False
 _streams: dict[tuple[str, int], dict] = {}
 _streams_lock = threading.Lock()
+_debug_events: list[dict] = []
+_debug_lock = threading.Lock()
 
 
 def last_error() -> str | None:
@@ -97,6 +99,18 @@ def note_stream(
             row["encrypted"] = False
             row["saw_mqtt"] = True
         _streams[key] = row
+
+
+def note_debug(event: dict) -> None:
+    """Keep a short ring of decode diagnostics for the LAN card to forward."""
+    with _debug_lock:
+        _debug_events.append(dict(event))
+        del _debug_events[:-40]
+
+
+def debug_events() -> list[dict]:
+    with _debug_lock:
+        return [dict(event) for event in _debug_events]
 
 
 def mqtt_streams(*, since: float | None = None) -> list[dict]:
