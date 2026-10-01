@@ -64,6 +64,10 @@ services:
       PORT: "${JACKERY_HTTP_PORT:-8000}"
     volumes:
       - jackery-data:/data
+      # Host BlueZ D-Bus so bleak can talk to a USB BLE adapter on the NAS.
+      # bluetoothd must be running on DSM; if scan returns nothing, enable
+      # host Bluetooth for the dongle and enter the BMS MAC manually.
+      - /var/run/dbus:/var/run/dbus:ro
       # Live-bind the web UI so editing files in /docker/jackery-monitor/web/
       # takes effect immediately (just hard-reload the browser, no rebuild).
       # Comment this out if you want the image to be self-contained.

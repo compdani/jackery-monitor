@@ -50,7 +50,7 @@ def app(isolated_data, monkeypatch, tmp_path):
         "cost", "anthropic_creds", "anthropic_prefs",
         "kasa_creds", "kasa_devices", "backup_creds", "energy_db",
         "solar_array", "forecast_solar", "load_schedule",
-        "siseli_creds",
+        "siseli_creds", "bms_devices",
     ):
         mod = importlib.import_module(name)
         importlib.reload(mod)
@@ -781,3 +781,49 @@ def test_siseli_settings_unknown_key(client):
         "device_id": "siseli:42", "key": "notARealKey", "value": 1,
     })
     assert r.status_code == 400
+
+
+def test_bms_saved_crud(client, app):
+    r = client.post("/api/bms/saved", json={
+        "mac": "aa:bb:cc:dd:ee:ff",
+        "alias": "Pack 1",
+        "capacity_wh": 5120,
+        "siseli_device_sn": "siseli:42",
+    })
+    assert r.status_code == 200, r.text
+    j = r.json()
+    assert j["pack"]["mac"] == "AA:BB:CC:DD:EE:FF"
+    listed = client.get("/api/bms/saved").json()
+    assert len(listed["packs"]) == 1
+    assert listed["inverters"]["siseli:42"]["use_as_main"] is True
+    flag = client.post("/api/bms/inverter/siseli:42", json={"use_as_main": False})
+    assert flag.status_code == 200
+    assert flag.json()["use_as_main"] is False
+    gone = client.delete("/api/bms/saved/AA:BB:CC:DD:EE:FF")
+    assert gone.status_code == 200
+    assert client.get("/api/bms/saved").json()["packs"] == []
+
+
+def test_bms_scan_without_bluez_is_structured(client):
+    r = client.get("/api/bms/scan")
+    assert r.status_code == 200
+    j = r.json()
+    assert "devices" in j
+    assert "ble_available" in j
+    st = client.get("/api/bms/status")
+    assert st.status_code == 200
+    assert "packs" in st.json()
+
+
+def test_battery_packs_siseli_does_not_hit_bridge(client, app):
+    app.state.bms.upsert(
+        "aa:bb:cc:dd:ee:01", alias="P1", capacity_wh=1000,
+        siseli_device_sn="siseli:42",
+    )
+    r = client.get("/api/devices/battery_packs", params={"device_sn": "siseli:42"})
+    assert r.status_code == 200, r.text
+    j = r.json()
+    assert j["no_packs"] is False
+    assert len(j["packs"]) == 1
+    assert j["packs"][0]["source"] == "bms"
+    assert "bridge not available" not in (j.get("error") or "")

@@ -38,6 +38,7 @@ RUN apt-get update \
          rsync \
          openssh-client \
          sshpass \
+         libdbus-1-3 \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt ./

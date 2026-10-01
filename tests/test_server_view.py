@@ -39,6 +39,8 @@ def server_state(isolated_data, monkeypatch):
     importlib.reload(crypto_util)
     import siseli_creds
     importlib.reload(siseli_creds)
+    import bms_devices
+    importlib.reload(bms_devices)
     import server as server_mod
     importlib.reload(server_mod)
 
@@ -429,3 +431,89 @@ def test_siseli_view_synthesizes_status(server_state):
     assert siseli_row["source"] == "siseli"
     assert siseli_row["feed_in_w"] == 200
     assert out["inverter_watchdog"] is None
+    assert out["battery_packs"] == []
+
+
+def _seed_siseli(server_state, soc=64):
+    server_state.state.siseli = {
+        "state": "connected",
+        "error": None,
+        "devices": [{
+            "device_id": "siseli:42",
+            "device_sn": "siseli:42",
+            "portal_device_id": "42",
+            "name": "House inverter",
+            "model_name": "Sumry",
+            "model_code": None,
+            "source": "siseli",
+        }],
+        "telemetry_by_sn": {
+            "siseli:42": {"telemetry": {
+                "battery_percent": soc,
+                "solar_input_w": 1500,
+                "output_power_w": 400,
+                "ac_input_w": 0,
+                "feed_in_w": 200,
+                "source": "siseli",
+            }, "ts": 1700000100},
+        },
+        "settings_by_sn": {},
+        "raw_settings_by_sn": {},
+        "last_poll_ts": 1700000100,
+    }
+
+
+def test_siseli_view_overlays_bms_soc(server_state):
+    import time
+    _seed_siseli(server_state, soc=64)
+    now = time.time()
+    server_state.state.bms.upsert(
+        "aa:bb:cc:dd:ee:01", alias="Pack A", capacity_wh=5000,
+        siseli_device_sn="siseli:42",
+    )
+    server_state.state.bms.upsert(
+        "aa:bb:cc:dd:ee:02", alias="Pack B", capacity_wh=5000,
+        siseli_device_sn="siseli:42",
+    )
+    server_state.state.bms_live = {
+        "AA:BB:CC:DD:EE:01": {
+            "soc_pct": 80, "ts": now, "voltage_v": 53.0, "current_a": 10,
+            "power_w": 530, "temp_c": 22, "min_cell_mv": 3300, "max_cell_mv": 3310,
+        },
+        "AA:BB:CC:DD:EE:02": {
+            "soc_pct": 20, "ts": now, "voltage_v": 53.1, "current_a": 4,
+            "power_w": 212, "temp_c": 26, "min_cell_mv": 3290, "max_cell_mv": 3305,
+        },
+    }
+    out = server_state.serialize_status(view_device_id="siseli:42")
+    t = out["telemetry"]
+    assert t["battery_percent"] == 50.0
+    assert t["system_soc_pct"] == 50.0
+    assert t["inverter_soc_pct"] == 64
+    assert t["bms_source"] is True
+    assert t["capacity_wh"] == 10000
+    packs = out["battery_packs"]
+    assert len(packs) == 2
+    assert packs[0]["source"] == "bms"
+    assert packs[0]["rb"] == 80
+    assert out["last_update_ts"] >= now
+    row = next(r for r in out["cloud"]["devices_overview"]
+               if r["device_id"] == "siseli:42")
+    assert row["soc_pct"] == 50.0
+    assert row["pack_count"] == 2
+
+
+def test_siseli_bms_stale_falls_back_to_portal(server_state):
+    _seed_siseli(server_state, soc=64)
+    server_state.state.bms.upsert(
+        "aa:bb:cc:dd:ee:01", alias="Pack A", capacity_wh=5000,
+        siseli_device_sn="siseli:42",
+    )
+    server_state.state.bms_live = {
+        "AA:BB:CC:DD:EE:01": {"soc_pct": 10, "ts": 1.0},
+    }
+    out = server_state.serialize_status(view_device_id="siseli:42")
+    assert out["telemetry"]["battery_percent"] == 64
+    assert not out["telemetry"].get("bms_source")
+    assert out["battery_packs"][0]["error"] in ("stale", "no reading")
+    assert out["battery_packs"][0]["rb"] == 10

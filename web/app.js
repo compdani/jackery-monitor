@@ -506,7 +506,7 @@ function switchTab(name, opts = {}) {
     // User is now looking — clear the "new insights" dot.
     setAutomationDot(false);
   }
-  if (name === 'device')   { loadDeviceCapacity(); loadDeviceParams(); loadF7AcReset(); loadSiseliCreds(); }
+  if (name === 'device')   { loadDeviceCapacity(); loadDeviceParams(); loadF7AcReset(); loadSiseliCreds(); loadBms(); }
 }
 
 // Boot path: pull the tab from the URL hash. Defer the actual switch
@@ -2024,6 +2024,7 @@ function applySiseliChrome(s) {
     controls.hidden = !siseli;
     if (siseli) renderSiseliControls(s && s.siseli_controls, s && s.cloud && s.cloud.selected_device_id);
   }
+  renderSiseliDeviceSettings(s && s.siseli_controls, s && s.cloud && s.cloud.selected_device_id, siseli);
   document.querySelectorAll('[data-jackery-only]').forEach((el) => {
     if (el.id === 'unknown-model-banner') {
       if (siseli) el.hidden = true;
@@ -2037,7 +2038,7 @@ function renderSiseliControls(controls, deviceId) {
   const body = $('siseli-controls-body');
   const status = $('siseli-controls-status');
   if (!body) return;
-  const list = Array.isArray(controls) ? controls : [];
+  const list = (Array.isArray(controls) ? controls : []).filter((c) => !c.dynamic);
   if (status) status.textContent = list.length ? `${list.length} available` : 'none exposed';
   if (!list.length) {
     body.innerHTML = '<p class="hint">No writable settings reported for this inverter firmware.</p>';
@@ -2074,10 +2075,61 @@ function renderSiseliControls(controls, deviceId) {
   body.dataset.deviceId = deviceId || '';
 }
 
-async function writeSiseliSetting(key, value) {
-  const body = $('siseli-controls-body');
-  const deviceId = (body && body.dataset.deviceId) || (lastStatus && lastStatus.cloud && lastStatus.cloud.selected_device_id);
-  const status = $('siseli-controls-status');
+function renderSiseliDeviceSettings(controls, deviceId, siseli) {
+  const card = $('siseli-device-settings-card');
+  const body = $('siseli-device-settings-body');
+  const status = $('siseli-device-settings-status');
+  if (!card || !body) return;
+  const show = siseli !== false && viewingSiseli();
+  const list = (Array.isArray(controls) ? controls : []).filter((c) => c.dynamic);
+  card.hidden = !show || !list.length;
+  if (!show) return;
+  const drafts = {};
+  body.querySelectorAll('input[data-siseli-key]').forEach((el) => {
+    if (el.dataset.dirty === '1') drafts[el.dataset.siseliKey] = el.value;
+  });
+  body.dataset.deviceId = deviceId || body.dataset.deviceId || '';
+  if (status && status.textContent !== 'saving…') {
+    status.textContent = list.length ? `${list.length} fields` : '—';
+  }
+  if (!list.length) {
+    body.innerHTML = '';
+    return;
+  }
+  body.innerHTML = list.map((c) => {
+    const key = escapeHtml(c.canonical);
+    const name = escapeHtml(c.name || c.canonical);
+    const unit = c.unit ? ` (${escapeHtml(c.unit)})` : '';
+    const hint = c.hint
+      ? `<span class="hint">${escapeHtml(c.hint)}</span>`
+      : '';
+    const value = c.value ?? '';
+    return `<div class="siseli-setting-row">
+      <div class="siseli-setting-label">
+        <span class="auto-label">${name}${unit}</span>
+        ${hint}
+      </div>
+      <input type="number" step="any" data-siseli-key="${key}" data-original="${value}" value="${value}" />
+      <button type="button" class="btn btn-ghost" data-siseli-reset="${key}">Reset</button>
+      <button type="button" class="btn btn-primary" data-siseli-send="${key}">Send</button>
+    </div>`;
+  }).join('');
+  body.querySelectorAll('input[data-siseli-key]').forEach((el) => {
+    const drafted = drafts[el.dataset.siseliKey];
+    if (drafted === undefined) return;
+    el.value = drafted;
+    el.dataset.dirty = '1';
+  });
+}
+
+async function writeSiseliSetting(key, value, opts) {
+  const liveBody = $('siseli-controls-body');
+  const deviceBody = $('siseli-device-settings-body');
+  const deviceId = (opts && opts.deviceId)
+    || (liveBody && liveBody.dataset.deviceId)
+    || (deviceBody && deviceBody.dataset.deviceId)
+    || (lastStatus && lastStatus.cloud && lastStatus.cloud.selected_device_id);
+  const status = (opts && opts.status) || $('siseli-controls-status');
   if (!deviceId) return;
   if (status) status.textContent = 'saving…';
   try {
@@ -2088,8 +2140,12 @@ async function writeSiseliSetting(key, value) {
     });
     const j = await r.json().catch(() => ({}));
     if (!r.ok) throw new Error(j.detail || r.statusText);
+    if (opts && opts.onSaved) opts.onSaved();
+    if (Array.isArray(j.controls)) {
+      renderSiseliControls(j.controls, deviceId);
+      renderSiseliDeviceSettings(j.controls, deviceId, true);
+    }
     if (status) status.textContent = 'saved';
-    if (Array.isArray(j.controls)) renderSiseliControls(j.controls, deviceId);
   } catch (err) {
     if (status) status.textContent = err.message || 'save failed';
   }
@@ -2110,6 +2166,37 @@ $('siseli-controls-body')?.addEventListener('click', (e) => {
   const next = !on;
   const value = next ? Number(btn.dataset.onValue) : Number(btn.dataset.offValue);
   writeSiseliSetting(btn.dataset.siseliKey, value);
+});
+
+$('siseli-device-settings-body')?.addEventListener('input', (e) => {
+  const el = e.target.closest('input[data-siseli-key]');
+  if (!el) return;
+  el.dataset.dirty = el.value === el.dataset.original ? '0' : '1';
+});
+
+$('siseli-device-settings-body')?.addEventListener('click', (e) => {
+  const reset = e.target.closest('[data-siseli-reset]');
+  const send = e.target.closest('[data-siseli-send]');
+  const body = $('siseli-device-settings-body');
+  if (!body) return;
+  if (reset) {
+    const key = reset.dataset.siseliReset;
+    const input = body.querySelector(`input[data-siseli-key="${CSS.escape(key)}"]`);
+    if (!input) return;
+    input.value = input.dataset.original ?? '';
+    input.dataset.dirty = '0';
+    return;
+  }
+  if (!send) return;
+  const key = send.dataset.siseliSend;
+  const input = body.querySelector(`input[data-siseli-key="${CSS.escape(key)}"]`);
+  if (!input) return;
+  const status = $('siseli-device-settings-status');
+  writeSiseliSetting(key, Number(input.value), {
+    deviceId: body.dataset.deviceId,
+    status,
+    onSaved() { input.dataset.dirty = '0'; },
+  });
 });
 
 async function loadSiseliCreds() {
@@ -2172,6 +2259,208 @@ $('siseli-creds-clear')?.addEventListener('click', async () => {
   const status = $('siseli-creds-status');
   if (status) status.textContent = 'not configured';
 });
+
+function siseliDevicesFromPicker() {
+  return (lastDevices || []).filter((d) => isSiseliDevice(d));
+}
+
+function fillBmsSiseliSelect(selectedSn) {
+  const sel = $('bms-siseli-sn');
+  if (!sel) return;
+  const devices = siseliDevicesFromPicker();
+  const current = selectedSn || sel.value || activeJackeryDevice()?.device_sn || '';
+  sel.innerHTML = '<option value="">— unassigned —</option>';
+  for (const d of devices) {
+    const opt = document.createElement('option');
+    opt.value = d.device_sn || '';
+    opt.textContent = d.name || d.device_sn;
+    sel.appendChild(opt);
+  }
+  if (current) sel.value = current;
+}
+
+function setBmsUseAsMainUi(on) {
+  const btn = $('bms-use-as-main');
+  if (!btn) return;
+  btn.classList.toggle('on', !!on);
+  btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+  const st = btn.querySelector('.sw-state');
+  if (st) st.textContent = on ? 'on' : 'off';
+}
+
+async function loadBms() {
+  const status = $('bms-status');
+  const list = $('bms-list');
+  if (!list) return;
+  fillBmsSiseliSelect();
+  try {
+    const r = await fetch('/api/bms/saved');
+    const j = await r.json();
+    const ble = j.ble || {};
+    if (status) {
+      status.textContent = ble.available === false
+        ? (ble.error || 'BLE unavailable')
+        : `${(j.packs || []).length} pack(s)`;
+    }
+    renderBmsPacks(j.packs || [], j.inverters || {});
+    const sn = $('bms-siseli-sn')?.value;
+    const inv = sn && j.inverters ? j.inverters[sn] : null;
+    setBmsUseAsMainUi(inv ? inv.use_as_main !== false : true);
+  } catch (err) {
+    if (status) status.textContent = 'unavailable';
+  }
+}
+
+function renderBmsPacks(packs, inverters) {
+  const list = $('bms-list');
+  if (!list) return;
+  if (!packs.length) {
+    list.innerHTML = '<div class="auto-empty">No BMS packs saved. Scan or enter a MAC.</div>';
+    return;
+  }
+  list.innerHTML = packs.map((p) => {
+    const mac = escapeHtml(p.mac || '');
+    const alias = escapeHtml(p.alias || p.mac || '');
+    const sn = p.siseli_device_sn || '';
+    const inv = (lastDevices || []).find((d) => d.device_sn === sn);
+    const assign = sn
+      ? escapeHtml(inv?.name || sn)
+      : 'unassigned';
+    const rd = p.reading || {};
+    const soc = rd.soc_pct != null ? `${Math.round(rd.soc_pct)}%` : '—';
+    const err = p.error || rd.error;
+    const errLine = err
+      ? `<div class="kr-error" title="${escapeHtml(String(err))}">⚠ ${escapeHtml(String(err).slice(0, 100))}</div>`
+      : '';
+    const cap = p.capacity_wh ? `${p.capacity_wh} Wh` : 'capacity unset';
+    return `<div class="kasa-row" data-bms-mac="${mac}">
+      <span class="kr-state ${err ? 'offline' : 'on'}">${escapeHtml(soc)}</span>
+      <div class="kr-name">
+        <div class="kr-alias">${alias}</div>
+        <div class="kr-meta"><span class="host">${mac}</span> · ${escapeHtml(cap)} · → ${assign}</div>
+        ${errLine}
+      </div>
+      <div class="kasa-row-actions">
+        <button class="btn btn-ghost" data-edit-bms="${mac}" type="button">Edit</button>
+        <button class="btn btn-ghost" data-del-bms="${mac}" type="button">Delete</button>
+      </div>
+    </div>`;
+  }).join('');
+  list.querySelectorAll('[data-edit-bms]').forEach((b) => {
+    b.addEventListener('click', () => {
+      const p = packs.find((x) => x.mac === b.dataset.editBms);
+      if (!p) return;
+      $('bms-mac').value = p.mac || '';
+      $('bms-alias').value = p.alias || '';
+      $('bms-capacity').value = p.capacity_wh || '';
+      fillBmsSiseliSelect(p.siseli_device_sn || '');
+    });
+  });
+  list.querySelectorAll('[data-del-bms]').forEach((b) => {
+    b.addEventListener('click', async () => {
+      const mac = b.dataset.delBms;
+      if (!mac || !confirm(`Remove BMS ${mac}?`)) return;
+      await fetch('/api/bms/saved/' + encodeURIComponent(mac), { method: 'DELETE' });
+      loadBms();
+    });
+  });
+}
+
+$('bms-add-form')?.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const msg = $('bms-msg');
+  if (msg) { msg.hidden = false; msg.textContent = 'Saving…'; }
+  try {
+    const r = await fetch('/api/bms/saved', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        mac: $('bms-mac').value,
+        alias: $('bms-alias').value,
+        capacity_wh: $('bms-capacity').value ? Number($('bms-capacity').value) : null,
+        siseli_device_sn: $('bms-siseli-sn')?.value ?? '',
+      }),
+    });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.detail || r.statusText);
+    if (msg) { msg.textContent = 'Saved.'; setTimeout(() => { msg.hidden = true; }, 2000); }
+    $('bms-mac').value = '';
+    $('bms-alias').value = '';
+    $('bms-capacity').value = '';
+    loadBms();
+  } catch (err) {
+    if (msg) { msg.hidden = false; msg.textContent = err.message || 'save failed'; }
+  }
+});
+
+$('bms-scan')?.addEventListener('click', async () => {
+  const btn = $('bms-scan');
+  const box = $('bms-scan-results');
+  const status = $('bms-status');
+  if (btn) { btn.disabled = true; btn.textContent = 'Scanning…'; }
+  if (box) { box.hidden = false; box.textContent = 'Scanning for ~8s…'; }
+  try {
+    const r = await fetch('/api/bms/scan');
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.detail || r.statusText);
+    if (j.ble_available === false) {
+      if (box) box.textContent = j.error || 'BLE unavailable on this host.';
+      if (status) status.textContent = 'BLE unavailable';
+      return;
+    }
+    const devices = j.devices || [];
+    if (!devices.length) {
+      if (box) box.textContent = (j.error || 'No JBD/Overkill modules found. Enter the MAC manually.');
+      return;
+    }
+    if (box) {
+      box.innerHTML = devices.map((d) =>
+        `<div class="auto-disc-row">
+          <span class="alias">${escapeHtml(d.name || d.mac)}</span>
+          <span class="host">${escapeHtml(d.mac)}</span>
+          <span class="hint">${d.rssi != null ? d.rssi + ' dBm' : ''}</span>
+          <button type="button" class="btn btn-ghost" data-bms-pick="${escapeHtml(d.mac)}" data-bms-name="${escapeHtml(d.name || '')}">Use</button>
+        </div>`
+      ).join('');
+      box.querySelectorAll('[data-bms-pick]').forEach((b) => {
+        b.addEventListener('click', () => {
+          $('bms-mac').value = b.dataset.bmsPick || '';
+          if (!$('bms-alias').value) $('bms-alias').value = b.dataset.bmsName || '';
+        });
+      });
+    }
+  } catch (err) {
+    if (box) box.textContent = err.message || 'scan failed';
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'Scan BLE'; }
+  }
+});
+
+$('bms-use-as-main')?.addEventListener('click', async () => {
+  const sn = $('bms-siseli-sn')?.value || activeJackeryDevice()?.device_sn;
+  if (!sn || !isSiseliDevice({ device_sn: sn, device_id: sn })) {
+    const msg = $('bms-msg');
+    if (msg) { msg.hidden = false; msg.textContent = 'Pick a Siseli inverter first.'; }
+    return;
+  }
+  const btn = $('bms-use-as-main');
+  const next = !btn.classList.contains('on');
+  try {
+    const r = await fetch('/api/bms/inverter/' + encodeURIComponent(sn), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ use_as_main: next }),
+    });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.detail || r.statusText);
+    setBmsUseAsMainUi(next);
+  } catch (err) {
+    const msg = $('bms-msg');
+    if (msg) { msg.hidden = false; msg.textContent = err.message || 'failed'; }
+  }
+});
+
+$('bms-siseli-sn')?.addEventListener('change', () => loadBms());
 
 function renderRulesWithFilter() {
   const filterName = $('auto-rules-filter-name');
@@ -4491,6 +4780,7 @@ function applyStatus(s) {
       loadDeviceCapacity();
       loadDeviceParams();
       loadF7AcReset();
+      loadBms();
     }
   }
 
@@ -7399,6 +7689,7 @@ function packRow({ idx, soc, flow, flowClass, temp, label, snTitle, isMain,
 async function fetchBatteryPacks() {
   const card = $('battery-packs-card');
   if (!card) return;
+  if (viewingSiseli()) return;
   try {
     const viewSn = activeJackeryDevice()?.device_sn;
     const r = await fetch('/api/devices/battery_packs'
@@ -7467,6 +7758,7 @@ function renderBatteryPacks() {
     null;
   const mainTempC = window._lastStatus?.battery_temp_c ?? null;
   const t = window._lastStatus || {};
+  const isBms = !!(t.bms_source || packs.some((p) => p.source === 'bms'));
   const mainWh = window._cachedMainCapacityWh
     || t.main_capacity_wh
     || window._capacityOverrideWh
@@ -7476,22 +7768,43 @@ function renderBatteryPacks() {
     || mainWh;
   const systemSoc = t.system_soc_pct != null
     ? t.system_soc_pct
-    : computeSystemSoc(mainPct, packs, mainWh, packWh);
+    : (isBms ? (t.battery_percent ?? null) : computeSystemSoc(mainPct, packs, mainWh, packWh));
   window._mainWh = mainWh;
   window._systemSoc = systemSoc;
-  window._mainSoc = mainPct;
+  window._mainSoc = isBms ? (t.inverter_soc_pct ?? t.main_soc_pct ?? null) : mainPct;
   applySystemSocOverlay();
 
 
   const totalIn = packs.reduce((s, p) => s + (p.ip || 0), 0);
-  const avgPack = packs.reduce((s, p) => s + (p.rb || 0), 0) / packs.length;
+  const withSoc = packs.filter((p) => p.rb != null);
+  const avgPack = withSoc.length
+    ? withSoc.reduce((s, p) => s + (p.rb || 0), 0) / withSoc.length
+    : 0;
   const sysTxt = systemSoc != null ? ` · system ${Math.round(systemSoc)}%` : '';
   const upgrades = packs.filter(p => p.needUpgrade).length;
   const upgTxt = upgrades ? ` · ⬆ ${upgrades} update${upgrades > 1 ? 's' : ''}` : '';
-  summary.textContent = `${packs.length} packs · avg ${Math.round(avgPack)}%${sysTxt} · ${totalIn}W in${upgTxt}`;
+  const bmsErr = packs.filter((p) => p.error).length;
+  const errTxt = bmsErr ? ` · ${bmsErr} offline` : '';
+  summary.textContent = isBms
+    ? `${packs.length} BMS pack${packs.length === 1 ? '' : 's'} · avg ${Math.round(avgPack)}%${sysTxt}${errTxt}`
+    : `${packs.length} packs · avg ${Math.round(avgPack)}%${sysTxt} · ${totalIn}W in${upgTxt}`;
 
   const rows = [];
-  if (mainPct != null) {
+  if (isBms) {
+    const inv = t.inverter_soc_pct ?? t.main_soc_pct;
+    if (inv != null) {
+      rows.push(packRow({
+        idx: '★',
+        soc: inv,
+        flow: 'portal',
+        flowClass: 'flow-idle',
+        temp: '',
+        label: 'Inverter (portal)',
+        snTitle: 'Siseli cloud-reported SOC',
+        isMain: true,
+      }));
+    }
+  } else if (mainPct != null) {
     rows.push(packRow({
       idx: '★',
       soc: mainPct,
@@ -7507,20 +7820,20 @@ function renderBatteryPacks() {
     const sn = String(p.deviceSn || '');
     const ip = p.ip != null ? Math.round(p.ip) : 0;
     const op = p.op != null ? Math.round(p.op) : 0;
-    // deviceOrder is the cloud's authoritative pack ordering; some
-    // payload paths (older WS broadcasts, the bridge cache when it
-    // hasn't seen a fresh /v1/device/property yet) omit it. Fall
-    // back to the array index so the user sees 1..N instead of every
-    // row labeled "1".
     const order = (typeof p.deviceOrder === 'number') ? p.deviceOrder : i;
+    const label = p.alias || (sn ? `…${sn.slice(-6)}` : (isBms ? 'BMS' : 'pack'));
+    const volts = p.voltage_v != null ? `${Number(p.voltage_v).toFixed(1)}V` : '';
+    const flow = p.error
+      ? String(p.error).slice(0, 18)
+      : (ip > 0 ? `+${ip}W` : (op > 0 ? `−${op}W` : (volts || 'idle')));
     rows.push(packRow({
       idx: order + 1,
       soc: p.rb,
-      flow: ip > 0 ? `+${ip}W` : (op > 0 ? `−${op}W` : 'idle'),
-      flowClass: ip > 0 ? 'flow-in' : (op > 0 ? 'flow-out' : 'flow-idle'),
+      flow,
+      flowClass: p.error ? 'flow-idle' : (ip > 0 ? 'flow-in' : (op > 0 ? 'flow-out' : 'flow-idle')),
       temp: formatPackTempHtml(p.it, sn.slice(-6) || sn),
-      label: `…${sn.slice(-6)}`,
-      snTitle: sn,
+      label,
+      snTitle: [sn, volts, p.error].filter(Boolean).join(' · '),
       isMain: false,
       needUpgrade: !!p.needUpgrade,
     }));

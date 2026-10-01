@@ -354,4 +354,85 @@ def test_set_device_setting_uses_alias():
     )
     assert writes[0]["key"] == "setOutputSourcePriority"
     assert writes[0]["value"] == 2
+    assert writes[0]["id"] == "99"
+    api.close()
+
+
+def test_load_switch_setting_writes_portal_body():
+    raw = {
+        "LoadSwitchSetting": {
+            "value": "0",
+            "valueDisplay": "Off",
+            "name": "Load Switch Setting",
+        },
+    }
+    controls = sc.normalize_controls(raw)
+    assert len(controls) == 1
+    load = controls[0]
+    assert load["canonical"] == "LoadSwitchSetting"
+    assert load["name"] == "Load"
+    assert load["kind"] == "switch"
+    assert load["value"] is False
+    assert load["dynamic"] is False
+
+    writes = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        writes.append(json.loads(request.content))
+        return httpx.Response(200, json={"code": 0, "data": {}})
+
+    http = httpx.Client(transport=_transport(handler))
+    api = sc.SiseliAPI(user_id="alice", password="p", iot_token="tok", http=http)
+    api.set_device_setting("99", "LoadSwitchSetting", 1, settings=raw)
+    assert writes[0]["key"] == "LoadSwitchSetting"
+    assert writes[0]["id"] == "99"
+    assert writes[0]["deviceId"] == "99"
+    assert writes[0]["value"] == "1"
+    api.close()
+
+
+def test_dynamic_settings_are_separate_controls():
+    raw = {
+        "ChargeLimitVoltage": {
+            "value": 15,
+            "unit": "V",
+            "name": "Charge Limit Voltage",
+            "valueTypeDict": "Numeric",
+        },
+        "BatteryType": {
+            "value": "4",
+            "name": "Battery Type",
+            "valueDisplay": "Lithium Battery",
+            "valueTypeDict": "Enumeration",
+        },
+        "outputSourcePrioritySetting": {"value": 1},
+    }
+    controls = sc.normalize_controls(raw)
+    by = {c["canonical"]: c for c in controls}
+    voltage = by["ChargeLimitVoltage"]
+    assert voltage["kind"] == "number"
+    assert voltage["value"] == 15
+    assert voltage["unit"] == "V"
+    assert voltage["dynamic"] is True
+    battery = by["BatteryType"]
+    assert battery["dynamic"] is True
+    assert battery["hint"] == "Lithium Battery"
+    assert battery["value"] == 4
+    assert "outputSourcePrioritySetting" in by
+    assert by["outputSourcePrioritySetting"]["dynamic"] is False
+
+    writes = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        writes.append(json.loads(request.content))
+        return httpx.Response(200, json={"code": 0, "data": {}})
+
+    http = httpx.Client(transport=_transport(handler))
+    api = sc.SiseliAPI(user_id="alice", password="p", iot_token="tok", http=http)
+    api.set_device_setting("99", "ChargeLimitVoltage", 16, settings=raw)
+    api.set_device_setting("99", "BatteryType", 5, settings=raw)
+    assert writes[0]["key"] == "ChargeLimitVoltage"
+    assert writes[0]["value"] == 16
+    assert writes[1]["key"] == "BatteryType"
+    assert writes[1]["value"] == "5"
     api.close()

@@ -870,6 +870,17 @@
         </dl>
       </section>
 
+      <section id="siseli-device-settings-card" class="card device-card" hidden>
+        <div class="card-header">
+          <h2>Controller settings</h2>
+          <span id="siseli-device-settings-status" class="hint">—</span>
+        </div>
+        <p class="hint" style="margin:6px 0 12px">
+          Each Send writes only that field to solar.siseli.com. Reset restores the last value read from the portal.
+        </p>
+        <div id="siseli-device-settings-body" class="siseli-device-settings"></div>
+      </section>
+
       <section class="card device-card" id="f7-ac-reset-card" data-jackery-only>
         <div class="card-header">
           <h2>F7 AC reset</h2>
@@ -1040,6 +1051,52 @@
             <button id="siseli-creds-clear" class="btn btn-ghost" type="button">Forget</button>
           </div>
         </form>
+      </section>
+
+      <section class="card device-card">
+        <div class="card-header">
+          <h2>Bluetooth BMS</h2>
+          <span id="bms-status" class="hint">—</span>
+        </div>
+        <p class="hint" style="margin:6px 0 12px">
+          Overkill / JBD / XiaoXiang packs assigned to a Siseli inverter
+          replace the portal SOC as the Live battery headline, capacity-weighted
+          across packs. Scan needs a USB Bluetooth adapter on the NAS
+          (host <code>bluetoothd</code> + D-Bus). If scan finds nothing, type the MAC.
+        </p>
+        <label class="auto-field siseli-control siseli-switch" style="margin-bottom:12px">
+          <span class="auto-label">Use as main battery display</span>
+          <button type="button" class="switch" id="bms-use-as-main" aria-pressed="false">
+            <span class="sw-state">off</span>
+          </button>
+        </label>
+        <div id="bms-list" class="kasa-list"></div>
+        <form id="bms-add-form" style="margin-top:14px">
+          <div class="auto-form-grid">
+            <label class="auto-field">
+              <span class="auto-label">MAC</span>
+              <input id="bms-mac" type="text" placeholder="AA:BB:CC:DD:EE:FF" autocomplete="off" required />
+            </label>
+            <label class="auto-field">
+              <span class="auto-label">Alias</span>
+              <input id="bms-alias" type="text" placeholder="Pack 1" />
+            </label>
+            <label class="auto-field">
+              <span class="auto-label">Capacity (Wh)</span>
+              <input id="bms-capacity" type="number" min="1" step="1" placeholder="5120" />
+            </label>
+            <label class="auto-field">
+              <span class="auto-label">Siseli inverter</span>
+              <select id="bms-siseli-sn"></select>
+            </label>
+            <span id="bms-msg" class="hint" hidden></span>
+          </div>
+          <div style="margin-top:14px; display:flex; gap:8px; flex-wrap:wrap">
+            <button class="btn btn-primary" type="submit">Save pack</button>
+            <button id="bms-scan" class="btn btn-ghost" type="button">Scan BLE</button>
+          </div>
+        </form>
+        <div id="bms-scan-results" class="auto-discovered" hidden></div>
       </section>
     </section>
 

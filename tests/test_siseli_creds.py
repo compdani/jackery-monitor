@@ -99,3 +99,4 @@ def test_file_permissions_are_tight(fresh_creds):
 def test_backup_includes_siseli_creds():
     import backup
     assert "siseli-creds.json" in backup.SMALL_FILES
+    assert "bms_devices.json" in backup.SMALL_FILES

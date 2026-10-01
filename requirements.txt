@@ -16,3 +16,8 @@ tzdata>=2024.1
 # when the user explicitly enables it AND has saved a key.
 anthropic>=0.40
 openai>=1.40
+# Bluetooth BMS (Overkill / JBD / XiaoXiang). Talks to host bluetoothd
+# over D-Bus; needs /var/run/dbus mounted and host networking (already
+# used by jackery-monitor). Import is optional at runtime — scan/status
+# return a structured error when BlueZ isn't available.
+bleak>=0.22

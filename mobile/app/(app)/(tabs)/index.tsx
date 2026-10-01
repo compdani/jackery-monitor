@@ -142,6 +142,9 @@ type Pack = {
   deviceSn?: string;
   deviceOrder?: number;
   needUpgrade?: boolean;
+  source?: string;
+  alias?: string;
+  error?: string;
 };
 
 function packFlow(p: Pack): string {
@@ -560,36 +563,48 @@ export default function LiveScreen() {
         </Card>
       ) : null}
 
-      {packs.length > 0 && !isSiseli ? (
+      {packs.length > 0 ? (
         <Card>
           <Eyebrow>Battery packs</Eyebrow>
           <Hint>
             {packs.length} pack{packs.length === 1 ? "" : "s"}
             {soc != null ? ` · system ${Math.round(soc)}%` : ""}
           </Hint>
-          <PackRow
-            idx="★"
-            isMain
-            soc={t?.main_soc_pct ?? t?.battery_percent ?? null}
-            meta={[
-              t?.battery_temp_c != null ? fmtTemp(t.battery_temp_c, tempUnit) : null,
-              "Main",
-            ]
-              .filter(Boolean)
-              .join(" · ")}
-          />
+          {isSiseli ? (
+            t?.inverter_soc_pct != null || t?.main_soc_pct != null ? (
+              <PackRow
+                idx="★"
+                isMain
+                soc={t?.inverter_soc_pct ?? t?.main_soc_pct ?? null}
+                meta="Inverter (portal)"
+              />
+            ) : null
+          ) : (
+            <PackRow
+              idx="★"
+              isMain
+              soc={t?.main_soc_pct ?? t?.battery_percent ?? null}
+              meta={[
+                t?.battery_temp_c != null ? fmtTemp(t.battery_temp_c, tempUnit) : null,
+                "Main",
+              ]
+                .filter(Boolean)
+                .join(" · ")}
+            />
+          )}
           {packs.map((p, i) => {
             const order = typeof p.deviceOrder === "number" ? p.deviceOrder : i;
             const sn = String(p.deviceSn || "");
+            const label = p.alias || (sn ? `…${sn.slice(-6)}` : null);
             return (
               <PackRow
                 key={sn || i}
                 idx={String(order + 1)}
                 soc={p.rb ?? null}
                 meta={[
-                  packFlow(p),
+                  p.error ? String(p.error) : packFlow(p),
                   p.it != null ? fmtTemp(p.it, tempUnit) : null,
-                  sn ? `…${sn.slice(-6)}` : null,
+                  label,
                 ]
                   .filter(Boolean)
                   .join(" · ")}

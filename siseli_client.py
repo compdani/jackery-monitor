@@ -159,6 +159,12 @@ CONTROL_DEFINITIONS: list[dict[str, Any]] = [
         "write_canonical": "outputSourcePrioritySetting",
         "on_value": 2, "off_value": 1,
     },
+    {
+        "canonical": "LoadSwitchSetting",
+        "kind": "switch",
+        "name": "Load",
+        "on_value": "1", "off_value": "0",
+    },
 ]
 
 
@@ -513,11 +519,51 @@ def _setting_raw_value(obj: Any) -> Any:
     return obj
 
 
+def _control_number(num: float | None) -> int | float | None:
+    if num is None:
+        return None
+    if num == int(num):
+        return int(num)
+    return num
+
+
+def _dynamic_control(key: str, entry: Any) -> dict[str, Any]:
+    """One editable field for a cache key that is not a known inverter control."""
+    raw = _setting_raw_value(entry)
+    num = coerce_number(raw)
+    name = key
+    unit = ""
+    hint = ""
+    if isinstance(entry, dict):
+        name = str(entry.get("nameDisplay") or entry.get("name") or key)
+        unit = str(entry.get("unit") or "")
+        if str(entry.get("valueTypeDict") or "") == "Enumeration":
+            display = entry.get("valueDisplay")
+            if display not in (None, ""):
+                hint = str(display)
+    return {
+        "canonical": key,
+        "kind": "number",
+        "name": name,
+        "unit": unit,
+        "hint": hint,
+        "value": _control_number(num),
+        "resolved_key": key,
+        "write_canonical": key,
+        "dynamic": True,
+    }
+
+
 def normalize_controls(raw_settings: Any) -> list[dict[str, Any]]:
-    """Return only controls the firmware actually exposes."""
+    """Return controls the firmware actually exposes.
+
+    Known inverter keys stay on the live card. Every other cache key is a
+    separate device-tab field (``dynamic``) so one write does not touch the rest.
+    """
     if not isinstance(raw_settings, dict):
         return []
     out: list[dict[str, Any]] = []
+    seen: set[str] = set()
     for spec in CONTROL_DEFINITIONS:
         write_canonical = spec.get("write_canonical") or spec["canonical"]
         resolved = resolve_setting_key(raw_settings, write_canonical)
@@ -528,6 +574,7 @@ def normalize_controls(raw_settings: Any) -> list[dict[str, Any]]:
         item = {k: v for k, v in spec.items() if k != "write_canonical"}
         item["resolved_key"] = resolved
         item["write_canonical"] = write_canonical
+        item["dynamic"] = False
         if spec["kind"] == "switch":
             on_value = spec["on_value"]
             item["value"] = (int(num) == int(on_value)) if num is not None else None
@@ -536,7 +583,46 @@ def normalize_controls(raw_settings: Any) -> list[dict[str, Any]]:
         else:
             item["value"] = num
         out.append(item)
+        seen.add(resolved)
+        seen.add(spec["canonical"])
+    dynamic: list[dict[str, Any]] = []
+    for key, entry in raw_settings.items():
+        if key in seen or not isinstance(key, str):
+            continue
+        if isinstance(entry, dict) and entry.get("isHidden") in (True, 1, "1"):
+            continue
+        dynamic.append(_dynamic_control(key, entry))
+    dynamic.sort(key=lambda c: (str(c["name"]).lower(), c["canonical"]))
+    out.extend(dynamic)
     return out
+
+
+def coerce_setting_write_value(value: Any, spec: dict[str, Any] | None, cached: Any) -> Any:
+    """Match the portal's stored type: string settings stay strings."""
+    if spec and spec.get("kind") == "switch" and isinstance(spec.get("on_value"), str):
+        num = coerce_number(value)
+        on_num = coerce_number(spec.get("on_value"))
+        if num is not None and on_num is not None and int(num) == int(on_num):
+            return str(spec["on_value"])
+        return str(spec.get("off_value"))
+    raw = _setting_raw_value(cached) if cached is not None else None
+    if isinstance(raw, str):
+        if isinstance(value, bool):
+            return "1" if value else "0"
+        return str(value)
+    if isinstance(raw, bool):
+        return value
+    if isinstance(raw, int):
+        num = coerce_number(value)
+        if num is None:
+            return value
+        if num == int(num):
+            return int(num)
+        return num
+    if isinstance(raw, float):
+        num = coerce_number(value)
+        return num if num is not None else value
+    return value
 
 
 class SiseliAPI:
@@ -980,7 +1066,7 @@ class SiseliAPI:
     def _write_setting(self, device_id: str, key: str, value: Any) -> None:
         self._ensure_token_valid()
         url = f"{API_BASE_URL}{API_SETTINGS_SET}?deviceId={device_id}"
-        payload = {"deviceId": device_id, "key": key, "value": value}
+        payload = {"id": device_id, "deviceId": device_id, "key": key, "value": value}
         resp = self.http.post(url, json=payload, timeout=HTTP_TIMEOUT)
         if resp.status_code == 401:
             self._access_expires = None
@@ -1002,6 +1088,9 @@ class SiseliAPI:
         write_canonical = (spec or {}).get("write_canonical") or canonical
         if settings is None:
             key = write_canonical
+            cached = None
         else:
             key = resolve_setting_key(settings, write_canonical) or write_canonical
+            cached = settings.get(key)
+        value = coerce_setting_write_value(value, spec, cached)
         self._write_setting(device_id, key, value)

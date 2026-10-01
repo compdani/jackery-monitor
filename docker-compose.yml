@@ -94,6 +94,10 @@ services:
       JACKERY_CF_ACCESS_EMAILS: "${JACKERY_CF_ACCESS_EMAILS:-}"
     volumes:
       - jackery-data:/data
+      # Host BlueZ D-Bus so bleak can talk to a USB BLE adapter on the NAS.
+      # bluetoothd must be running on DSM; if scan returns nothing, enable
+      # host Bluetooth for the dongle and enter the BMS MAC manually.
+      - /var/run/dbus:/var/run/dbus:ro
     # No cap_add / security_opt anymore. The backup feature now uses
     # smbclient (pure userspace) instead of mount.cifs, so this
     # container can stay fully unprivileged. The previous SYS_ADMIN +

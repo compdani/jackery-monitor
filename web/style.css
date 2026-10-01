@@ -2985,3 +2985,38 @@ body.device-switching .tab-panel { opacity: .45; pointer-events: none;
   justify-content: space-between;
   gap: 12px;
 }
+.siseli-device-settings {
+  display: flex;
+  flex-direction: column;
+}
+.siseli-setting-row {
+  display: grid;
+  grid-template-columns: minmax(160px, 1.4fr) minmax(96px, 180px) auto auto;
+  gap: 8px 12px;
+  align-items: center;
+  padding: 10px 0;
+  border-top: 1px solid var(--border);
+}
+.siseli-setting-label {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.siseli-setting-label .auto-label { text-transform: none; letter-spacing: 0; font-size: 14px; color: var(--text); }
+.siseli-setting-row input[type="number"] {
+  width: 100%;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  color-scheme: dark;
+  padding: 8px 10px;
+  font-family: inherit;
+  font-size: 14px;
+}
+.siseli-setting-row input[type="number"]:focus { border-color: var(--accent); outline: none; }
+@media (max-width: 720px) {
+  .siseli-setting-row { grid-template-columns: 1fr 1fr; }
+  .siseli-setting-label { grid-column: 1 / -1; }
+}

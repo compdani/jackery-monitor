@@ -43,6 +43,8 @@ import backoff as _backoff
 import backup
 import backup_creds
 import backup_discover
+import bms_ble
+import bms_devices
 import cost as cost_module
 import energy_db
 import forecast_solar
@@ -71,6 +73,7 @@ from device_client import (
 )
 from energy_db import EnergyDB
 from kasa_devices import KasaRegistry
+from bms_devices import BmsRegistry
 
 logging.basicConfig(level=logging.INFO,
                     format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -126,6 +129,10 @@ CLOUD_STALL_ALERT_S = 8 * 60
 # bridge. The portal is HTTP-only and rate-limited; 5 min matches the
 # upstream Home Assistant integration's default.
 SISELI_POLL_INTERVAL_S = 300
+# Bluetooth BMS (Overkill/JBD) poll — sequential connect-query-disconnect
+# on the host BlueZ adapter. Independent of the 5-minute Siseli portal poll
+# so Live SOC can move at BLE cadence.
+BMS_POLL_INTERVAL_S = float(os.environ.get("BMS_POLL_INTERVAL_S", "15"))
 
 # Cloudy-tomorrow guard horizon for solar_charge: how far ahead the
 # with-diversion forecast's minimum SOC must stay above comfort_low
@@ -256,6 +263,13 @@ class AppState:
         }
         self.siseli_task: asyncio.Task | None = None
         self.siseli_wake: asyncio.Event = asyncio.Event()
+        # Bluetooth BMS packs assigned to Siseli inverters. Registry is
+        # durable; live readings stay in-process so a BLE miss falls back
+        # to portal SOC instead of wiping last-good values from disk.
+        self.bms: BmsRegistry = BmsRegistry()
+        self.bms_live: dict[str, dict[str, Any]] = {}
+        self.bms_task: asyncio.Task | None = None
+        self.bms_wake: asyncio.Event = asyncio.Event()
 
     @property
     def backend(self) -> str:
@@ -873,6 +887,38 @@ def _kick_siseli_poll() -> None:
         pass
 
 
+def _kick_bms_poll() -> None:
+    try:
+        state.bms_wake.set()
+    except Exception:
+        pass
+
+
+def _bms_ui_rows(sn: str | None) -> list[dict]:
+    if not sn:
+        return []
+    return bms_devices.ui_pack_rows(state.bms.list_packs(sn), state.bms_live)
+
+
+def _apply_bms_overlay(sn: str | None, tele: dict | None) -> dict | None:
+    """Copy Siseli telemetry and overlay capacity-weighted BMS SOC."""
+    if tele is None or not sn:
+        return tele
+    override = None
+    try:
+        override = state.energy.get_capacity_override(sn)
+    except Exception:
+        override = None
+    cap = int(override) if override else None
+    return bms_devices.overlay_telemetry(
+        tele,
+        packs=state.bms.list_packs(sn),
+        live=state.bms_live,
+        use_as_main=state.bms.use_as_main(sn),
+        capacity_override_wh=cap,
+    )
+
+
 def _merged_cloud_meta() -> dict:
     """Jackery cloud_meta plus any Siseli inverters, for fleet/view APIs."""
     cloud = dict(state.last_cloud_meta) if state.last_cloud_meta else {}
@@ -940,14 +986,15 @@ async def siseli_poll_once() -> None:
                 log.debug("siseli settings %s failed: %s", pid, e)
             tele = (telemetry_by_sn.get(sn) or {}).get("telemetry")
             if tele:
+                rec = _apply_bms_overlay(sn, tele) or tele
                 state.energy.upsert_device(sn, d.get("name"), None, None)
                 state.energy.record(
                     sn, ts,
-                    float(tele.get("input_power_w") or 0),
-                    float(tele.get("output_power_w") or 0),
-                    int(tele.get("battery_percent") or 0),
-                    solar_w=float(tele.get("solar_input_w") or 0),
-                    ac_input_w=float(tele.get("ac_input_w") or 0),
+                    float(rec.get("input_power_w") or 0),
+                    float(rec.get("output_power_w") or 0),
+                    int(rec.get("battery_percent") or 0),
+                    solar_w=float(rec.get("solar_input_w") or 0),
+                    ac_input_w=float(rec.get("ac_input_w") or 0),
                 )
         state.siseli = {
             "state": "connected",
@@ -1001,6 +1048,44 @@ async def siseli_loop() -> None:
             raise
 
 
+async def bms_loop() -> None:
+    """Poll assigned JBD/Overkill packs sequentially; overlay is merge-at-read."""
+    while True:
+        try:
+            macs = [p["mac"] for p in state.bms.list_packs() if p.get("mac")]
+            if macs:
+                readings = await bms_ble.poll_all(macs)
+                for mac, reading in readings.items():
+                    if reading.get("error"):
+                        prev = dict(state.bms_live.get(mac) or {})
+                        prev["error"] = reading["error"]
+                        if prev.get("soc_pct") is None:
+                            prev["ts"] = reading.get("ts")
+                            prev["soc_pct"] = None
+                        state.bms_live[mac] = prev
+                    else:
+                        state.bms_live[mac] = reading
+                        pack = state.bms.get(mac)
+                        if pack and not pack.get("capacity_wh"):
+                            inferred = bms_devices.infer_capacity_wh(reading)
+                            if inferred:
+                                state.bms.set_capacity_wh(mac, inferred)
+                await broadcast_status("telemetry")
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            log.warning("bms poll failed: %s", e)
+        try:
+            state.bms_wake.clear()
+            await asyncio.wait_for(
+                state.bms_wake.wait(), timeout=max(5.0, BMS_POLL_INTERVAL_S),
+            )
+        except asyncio.TimeoutError:
+            pass
+        except asyncio.CancelledError:
+            raise
+
+
 def _as_int(v, default: int = 0) -> int:
     try:
         return int(v)
@@ -1029,12 +1114,17 @@ def _devices_overview(cloud_src: dict | None) -> list[dict]:
         mc = d.get("model_code")
         entry = tele_by_sn.get(sn) or {}
         tele = entry.get("telemetry") or {}
+        if siseli_client.is_siseli_sn(sn):
+            tele = _apply_bms_overlay(sn, tele) or tele
         ts = entry.get("ts")
         main_pct = tele.get("battery_percent")
         soc = None
         if main_pct is not None:
             try:
-                soc = round(_system_soc_pct(float(main_pct), sn or None, mc), 1)
+                if tele.get("bms_source"):
+                    soc = round(float(main_pct), 1)
+                else:
+                    soc = round(_system_soc_pct(float(main_pct), sn or None, mc), 1)
             except (TypeError, ValueError):
                 soc = None
         age_s = None
@@ -1043,6 +1133,10 @@ def _devices_overview(cloud_src: dict | None) -> list[dict]:
                 age_s = round(now - float(ts), 1)
             except (TypeError, ValueError):
                 age_s = None
+        if siseli_client.is_siseli_sn(sn):
+            pack_count = len(state.bms.list_packs(sn))
+        else:
+            pack_count = len(state.battery_packs_by_sn.get(sn, [])) if sn else 0
         out.append({
             "device_id": d.get("device_id"),
             "device_sn": sn or None,
@@ -1050,7 +1144,7 @@ def _devices_overview(cloud_src: dict | None) -> list[dict]:
             "model_code": mc,
             "model_name": d.get("model_name"),
             "soc_pct": soc,
-            "pack_count": len(state.battery_packs_by_sn.get(sn, [])) if sn else 0,
+            "pack_count": pack_count,
             "solar_w": _as_int(tele.get("solar_input_w")),
             "ac_input_w": _as_int(tele.get("ac_input_w")),
             "feed_in_w": _as_int(tele.get("feed_in_w")),
@@ -1331,7 +1425,25 @@ def serialize_status(view_device_id: str | None = None) -> dict[str, Any]:
         )
         source = "siseli" if viewing_siseli else state.last_source
 
-    if telemetry and view_packs:
+    if viewing_siseli and view_sn:
+        view_packs = _bms_ui_rows(view_sn)
+        telemetry = _apply_bms_overlay(view_sn, telemetry or {"source": "siseli"})
+        bms_ts = bms_devices.latest_live_ts(
+            state.bms.list_packs(view_sn), state.bms_live)
+        if bms_ts is not None:
+            try:
+                last_update_ts = max(float(last_update_ts or 0), bms_ts)
+            except (TypeError, ValueError):
+                last_update_ts = bms_ts
+
+    if viewing_siseli:
+        if telemetry and view_sn and not telemetry.get("bms_source"):
+            main_wh, pack_wh = _capacity_hints(view_sn)
+            telemetry = {**telemetry,
+                         "capacity_wh": _total_capacity_wh(view_sn, model_code),
+                         "main_capacity_wh": main_wh,
+                         "pack_capacity_wh": pack_wh}
+    elif telemetry and view_packs:
         main_pct = telemetry.get("battery_percent")
         if main_pct is not None:
             sys_pct = _system_soc_pct(float(main_pct), view_sn, model_code)
@@ -3217,6 +3329,7 @@ async def lifespan(app: FastAPI):
     asyncio.create_task(connect_device())
     state.poll_task = asyncio.create_task(poll_loop())
     state.siseli_task = asyncio.create_task(siseli_loop())
+    state.bms_task = asyncio.create_task(bms_loop())
     state.smart_charge_task = asyncio.create_task(smart_charge_loop())
     state.solar_charge_task = asyncio.create_task(solar_charge_loop())
     # Daily AI-insights auto-run is intentionally NOT started here.
@@ -3241,6 +3354,8 @@ async def lifespan(app: FastAPI):
         state.poll_task.cancel()
     if getattr(state, "siseli_task", None):
         state.siseli_task.cancel()
+    if getattr(state, "bms_task", None):
+        state.bms_task.cancel()
     if getattr(state, "smart_charge_task", None):
         state.smart_charge_task.cancel()
     if getattr(state, "solar_charge_task", None):
@@ -4733,6 +4848,23 @@ async def api_devices_battery_packs(device_sn: str | None = None,
     }
     if not device_sn:
         return {"error": "no device", "packs": [], "_diag": diag}
+    if siseli_client.is_siseli_sn(device_sn):
+        packs = _bms_ui_rows(device_sn)
+        entry = (state.siseli.get("telemetry_by_sn") or {}).get(device_sn) or {}
+        tele = _apply_bms_overlay(device_sn, entry.get("telemetry") or {"source": "siseli"}) or {}
+        bms_ts = bms_devices.latest_live_ts(
+            state.bms.list_packs(device_sn), state.bms_live)
+        return {
+            "device_sn": device_sn,
+            "packs": packs,
+            "main_soc_pct": tele.get("inverter_soc_pct", tele.get("main_soc_pct")),
+            "fetched_at": bms_ts,
+            "cached": True,
+            "no_packs": not packs,
+            "bms_source": bool(tele.get("bms_source")),
+            "capacity_wh": tele.get("capacity_wh"),
+            "_diag": diag,
+        }
     main_wh, pack_wh = _capacity_hints(device_sn)
     cap = {"main_capacity_wh": main_wh, "pack_capacity_wh": pack_wh}
     # Only return live main_soc_pct for the *active* device — that's the
@@ -5279,18 +5411,18 @@ async def api_siseli_settings_set(body: dict):
     if "value" not in (body or {}):
         raise HTTPException(400, "value is required")
     value = body["value"]
+    sn = siseli_client.make_sn(siseli_client.portal_id_from_sn(device_id))
+    raw = (state.siseli.get("raw_settings_by_sn") or {}).get(sn)
     spec = next(
         (c for c in siseli_client.CONTROL_DEFINITIONS if c["canonical"] == key),
         None,
     )
-    if spec is None:
+    if spec is None and not (isinstance(raw, dict) and key in raw):
         raise HTTPException(400, f"unknown control key: {key}")
     creds = siseli_creds.load()
     if not creds:
         raise HTTPException(400, "Siseli credentials not configured")
-    sn = siseli_client.make_sn(siseli_client.portal_id_from_sn(device_id))
     pid = siseli_client.portal_id_from_sn(sn)
-    raw = (state.siseli.get("raw_settings_by_sn") or {}).get(sn)
     api = _make_siseli_api(creds)
     try:
         await asyncio.to_thread(api.set_device_setting, pid, key, value, raw)
@@ -5312,6 +5444,104 @@ async def api_siseli_settings_set(body: dict):
         "device_id": sn,
         "controls": (state.siseli.get("settings_by_sn") or {}).get(sn) or [],
     }
+
+
+def _enrich_bms_pack(p: dict) -> dict:
+    live = state.bms_live.get(p.get("mac") or "") or {}
+    return {
+        **p,
+        "reading": {k: live.get(k) for k in (
+            "soc_pct", "voltage_v", "current_a", "power_w", "temp_c",
+            "min_cell_mv", "max_cell_mv", "cycles", "error", "ts",
+        ) if k in live or k == "error"},
+        "error": live.get("error"),
+        "last_seen_ts": live.get("ts"),
+    }
+
+
+@app.get("/api/bms/scan")
+async def api_bms_scan(seconds: float = 8.0):
+    """BLE scan for JBD/Overkill/XiaoXiang modules. 8s default; no 500 if BlueZ is missing."""
+    seconds = max(1.0, min(float(seconds or 8.0), 15.0))
+    st = bms_ble.bleak_status()
+    if not st["available"]:
+        return {"devices": [], "error": st["error"], "ble_available": False}
+    try:
+        devices = await bms_ble.scan(timeout=seconds)
+    except bms_ble.BleUnavailable as e:
+        return {"devices": [], "error": str(e), "ble_available": False}
+    except Exception as e:
+        return {"devices": [], "error": str(e), "ble_available": True}
+    return {"devices": devices, "ble_available": True}
+
+
+@app.get("/api/bms/status")
+def api_bms_status():
+    st = bms_ble.bleak_status()
+    packs = [_enrich_bms_pack(p) for p in state.bms.list_packs()]
+    return {
+        "ble_available": st["available"],
+        "error": st["error"],
+        "packs": packs,
+        "inverters": dict(state.bms.inverters),
+    }
+
+
+@app.get("/api/bms/saved")
+def api_bms_saved_list(siseli_sn: str | None = None):
+    packs = [_enrich_bms_pack(p) for p in state.bms.list_packs(siseli_sn)]
+    return {
+        "packs": packs,
+        "inverters": dict(state.bms.inverters),
+        "ble": bms_ble.bleak_status(),
+    }
+
+
+@app.post("/api/bms/saved")
+async def api_bms_saved_upsert(body: dict):
+    payload = body or {}
+    mac = (payload.get("mac") or "").strip()
+    alias = (payload.get("alias") or "").strip()
+    sn = payload.get("siseli_device_sn")
+    cap = payload.get("capacity_wh")
+    try:
+        cap_i = int(cap) if cap not in (None, "") else None
+    except (TypeError, ValueError):
+        raise HTTPException(400, "capacity_wh must be an integer") from None
+    try:
+        pack = state.bms.upsert(
+            mac, alias=alias, capacity_wh=cap_i, siseli_device_sn=sn,
+        )
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+    _kick_bms_poll()
+    await broadcast_status("status")
+    return {"ok": True, "pack": _enrich_bms_pack(pack)}
+
+
+@app.delete("/api/bms/saved/{mac:path}")
+async def api_bms_saved_delete(mac: str):
+    ok = state.bms.delete(mac)
+    if not ok:
+        raise HTTPException(404, "unknown BMS MAC")
+    try:
+        mac_n = bms_devices.normalize_mac(mac)
+        state.bms_live.pop(mac_n, None)
+    except ValueError:
+        pass
+    await broadcast_status("status")
+    return {"ok": True}
+
+
+@app.post("/api/bms/inverter/{sn:path}")
+async def api_bms_inverter_flag(sn: str, body: dict):
+    enabled = bool((body or {}).get("use_as_main", True))
+    try:
+        row = state.bms.set_use_as_main(sn, enabled)
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+    await broadcast_status("status")
+    return {"ok": True, "siseli_device_sn": sn, **row}
 
 
 @app.get("/api/anthropic/key")
