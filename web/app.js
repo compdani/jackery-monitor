@@ -486,10 +486,13 @@ document.addEventListener('click', (e) => {
     setSiseliLocalReadUi(readBtn.getAttribute('aria-pressed') !== 'true');
     return;
   }
-  const hybridBtn = target.closest('#siseli-hybrid-pull');
-  if (hybridBtn) {
+  const hybridRow = target.closest('#siseli-hybrid-pull-row');
+  if (hybridRow) {
     e.preventDefault();
-    setSiseliHybridPullUi(hybridBtn.getAttribute('aria-pressed') !== 'true');
+    const hybridBtn = $('siseli-hybrid-pull');
+    if (hybridBtn) {
+      setSiseliHybridPullUi(!hybridBtn.classList.contains('on'));
+    }
     return;
   }
   const saveBtn = target.closest('#siseli-local-save');

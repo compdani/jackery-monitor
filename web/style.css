@@ -2986,6 +2986,9 @@ body.device-switching .tab-panel { opacity: .45; pointer-events: none;
   justify-content: space-between;
   gap: 12px;
 }
+#siseli-hybrid-pull-row .switch {
+  cursor: pointer;
+}
 .lan-row {
   display: flex;
   align-items: center;
