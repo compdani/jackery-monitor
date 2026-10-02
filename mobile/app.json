@@ -60,6 +60,7 @@
         }
       ],
       "expo-asset",
+      "./plugins/withWidgetContainerBackground.js",
       [
         "expo-widgets",
         {
@@ -79,7 +80,8 @@
           ]
         }
       ],
-      "./plugins/withWidgetContainerBackground.js"
+      "expo-sharing",
+      "expo-status-bar"
     ]
   }
 }

@@ -40,7 +40,7 @@ export default function TabsLayout() {
 }
 
 function icon(name: keyof typeof Ionicons.glyphMap) {
-  return ({ color, size }: { color: ColorValue; size: number }) => (
-    <Ionicons name={name} color={color} size={size} />
+  return ({ color, size }: { focused: boolean; color: ColorValue; size: number }) => (
+    <Ionicons name={name} color={typeof color === "string" ? color : undefined} size={size} />
   );
 }

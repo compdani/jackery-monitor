@@ -55,7 +55,7 @@ SCHEMA: dict[str, dict[str, Any]] = {
         "min": 30,
         "max": 3600,
         "label": "Siseli poll interval (s)",
-        "hint": "How often the dashboard polls solar.siseli.com for the device list, inverter settings, and — when LAN read is off or stale — Live watts. With LAN read on, Live watts follow the dongle instead of this interval. Bluetooth BMS SOC is polled separately.",
+        "hint": "How often the dashboard polls solar.siseli.com for the device list, inverter settings, and — when LAN read is off or stale — Live watts. With Hybrid pull on, Live watts skip the portal when MQTT arrived within this interval. With Hybrid pull off (default), local MQTT stays fresh for up to 30 minutes before the portal is used again. Bluetooth BMS SOC is polled separately.",
     },
     "session_contested_cooldown_s": {
         "env": "SESSION_CONTESTED_COOLDOWN_S",

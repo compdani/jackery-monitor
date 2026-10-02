@@ -167,6 +167,7 @@ export type SiseliCreds = {
   device_id?: string | null;
   time_zone?: string | null;
   local_read?: boolean;
+  hybrid_pull?: boolean;
   inverter_ip?: string;
   router_ip?: string;
   sniff_iface?: string;
@@ -184,6 +185,7 @@ export type SiseliCreds = {
 
 export type SiseliLocalBody = {
   local_read: boolean;
+  hybrid_pull: boolean;
   inverter_ip: string;
   router_ip: string;
   sniff_iface: string;

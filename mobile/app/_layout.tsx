@@ -4,9 +4,7 @@ import { StatusBar } from "expo-status-bar";
 import { useEffect, useState } from "react";
 import { ActivityIndicator, View } from "react-native";
 import { endpoints } from "../src/api/client";
-import { clearWidgetSnapshot } from "../src/lib/widgetSync";
 import { useConnection } from "../src/store/connection";
-import { useLive } from "../src/store/live";
 import { usePrefs } from "../src/store/prefs";
 import { useSession } from "../src/store/session";
 import { colors } from "../src/theme";
@@ -36,7 +34,6 @@ export default function RootLayout() {
             await useSession.getState().clear();
           }
         }
-        if (!useLive.getState().status) clearWidgetSnapshot();
       } catch {
         /* SecureStore or keep-awake can fail; still show the app */
       } finally {

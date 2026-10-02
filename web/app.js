@@ -486,6 +486,12 @@ document.addEventListener('click', (e) => {
     setSiseliLocalReadUi(readBtn.getAttribute('aria-pressed') !== 'true');
     return;
   }
+  const hybridBtn = target.closest('#siseli-hybrid-pull');
+  if (hybridBtn) {
+    e.preventDefault();
+    setSiseliHybridPullUi(hybridBtn.getAttribute('aria-pressed') !== 'true');
+    return;
+  }
   const saveBtn = target.closest('#siseli-local-save');
   if (saveBtn) {
     e.preventDefault();
@@ -2408,6 +2414,7 @@ async function loadSiseliCreds() {
     if (j.station_id) $('siseli-creds-station').value = j.station_id;
     if (j.time_zone) $('siseli-creds-tz').value = j.time_zone;
     setSiseliLocalReadUi(!!j.local_read);
+    setSiseliHybridPullUi(!!j.hybrid_pull);
     const setVal = (id, value) => {
       const el = $(id);
       if (el) el.value = value || '';
@@ -2428,6 +2435,7 @@ async function loadSiseliCreds() {
 function siseliLocalBody() {
   return {
     local_read: $('siseli-local-read')?.getAttribute('aria-pressed') === 'true',
+    hybrid_pull: $('siseli-hybrid-pull')?.getAttribute('aria-pressed') === 'true',
     inverter_ip: $('siseli-inverter-ip')?.value || '',
     router_ip: $('siseli-router-ip')?.value || '',
     sniff_iface: $('siseli-sniff-iface')?.value || '',
@@ -2538,6 +2546,15 @@ function setSiseliLocalReadUi(on) {
   btn.textContent = on ? 'on' : 'off';
 }
 
+function setSiseliHybridPullUi(on) {
+  const btn = $('siseli-hybrid-pull');
+  if (!btn) return;
+  btn.classList.toggle('on', !!on);
+  btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+  const st = btn.querySelector('.sw-state');
+  if (st) st.textContent = on ? 'on' : 'off';
+}
+
 function setSiseliLocalStatus(text) {
   const el = $('siseli-local-status');
   if (el) el.textContent = text;
@@ -2555,6 +2572,7 @@ async function saveSiseliLocal() {
     });
     const j = await r.json().catch(() => ({}));
     if (!r.ok) throw new Error(apiDetail(j, r.statusText));
+    setSiseliHybridPullUi(!!j.hybrid_pull);
     renderSiseliLocalStatus(j);
     renderSiseliMqttStreams(j.mqtt_streams, j.mqtt_broker_ip);
     const savedLine = j.local_error && !j.local_running

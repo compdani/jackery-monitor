@@ -1095,6 +1095,17 @@
           The NAS must be on the same network as the inverter. ARP interception
           is undone if capture stops. UniFi and similar ARP inspection can block it.
         </p>
+        <label class="auto-field siseli-control siseli-switch" style="margin-bottom:12px">
+          <span class="auto-label">Hybrid pull</span>
+          <button type="button" class="switch" id="siseli-hybrid-pull" aria-pressed="false">
+            <span class="sw-state">off</span>
+          </button>
+        </label>
+        <p class="hint" style="margin:-4px 0 12px">
+          When on, each Siseli poll skips cloud Live watts if MQTT arrived within
+          the Siseli poll interval. When off, local MQTT stays fresh for up to
+          30 minutes before the portal is used again.
+        </p>
         <div class="auto-form-grid">
           <label class="auto-field">
             <span class="auto-label">Inverter IP</span>

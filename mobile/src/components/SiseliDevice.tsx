@@ -185,6 +185,7 @@ function SiseliAccountCard() {
 
 function LanReadCard() {
   const [on, setOn] = useState(false);
+  const [hybridPull, setHybridPull] = useState(false);
   const [inverterIp, setInverterIp] = useState("");
   const [routerIp, setRouterIp] = useState("");
   const [sniffIface, setSniffIface] = useState("");
@@ -198,6 +199,7 @@ function LanReadCard() {
 
   const apply = useCallback((j: SiseliCreds) => {
     setOn(!!j.local_read);
+    setHybridPull(!!j.hybrid_pull);
     setInverterIp(j.inverter_ip || "");
     setRouterIp(j.router_ip || "");
     setSniffIface(j.sniff_iface || "");
@@ -216,6 +218,7 @@ function LanReadCard() {
   function body(): SiseliLocalBody {
     return {
       local_read: on,
+      hybrid_pull: hybridPull,
       inverter_ip: inverterIp.trim(),
       router_ip: routerIp.trim(),
       sniff_iface: sniffIface.trim(),
@@ -244,6 +247,12 @@ function LanReadCard() {
         Sniff the inverter dongle’s MQTT on the local network for Live watts. The portal is still
         used for login, the device list, history, and settings. The NAS must be on the same network.
       </Hint>
+      <RowSwitch
+        label="Hybrid pull"
+        hint="When on, each Siseli poll skips cloud Live watts if MQTT arrived within the Siseli poll interval. When off, local MQTT stays fresh for up to 30 minutes."
+        value={hybridPull}
+        onValueChange={setHybridPull}
+      />
       <Field label="Inverter IP" value={inverterIp} onChangeText={setInverterIp} placeholder="192.168.1.50" keyboardType="decimal-pad" />
       <Field label="Router IP" value={routerIp} onChangeText={setRouterIp} placeholder="192.168.1.1" keyboardType="decimal-pad" />
       <Field label="Sniff interface" value={sniffIface} onChangeText={setSniffIface} placeholder="blank = auto" />

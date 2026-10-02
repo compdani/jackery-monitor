@@ -32,21 +32,26 @@ def test_round_trip_save_and_load(fresh_creds):
     assert d["password"] == "hunter2"
     assert d["station_id"] == "12345"
     assert d["local_read"] is False
+    assert d["hybrid_pull"] is False
     assert sc.save(
         user_id="alice", password="hunter2", station_id="12345",
         local_read=True, inverter_ip="192.168.1.50", router_ip="192.168.1.1",
     )
     again = sc.load()
     assert again["local_read"] is True
+    assert again["hybrid_pull"] is False
     assert again["inverter_ip"] == "192.168.1.50"
     assert again["mqtt_broker_ip"] == ""
     assert again["password"] == "hunter2"
     assert sc.save(
         user_id="alice", password="hunter2", station_id="12345",
         mqtt_broker_ip="203.0.113.10",
+        hybrid_pull=True,
     )
     assert sc.load()["mqtt_broker_ip"] == "203.0.113.10"
+    assert sc.load()["hybrid_pull"] is True
     assert sc.public_view()["mqtt_broker_ip"] == "203.0.113.10"
+    assert sc.public_view()["hybrid_pull"] is True
 
 
 def test_save_rejects_missing_required_fields(fresh_creds):

@@ -660,8 +660,17 @@ def test_siseli_local_save_rejects_bad_ip(client, app, monkeypatch):
     assert ok.status_code == 200
     saved = app.siseli_creds.load()
     assert saved["local_read"] is True
+    assert saved["hybrid_pull"] is False
     assert saved["inverter_ip"] == "192.168.1.1"
     assert saved["password"] == "secret"
+    hybrid = client.post("/api/siseli/local", json={
+        "local_read": True, "inverter_ip": "192.168.1.1", "router_ip": "192.168.1.1",
+        "hybrid_pull": True,
+    })
+    assert hybrid.status_code == 200
+    assert hybrid.json()["hybrid_pull"] is True
+    assert app.siseli_creds.load()["hybrid_pull"] is True
+    assert client.get("/api/siseli/credentials").json()["hybrid_pull"] is True
     bad_broker = client.post("/api/siseli/local", json={
         "local_read": True, "inverter_ip": "192.168.1.1", "router_ip": "192.168.1.1",
         "mqtt_broker_ip": "not-an-ip",
@@ -671,9 +680,11 @@ def test_siseli_local_save_rejects_bad_ip(client, app, monkeypatch):
     picked = client.post("/api/siseli/local", json={
         "local_read": True, "inverter_ip": "192.168.1.1", "router_ip": "192.168.1.1",
         "mqtt_broker_ip": "203.0.113.10",
+        "hybrid_pull": True,
     })
     assert picked.status_code == 200
     assert app.siseli_creds.load()["mqtt_broker_ip"] == "203.0.113.10"
+    assert app.siseli_creds.load()["hybrid_pull"] is True
     assert picked.json()["mqtt_broker_ip"] == "203.0.113.10"
 
 

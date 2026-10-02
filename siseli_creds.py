@@ -46,6 +46,9 @@ def _normalize(d: dict) -> dict:
         # LAN read of the dongle's existing cloud MQTT. Optional; portal
         # login still works without it.
         "local_read": _as_bool(d.get("local_read")),
+        # When on, skip portal Live watts if MQTT arrived within the Siseli
+        # poll interval. Off keeps the 30-minute local freshness window.
+        "hybrid_pull": _as_bool(d.get("hybrid_pull")),
         "inverter_ip": str(d.get("inverter_ip") or "").strip(),
         "router_ip": str(d.get("router_ip") or "").strip(),
         "sniff_iface": str(d.get("sniff_iface") or "").strip(),

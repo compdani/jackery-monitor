@@ -111,8 +111,19 @@ def test_portal_latest_skipped_only_while_local_is_fresh():
         running=True, entry={"origin": "http", "ts": 1_000.0}, now=1_100.0,
     ) is False
     assert should_skip_portal_latest(
-        running=True, entry=fresh, now=1_000.0 + 1800, 
+        running=True, entry=fresh, now=1_000.0 + 1800,
     ) is False
+    # Hybrid pull uses the Siseli poll interval as the freshness window.
+    assert should_skip_portal_latest(
+        running=True, entry=fresh, now=1_000.0 + 299, stale_s=300,
+    ) is True
+    assert should_skip_portal_latest(
+        running=True, entry=fresh, now=1_000.0 + 300, stale_s=300,
+    ) is False
+    # Off path keeps the 1800s window: older than a short poll interval still skips.
+    assert should_skip_portal_latest(
+        running=True, entry=fresh, now=1_000.0 + 400, stale_s=1800,
+    ) is True
 
 
 def test_parser_fixture_reaches_the_sink(tmp_path, monkeypatch):

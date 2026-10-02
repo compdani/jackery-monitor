@@ -1109,6 +1109,10 @@ def _local_read_settings(body: dict) -> dict:
     if isinstance(enabled, str):
         enabled = enabled.strip().lower() in {"1", "true", "yes", "on"}
     enabled = bool(enabled)
+    hybrid = body.get("hybrid_pull")
+    if isinstance(hybrid, str):
+        hybrid = hybrid.strip().lower() in {"1", "true", "yes", "on"}
+    hybrid = bool(hybrid)
     inverter_ip = str(body.get("inverter_ip") or "").strip()
     router_ip = str(body.get("router_ip") or "").strip()
     sniff_iface = str(body.get("sniff_iface") or "").strip()
@@ -1139,6 +1143,7 @@ def _local_read_settings(body: dict) -> dict:
         raise HTTPException(400, "local read needs the inverter IP and the router IP")
     return {
         "local_read": enabled,
+        "hybrid_pull": hybrid,
         "inverter_ip": inverter_ip,
         "router_ip": router_ip,
         "sniff_iface": sniff_iface,
@@ -1201,6 +1206,12 @@ async def siseli_poll_once() -> None:
             if not prior or prior.get("origin") != "local":
                 _on_siseli_local_snapshot(pending)
 
+        skip_stale_s = (
+            float(user_settings.get("siseli_poll_interval_s") or 300)
+            if creds.get("hybrid_pull")
+            else sl_tele.STALE_S
+        )
+
         for d in devices:
             pid = d["portal_device_id"]
             sn = d["device_sn"]
@@ -1215,6 +1226,7 @@ async def siseli_poll_once() -> None:
                 live = (state.siseli.get("telemetry_by_sn") or {}).get(sn)
             if sl_tele.should_skip_portal_latest(
                 running=sl_runner.is_running(), entry=live, now=time.time(),
+                stale_s=skip_stale_s,
             ):
                 telemetry_by_sn[sn] = live
                 continue
@@ -1239,6 +1251,7 @@ async def siseli_poll_once() -> None:
             for sn, entry in current.items():
                 if sl_tele.should_skip_portal_latest(
                     running=sl_runner.is_running(), entry=entry, now=time.time(),
+                    stale_s=skip_stale_s,
                 ):
                     telemetry_by_sn[sn] = entry
             state.siseli = {
@@ -5567,6 +5580,7 @@ def api_siseli_creds_status():
         "device_id": view.get("device_id"),
         "time_zone": view.get("time_zone"),
         "local_read": bool(view.get("local_read")),
+        "hybrid_pull": bool(view.get("hybrid_pull")),
         "inverter_ip": view.get("inverter_ip") or "",
         "router_ip": view.get("router_ip") or "",
         "sniff_iface": view.get("sniff_iface") or "",
@@ -5654,6 +5668,7 @@ def _local_cfg_same(saved: dict, local: dict) -> bool:
     def norm(d: dict) -> tuple:
         return (
             bool(d.get("local_read")),
+            bool(d.get("hybrid_pull")),
             str(d.get("inverter_ip") or ""),
             str(d.get("router_ip") or ""),
             str(d.get("sniff_iface") or ""),
@@ -5690,6 +5705,7 @@ def api_siseli_local_save(body: dict):
     return {
         "ok": True,
         "local_read": local["local_read"],
+        "hybrid_pull": local["hybrid_pull"],
         "local_running": sl_runner.is_running(),
         "local_error": sl_runner.last_error(),
         "local_last_decode_ts": state.siseli.get("local_last_decode_ts"),
