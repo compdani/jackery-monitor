@@ -1222,15 +1222,28 @@ def test_ecoflow_credentials_save_mocked(app, client, monkeypatch):
         "api_host": "api.ecoflow.com",
     })
     assert r.status_code == 200, r.text
+    assert r.json()["email"] == "user@example.com"
     st = client.get("/api/ecoflow/credentials")
     assert st.status_code == 200
     body = st.json()
     assert body["has_credentials"] is True
     assert body["email"] == "user@example.com"
     assert body["has_password"] is True
+    assert body["api_host"] == "api.ecoflow.com"
     saved = app.ecoflow_creds.load()
     assert saved["password"] == "secret"
     assert saved["token"] == "tok"
+    # Blank password keeps the previous secret while updating email.
+    again = client.post("/api/ecoflow/credentials", json={
+        "email": "other@example.com",
+        "password": "",
+        "api_host": "api-e.ecoflow.com",
+    })
+    assert again.status_code == 200, again.text
+    st2 = client.get("/api/ecoflow/credentials").json()
+    assert st2["email"] == "other@example.com"
+    assert st2["api_host"] == "api-e.ecoflow.com"
+    assert app.ecoflow_creds.load()["password"] == "secret"
 
 
 def test_ecoflow_device_add_and_link(app, client, monkeypatch):
@@ -1256,21 +1269,27 @@ def test_ecoflow_device_add_and_link(app, client, monkeypatch):
         "device_type": "DELTA_3_MAX_PLUS",
         "alias": "Garage",
         "capacity_wh": 2048,
+        "siseli_device_sn": "siseli:42",
+        "roles": ["solar", "output"],
     })
     assert added.status_code == 200, added.text
-    assert added.json()["device"]["sn"] == "ecoflow:R351TEST"
+    device = added.json()["device"]
+    assert device["sn"] == "ecoflow:R351TEST"
+    assert device["siseli_device_sn"] == "siseli:42"
+    assert device["roles"] == ["solar", "output"]
 
-    listed = client.get("/api/ecoflow/devices").json()
-    assert len(listed["devices"]) == 1
+    listed = client.get("/api/ecoflow/credentials").json()["devices"]
+    assert len(listed) == 1
+    assert listed[0]["siseli_device_sn"] == "siseli:42"
 
     linked = client.post("/api/ecoflow/devices/ecoflow:R351TEST/link", json={
-        "siseli_device_sn": "siseli:42",
+        "siseli_device_sn": "siseli:99",
         "roles": ["solar", "battery", "output"],
     })
     assert linked.status_code == 200, linked.text
-    assert linked.json()["device"]["siseli_device_sn"] == "siseli:42"
+    assert linked.json()["device"]["siseli_device_sn"] == "siseli:99"
 
-    by_siseli = client.get("/api/ecoflow/devices", params={"siseli_sn": "siseli:42"})
+    by_siseli = client.get("/api/ecoflow/devices", params={"siseli_sn": "siseli:99"})
     assert len(by_siseli.json()["devices"]) == 1
 
     gone = client.delete("/api/ecoflow/devices/ecoflow:R351TEST")

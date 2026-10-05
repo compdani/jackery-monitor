@@ -2786,9 +2786,13 @@ function fillEcoflowSiseliPicker(selected) {
   if (!sel) return;
   const siseli = siseliDevicesFromPicker();
   const cur = selected || sel.value || '';
-  sel.innerHTML = '<option value="">— none —</option>' + siseli.map((d) =>
-    `<option value="${escapeHtml(d.device_sn || d.device_id)}">${escapeHtml(d.name || d.device_sn)}</option>`
-  ).join('');
+  sel.innerHTML = '<option value="">— none —</option>';
+  for (const d of siseli) {
+    const opt = document.createElement('option');
+    opt.value = d.device_sn || d.device_id || '';
+    opt.textContent = d.name || d.device_sn || d.device_id || '';
+    sel.appendChild(opt);
+  }
   if (cur) sel.value = cur;
 }
 
@@ -2800,6 +2804,37 @@ function ecoflowRolesFromForm() {
   return roles.length ? roles : ['solar', 'battery', 'output'];
 }
 
+function setEcoflowRolesOnForm(roles) {
+  const set = new Set((roles || []).map((r) => String(r).toLowerCase()));
+  const all = !set.size;
+  if ($('ecoflow-role-solar')) $('ecoflow-role-solar').checked = all || set.has('solar');
+  if ($('ecoflow-role-battery')) $('ecoflow-role-battery').checked = all || set.has('battery');
+  if ($('ecoflow-role-output')) $('ecoflow-role-output').checked = all || set.has('output');
+}
+
+function populateEcoflowDeviceForm(d) {
+  if (!d) return;
+  fillEcoflowSiseliPicker(d.siseli_device_sn || '');
+  if ($('ecoflow-device-sn')) {
+    $('ecoflow-device-sn').value = d.raw_sn || String(d.sn || '').replace(/^ecoflow:/, '');
+  }
+  if ($('ecoflow-device-type') && d.device_type) {
+    $('ecoflow-device-type').value = d.device_type;
+  }
+  if ($('ecoflow-device-alias')) {
+    $('ecoflow-device-alias').value = d.alias || '';
+  }
+  if ($('ecoflow-device-siseli')) {
+    $('ecoflow-device-siseli').value = d.siseli_device_sn || '';
+  }
+  setEcoflowRolesOnForm(d.roles);
+  const msg = $('ecoflow-device-msg');
+  if (msg) {
+    msg.hidden = false;
+    msg.textContent = 'Editing — save to update.';
+  }
+}
+
 function renderEcoflowDeviceList(devices) {
   const box = $('ecoflow-device-list');
   if (!box) return;
@@ -2808,44 +2843,68 @@ function renderEcoflowDeviceList(devices) {
     box.innerHTML = '<p class="hint">No EcoFlow devices yet.</p>';
     return;
   }
-  box.innerHTML = rows.map((d) => {
+  box.innerHTML = rows.map((d, i) => {
     const sn = escapeHtml(d.sn || '');
     const alias = escapeHtml(d.alias || d.raw_sn || '');
     const link = d.siseli_device_sn
       ? `linked → ${escapeHtml(d.siseli_device_sn)} (${escapeHtml((d.roles || []).join(', '))})`
       : 'not linked';
     return `<div class="device-params-row" style="display:flex; justify-content:space-between; gap:8px; align-items:center">
-      <div>
+      <button type="button" class="btn btn-ghost" data-ecoflow-edit="${i}"
+              style="flex:1; text-align:left; padding:8px 0; border:none; background:transparent">
         <strong>${alias}</strong>
         <div class="hint">${sn} · ${escapeHtml(d.device_type || '')}</div>
         <div class="hint">${link}</div>
-      </div>
+      </button>
       <button type="button" class="btn btn-ghost btn-small" data-ecoflow-del="${sn}">Remove</button>
     </div>`;
   }).join('');
+  box.querySelectorAll('[data-ecoflow-edit]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const idx = Number(btn.getAttribute('data-ecoflow-edit'));
+      populateEcoflowDeviceForm(rows[idx]);
+    });
+  });
   box.querySelectorAll('[data-ecoflow-del]').forEach((btn) => {
     btn.addEventListener('click', async () => {
       const sn = btn.getAttribute('data-ecoflow-del');
       if (!sn || !confirm(`Remove ${sn}?`)) return;
-      await fetch(`/api/ecoflow/devices/${encodeURIComponent(sn)}`, { method: 'DELETE' });
-      await loadEcoflowCreds();
+      try {
+        const r = await fetch(`/api/ecoflow/devices/${encodeURIComponent(sn)}`, { method: 'DELETE' });
+        const j = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(apiDetail(j, r.statusText));
+        await loadEcoflowCreds();
+      } catch (err) {
+        alert(err.message || String(err));
+      }
     });
   });
 }
 
+function ecoflowCredsStatusText(j) {
+  if (!j || !j.has_credentials) return 'not configured';
+  if (j.error) return `error: ${j.error}`;
+  const email = j.email ? ` (${j.email})` : '';
+  if (j.state === 'connected') return `connected${email}`;
+  if (j.state && j.state !== 'idle') return `${j.state}${email}`;
+  return `saved${email}`;
+}
+
 async function loadEcoflowCreds() {
   const status = $('ecoflow-creds-status');
+  const emailEl = $('ecoflow-creds-email');
+  const hostEl = $('ecoflow-creds-host');
   try {
     const r = await fetch('/api/ecoflow/credentials');
     const j = await r.json();
-    if (j.email && $('ecoflow-creds-email')) $('ecoflow-creds-email').value = j.email;
-    if (j.api_host && $('ecoflow-creds-host')) $('ecoflow-creds-host').value = j.api_host;
+    if (!r.ok) throw new Error(apiDetail(j, r.statusText));
+    if (emailEl) emailEl.value = j.has_credentials ? (j.email || '') : '';
+    if (hostEl) {
+      hostEl.value = j.api_host || 'api.ecoflow.com';
+    }
     fillEcoflowSiseliPicker();
     renderEcoflowDeviceList(j.devices || []);
-    if (status) {
-      const st = j.state || (j.has_credentials ? 'saved' : '—');
-      status.textContent = j.error ? `error: ${j.error}` : st;
-    }
+    if (status) status.textContent = ecoflowCredsStatusText(j);
   } catch (e) {
     if (status) status.textContent = 'unavailable';
     console.error('loadEcoflowCreds', e);
@@ -2856,66 +2915,88 @@ $('ecoflow-creds-form')?.addEventListener('submit', async (e) => {
   e.preventDefault();
   const msg = $('ecoflow-creds-msg');
   const status = $('ecoflow-creds-status');
+  const submitBtn = e.target.querySelector('button[type="submit"]');
   try {
     if (msg) { msg.hidden = true; msg.textContent = ''; }
+    if (submitBtn) submitBtn.disabled = true;
     const r = await fetch('/api/ecoflow/credentials', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        email: $('ecoflow-creds-email').value,
-        password: $('ecoflow-creds-password').value,
-        api_host: $('ecoflow-creds-host').value,
+        email: ($('ecoflow-creds-email')?.value || '').trim(),
+        password: $('ecoflow-creds-password')?.value || '',
+        api_host: $('ecoflow-creds-host')?.value || '',
       }),
     });
-    const j = await r.json();
-    if (!r.ok) throw new Error(j.detail || r.statusText);
-    $('ecoflow-creds-password').value = '';
-    if (status) status.textContent = 'saved';
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(apiDetail(j, r.statusText));
+    if ($('ecoflow-creds-password')) $('ecoflow-creds-password').value = '';
+    if (j.email && $('ecoflow-creds-email')) $('ecoflow-creds-email').value = j.email;
+    if (status) status.textContent = `saved${j.email ? ` (${j.email})` : ''}`;
     if (msg) { msg.hidden = false; msg.textContent = 'Saved.'; }
     await loadEcoflowCreds();
   } catch (err) {
     if (msg) { msg.hidden = false; msg.textContent = err.message || String(err); }
+  } finally {
+    if (submitBtn) submitBtn.disabled = false;
   }
 });
 
 $('ecoflow-creds-clear')?.addEventListener('click', async () => {
   if (!confirm('Forget EcoFlow credentials? MQTT session will stop.')) return;
-  await fetch('/api/ecoflow/credentials', { method: 'DELETE' });
-  $('ecoflow-creds-password').value = '';
-  const status = $('ecoflow-creds-status');
-  if (status) status.textContent = 'not configured';
-  await loadEcoflowCreds();
-});
-
-$('ecoflow-device-save')?.addEventListener('click', async () => {
-  const msg = $('ecoflow-device-msg');
+  const msg = $('ecoflow-creds-msg');
   try {
+    const r = await fetch('/api/ecoflow/credentials', { method: 'DELETE' });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(apiDetail(j, r.statusText));
+    if ($('ecoflow-creds-password')) $('ecoflow-creds-password').value = '';
+    if ($('ecoflow-creds-email')) $('ecoflow-creds-email').value = '';
     if (msg) { msg.hidden = true; msg.textContent = ''; }
-    const siseli = $('ecoflow-device-siseli')?.value || '';
-    const r = await fetch('/api/ecoflow/devices', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        raw_sn: $('ecoflow-device-sn').value,
-        device_type: $('ecoflow-device-type').value,
-        alias: $('ecoflow-device-alias').value,
-        siseli_device_sn: siseli,
-        roles: ecoflowRolesFromForm(),
-      }),
-    });
-    const j = await r.json();
-    if (!r.ok) throw new Error(j.detail || r.statusText);
-    $('ecoflow-device-sn').value = '';
-    $('ecoflow-device-alias').value = '';
-    if (msg) { msg.hidden = false; msg.textContent = 'Device saved.'; }
     await loadEcoflowCreds();
   } catch (err) {
     if (msg) { msg.hidden = false; msg.textContent = err.message || String(err); }
   }
 });
 
+$('ecoflow-device-form')?.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const msg = $('ecoflow-device-msg');
+  const submitBtn = $('ecoflow-device-save');
+  const keptSiseli = $('ecoflow-device-siseli')?.value || '';
+  try {
+    if (msg) { msg.hidden = true; msg.textContent = ''; }
+    if (submitBtn) submitBtn.disabled = true;
+    const r = await fetch('/api/ecoflow/devices', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        raw_sn: ($('ecoflow-device-sn')?.value || '').trim(),
+        device_type: $('ecoflow-device-type')?.value,
+        alias: $('ecoflow-device-alias')?.value || '',
+        siseli_device_sn: keptSiseli,
+        roles: ecoflowRolesFromForm(),
+      }),
+    });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(apiDetail(j, r.statusText));
+    if ($('ecoflow-device-sn')) $('ecoflow-device-sn').value = '';
+    if ($('ecoflow-device-alias')) $('ecoflow-device-alias').value = '';
+    if (msg) { msg.hidden = false; msg.textContent = 'Device saved.'; }
+    await loadEcoflowCreds();
+    fillEcoflowSiseliPicker(keptSiseli);
+  } catch (err) {
+    if (msg) { msg.hidden = false; msg.textContent = err.message || String(err); }
+  } finally {
+    if (submitBtn) submitBtn.disabled = false;
+  }
+});
+
 function siseliDevicesFromPicker() {
-  return (lastDevices || []).filter((d) => isSiseliDevice(d));
+  const fromStatus = (lastStatus && lastStatus.cloud && Array.isArray(lastStatus.cloud.devices))
+    ? lastStatus.cloud.devices
+    : null;
+  const pool = fromStatus || lastDevices || [];
+  return pool.filter((d) => isSiseliDevice(d));
 }
 
 function fillBmsSiseliSelect(selectedSn) {
@@ -5514,6 +5595,7 @@ function applyStatus(s) {
       loadDeviceParams();
       loadF7AcReset();
       loadBms();
+      fillEcoflowSiseliPicker();
     }
   }
 
@@ -5544,6 +5626,10 @@ function applyStatus(s) {
   renderDevicePicker(devices, selectedId);
   renderFleet(s.cloud?.devices_overview, selectedId);
   renderEnergyComparePicker();
+  if (activeTab === 'device') {
+    fillEcoflowSiseliPicker();
+    fillBmsSiseliSelect();
+  }
 
   // Source badges
   const srcLabel = s.source ? s.source.toUpperCase() : '—';

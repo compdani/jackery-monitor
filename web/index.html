@@ -1126,7 +1126,8 @@
             </label>
             <label class="auto-field">
               <span class="auto-label">Password</span>
-              <input id="ecoflow-creds-password" type="password" autocomplete="current-password" placeholder="unchanged if blank" />
+              <input id="ecoflow-creds-password" type="password" autocomplete="current-password"
+                     placeholder="required first time; blank keeps saved" />
             </label>
             <label class="auto-field">
               <span class="auto-label">API host</span>
@@ -1176,10 +1177,10 @@
             </span>
           </label>
           <span id="ecoflow-device-msg" class="hint" hidden></span>
+          <div style="grid-column:1/-1; margin-top:4px; display:flex; gap:8px">
+            <button id="ecoflow-device-save" class="btn btn-primary" type="submit">Add / update device</button>
+          </div>
         </form>
-        <div style="margin-top:14px; display:flex; gap:8px">
-          <button id="ecoflow-device-save" class="btn btn-primary" type="button">Add / update device</button>
-        </div>
         <div id="ecoflow-device-list" class="device-params-list" style="margin-top:14px"></div>
       </section>
 
