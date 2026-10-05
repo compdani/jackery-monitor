@@ -486,6 +486,12 @@ class EcoflowPrivateClient:
         topic = f"/app/{self.user_id}/{raw_sn}/thing/property/get"
         try:
             payload = ecoflow_delta3.build_quota_request(raw_sn)
+            if not payload:
+                log.warning(
+                    "quota request skipped for %s: protobuf stubs unavailable",
+                    raw_sn,
+                )
+                return
             self._mqtt.publish(topic, payload, qos=1)
         except Exception as e:
             log.debug("quota request failed for %s: %s", raw_sn, e)

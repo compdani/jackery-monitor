@@ -20,7 +20,19 @@ BMS_HEARTBEAT_COMMANDS: set[tuple[int, int]] = {
 
 
 def _pb2():
-    from ecoflow_proto import ef_delta3_pb2
+    """Lazy-load generated protobuf module.
+
+    Raises ImportError if ecoflow_proto is missing from the image/install —
+    callers must catch so MQTT threads are not killed.
+    """
+    try:
+        from ecoflow_proto import ef_delta3_pb2
+    except ImportError:
+        log.error(
+            "ecoflow_proto package missing; rebuild image with "
+            "`COPY ecoflow_proto ./ecoflow_proto` (Dockerfile)"
+        )
+        raise
     return ef_delta3_pb2
 
 
@@ -117,7 +129,10 @@ def _maybe_b64(raw: bytes) -> bytes:
 
 def peek_header_cmds(raw_data: bytes) -> list[str]:
     """Return cmdFunc/cmdId labels from a HeaderMessage without full decode."""
-    pb2 = _pb2()
+    try:
+        pb2 = _pb2()
+    except ImportError:
+        return []
     raw_data = _maybe_b64(raw_data)
     try:
         header_msg = pb2.Delta3HeaderMessage()
@@ -135,9 +150,13 @@ def peek_header_cmds(raw_data: bytes) -> list[str]:
 def decode_property_payload(raw_data: bytes) -> dict[str, Any]:
     """Decode one private-API MQTT property push into a flat params dict.
 
-    Returns {} when the payload is not a recognisable Delta 3 protobuf.
+    Returns {} when the payload is not a recognisable Delta 3 protobuf,
+    or when the generated protobuf stubs are missing from the image.
     """
-    pb2 = _pb2()
+    try:
+        pb2 = _pb2()
+    except ImportError:
+        return {}
     raw_data = _maybe_b64(raw_data)
     try:
         header_msg = pb2.Delta3HeaderMessage()
@@ -175,8 +194,14 @@ def decode_property_payload(raw_data: bytes) -> dict[str, Any]:
 
 
 def build_quota_request(device_sn: str) -> bytes:
-    """Protobuf 'get all' request published on the get topic."""
-    pb2 = _pb2()
+    """Protobuf 'get all' request published on the get topic.
+
+    Returns b'' when protobuf stubs are unavailable so callers can skip publish.
+    """
+    try:
+        pb2 = _pb2()
+    except ImportError:
+        return b""
     packet = pb2.Delta3SendHeaderMsg()
     header = packet.msg.add()
     header.src = 32

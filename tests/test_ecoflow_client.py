@@ -320,3 +320,49 @@ def test_on_message_json_params_increments_update_count():
         assert stats["last_mqtt_topic"] == msg.topic
     finally:
         client.close()
+
+
+def test_on_message_survives_missing_ecoflow_proto(monkeypatch):
+    """ImportError from protobuf stubs must not escape _on_message (MQTT thread)."""
+    import ecoflow_delta3 as d3
+
+    def _boom():
+        raise ImportError("No module named 'ecoflow_proto'")
+
+    monkeypatch.setattr(d3, "_pb2", _boom)
+
+    updates: list = []
+    client = EcoflowPrivateClient(
+        email="a@b.c", password="x",
+        on_update=lambda sn, tele, detail: updates.append(sn),
+    )
+    try:
+        client._devices = {"R351TEST": {"raw_sn": "R351TEST", "alias": "G"}}
+        msg = MagicMock()
+        msg.topic = "/app/device/property/R351TEST"
+        msg.payload = b"\x0a\x04dead"
+        client._on_message(None, None, msg)
+        assert client.mqtt_msg_count == 1
+        assert client.mqtt_decode_empty == 1
+        assert client.mqtt_update_count == 0
+        assert updates == []
+        assert decode_property_payload(b"anything") == {}
+        assert d3.peek_header_cmds(b"anything") == []
+        assert d3.build_quota_request("R351TEST") == b""
+    finally:
+        client.close()
+
+
+def test_request_quota_skips_publish_when_stubs_missing(monkeypatch):
+    import ecoflow_delta3 as d3
+
+    monkeypatch.setattr(d3, "build_quota_request", lambda sn: b"")
+    client = EcoflowPrivateClient(email="a@b.c", password="x")
+    try:
+        client.user_id = "123"
+        mock_mqtt = MagicMock()
+        client._mqtt = mock_mqtt
+        client.request_quota("R351TEST")
+        mock_mqtt.publish.assert_not_called()
+    finally:
+        client.close()
