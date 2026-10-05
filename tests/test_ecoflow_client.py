@@ -263,6 +263,66 @@ def test_decode_property_payload_rejects_garbage():
     assert decode_property_payload(b"not-a-protobuf") == {}
 
 
+def test_extract_undeclared_floats_pow_get_pv2():
+    """Max Plus PV2 is wire field 70 — absent from vendored DisplayPropertyUpload."""
+    import struct
+
+    from ecoflow_delta3 import extract_undeclared_floats
+
+    def enc_varint(n: int) -> bytes:
+        out = bytearray()
+        while True:
+            b = n & 0x7F
+            n >>= 7
+            if n:
+                out.append(b | 0x80)
+            else:
+                out.append(b)
+                break
+        return bytes(out)
+
+    pdata = enc_varint((70 << 3) | 5) + struct.pack("<f", 214.0)
+    assert extract_undeclared_floats(pdata)["pow_get_pv2"] == 214.0
+
+
+def test_decode_display_upload_recovers_max_plus_pv2():
+    """DisplayPropertyUpload with declared PV1 + undeclared field-70 PV2."""
+    import struct
+
+    from ecoflow_proto import ef_delta3_pb2 as pb
+
+    def enc_varint(n: int) -> bytes:
+        out = bytearray()
+        while True:
+            b = n & 0x7F
+            n >>= 7
+            if n:
+                out.append(b | 0x80)
+            else:
+                out.append(b)
+                break
+        return bytes(out)
+
+    pdata = enc_varint((361 << 3) | 5) + struct.pack("<f", 79.0)
+    pdata += enc_varint((70 << 3) | 5) + struct.pack("<f", 214.0)
+    packet = pb.Delta3HeaderMessage()
+    header = packet.header.add()
+    header.src = 2
+    header.cmd_func = 254
+    header.cmd_id = 21
+    header.enc_type = 0
+    header.seq = 1
+    header.pdata = pdata
+    decoded = decode_property_payload(packet.SerializeToString())
+    assert decoded.get("pow_get_pv") == 79.0
+    assert decoded.get("pow_get_pv2") == 214.0
+    tele = params_to_telemetry(decoded, alias="Delta 3 Max Plus")
+    assert tele["solar_input_w"] == 293
+    assert len(tele["solar_inputs"]) == 2
+    assert tele["solar_inputs"][1]["id"] == "pow_get_pv2"
+    assert tele["ecoflow_detail"]["pow_get_pv2"] == 214.0
+
+
 def test_on_message_empty_protobuf_increments_decode_empty():
     updates: list = []
     client = EcoflowPrivateClient(

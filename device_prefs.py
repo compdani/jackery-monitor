@@ -18,7 +18,8 @@ from Live, history, and the packs card.
 `calc_grid` (Siseli only) estimates grid watts on this dashboard from
 solar, battery discharge, and load. It never writes to Siseli.
 `load_sources` (Siseli + linked EcoFlow) is which load contributors
-count toward Live `output_power_w`. Missing key → all available;
+count toward Live `output_power_w` and toward Wh recorded for the
+Siseli device in the energy DB. Missing key → all available;
 explicit list → only those ids (e.g. ``siseli``, ``ecoflow:R351…``).
 """
 
@@ -106,7 +107,7 @@ def solar_flow_unified(pref: dict[str, Any] | None) -> bool:
 
 
 def load_sources(pref: dict[str, Any] | None) -> list[str] | None:
-    """Which load_inputs ids contribute to output_power_w.
+    """Which load_inputs ids contribute to output_power_w (Live + energy DB).
 
     None → all available sources. Explicit list (incl. empty) → filter.
     """

@@ -583,3 +583,57 @@ def test_siseli_bms_stale_falls_back_to_portal(server_state):
     assert not out["telemetry"].get("bms_source")
     assert out["battery_packs"][0]["error"] in ("stale", "no reading")
     assert out["battery_packs"][0]["rb"] == 10
+
+
+def test_siseli_energy_record_honors_load_sources(server_state):
+    """Unchecking Siseli load must change Wh recorded for the Siseli SN."""
+    import time
+
+    from ecoflow_client import params_to_telemetry
+
+    _seed_siseli(server_state, soc=64)
+    now = time.time()
+    ef = params_to_telemetry({
+        "cms_batt_soc": 80,
+        "pow_get_pv": 0,
+        "pow_out_sum_w": 1500,
+    }, alias="Delta 3 Max Plus", capacity_wh=2048)
+    server_state.state.ecoflow_reg.upsert(
+        "R351TEST",
+        device_type="DELTA_3_MAX_PLUS",
+        alias="Delta 3 Max Plus",
+        capacity_wh=2048,
+        siseli_device_sn="siseli:42",
+        roles=["output"],
+    )
+    server_state.state.ecoflow = {
+        "telemetry_by_sn": {
+            "ecoflow:R351TEST": {"telemetry": ef, "detail": {}, "ts": now},
+        },
+        "state": "connected",
+        "error": None,
+        "last_poll_ts": now,
+    }
+    recorded = []
+
+    def fake_record(sn, ts, input_w, output_w, battery_pct=None, **kwargs):
+        recorded.append({"sn": sn, "output_w": output_w})
+
+    server_state.state.energy.record = fake_record
+    tele = server_state.state.siseli["telemetry_by_sn"]["siseli:42"]["telemetry"]
+
+    # Default (all sources): Siseli 400 + EcoFlow 1500
+    server_state._record_siseli_energy("siseli:42", "House", tele, now)
+    assert recorded[-1]["output_w"] == 1900
+
+    # Siseli unchecked → only EcoFlow load counts toward Siseli Wh
+    server_state.state.device_prefs.update(
+        "siseli:42", load_sources=["ecoflow:R351TEST"],
+    )
+    server_state._record_siseli_energy("siseli:42", "House", tele, now + 1)
+    assert recorded[-1]["output_w"] == 1500
+
+    # EcoFlow unchecked → only Siseli load
+    server_state.state.device_prefs.update("siseli:42", load_sources=["siseli"])
+    server_state._record_siseli_energy("siseli:42", "House", tele, now + 2)
+    assert recorded[-1]["output_w"] == 400

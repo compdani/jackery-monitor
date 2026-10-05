@@ -3,11 +3,16 @@
 Vendored message classes live in ecoflow_proto/ef_delta3_pb2.py
 (Apache-2.0, from tolwi/hassio-ecoflow-cloud). Decode logic mirrors that
 integration's Delta3._prepare_data path without Home Assistant deps.
+
+Delta 3 Max Plus dual-PV field ``pow_get_pv2`` (wire field 70) is not in
+the vendored DisplayPropertyUpload schema, so it is recovered from the
+raw pdata via a small protobuf wire scan after ParseFromString.
 """
 from __future__ import annotations
 
 import base64
 import logging
+import struct
 from typing import Any
 
 log = logging.getLogger("ecoflow_delta3")
@@ -16,6 +21,12 @@ BMS_HEARTBEAT_COMMANDS: set[tuple[int, int]] = {
     (3, 1), (3, 2), (3, 30), (3, 50),
     (32, 1), (32, 3), (32, 50), (32, 51), (32, 52),
     (254, 24), (254, 25), (254, 26), (254, 27), (254, 28), (254, 29), (254, 30),
+}
+
+# Max Plus DisplayPropertyUpload floats absent from vendored stubs.
+# Field numbers from ecoflow-energy-ha ecocharge.proto / ioBroker Max Plus.
+_DISPLAY_EXTRA_FLOATS: dict[int, str] = {
+    70: "pow_get_pv2",
 }
 
 
@@ -69,6 +80,64 @@ def _xor_decode(pdata: bytes, seq: int) -> bytes:
     return bytes((b ^ seq) & 0xFF for b in pdata)
 
 
+def _read_varint(buf: bytes, i: int) -> tuple[int | None, int]:
+    result = 0
+    shift = 0
+    n = len(buf)
+    while i < n:
+        b = buf[i]
+        i += 1
+        result |= (b & 0x7F) << shift
+        if not (b & 0x80):
+            return result, i
+        shift += 7
+        if shift > 63:
+            break
+    return None, i
+
+
+def extract_undeclared_floats(
+    pdata: bytes,
+    field_map: dict[int, str] | None = None,
+) -> dict[str, float]:
+    """Scan protobuf wire bytes for fixed32 (wire type 5) fields by number.
+
+    Used for Max Plus keys (e.g. pow_get_pv2 = 70) missing from the
+    vendored DisplayPropertyUpload descriptor — upb drops UnknownFields.
+    """
+    mapping = field_map if field_map is not None else _DISPLAY_EXTRA_FLOATS
+    out: dict[str, float] = {}
+    if not pdata or not mapping:
+        return out
+    i = 0
+    n = len(pdata)
+    while i < n:
+        tag, i = _read_varint(pdata, i)
+        if tag is None:
+            break
+        field_num = tag >> 3
+        wire = tag & 7
+        if wire == 0:  # varint
+            _, i = _read_varint(pdata, i)
+        elif wire == 1:  # 64-bit
+            i += 8
+        elif wire == 2:  # length-delimited
+            length, i = _read_varint(pdata, i)
+            if length is None or i + length > n:
+                break
+            i += length
+        elif wire == 5:  # 32-bit (float / fixed32)
+            if i + 4 > n:
+                break
+            name = mapping.get(field_num)
+            if name is not None:
+                out[name] = struct.unpack_from("<f", pdata, i)[0]
+            i += 4
+        else:
+            break
+    return out
+
+
 def _derive_outputs(result: dict[str, Any]) -> None:
     dc_flow = result.get("flow_info_12v")
     if dc_flow == 14:
@@ -101,6 +170,10 @@ def _decode_message_by_type(pdata: bytes, header_info: dict[str, Any]) -> dict[s
             msg = pb2.Delta3DisplayPropertyUpload()
             msg.ParseFromString(pdata)
             result = _protobuf_to_dict(msg)
+            # Recover Max Plus PV2 (and any other undeclared floats).
+            for key, val in extract_undeclared_floats(pdata).items():
+                if key not in result or result.get(key) is None:
+                    result[key] = val
             _derive_outputs(result)
             return result
         if cmd_func == 254 and cmd_id == 22:

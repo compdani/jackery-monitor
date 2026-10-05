@@ -959,7 +959,12 @@ def _apply_bms_overlay(sn: str | None, tele: dict | None) -> dict | None:
     )
 
 
-def _apply_ecoflow_overlay(sn: str | None, tele: dict | None) -> dict | None:
+def _apply_ecoflow_overlay(
+    sn: str | None,
+    tele: dict | None,
+    *,
+    device_id: str | None = None,
+) -> dict | None:
     """Merge linked EcoFlow solar/battery/output into Siseli telemetry."""
     if tele is None or not sn:
         return tele
@@ -973,14 +978,19 @@ def _apply_ecoflow_overlay(sn: str | None, tele: dict | None) -> dict | None:
         linked=linked,
         live_by_sn=live,
         bms_already=bool(tele.get("bms_source")),
-        load_sources=device_prefs.load_sources(_siseli_pref(sn)),
+        load_sources=device_prefs.load_sources(_siseli_pref(sn, device_id)),
     )
 
 
-def _apply_siseli_overlays(sn: str | None, tele: dict | None) -> dict | None:
+def _apply_siseli_overlays(
+    sn: str | None,
+    tele: dict | None,
+    *,
+    device_id: str | None = None,
+) -> dict | None:
     """BMS then EcoFlow overlays for a Siseli view (merge-at-read)."""
     out = _apply_bms_overlay(sn, tele)
-    return _apply_ecoflow_overlay(sn, out)
+    return _apply_ecoflow_overlay(sn, out, device_id=device_id)
 
 
 def _merged_cloud_meta() -> dict:
@@ -1030,16 +1040,35 @@ def _siseli_target_device() -> tuple[str | None, str | None]:
 def _store_siseli_sample(sn: str, name: str | None, tele: dict, ts: float, *, origin: str) -> None:
     """Remember one telemetry sample and fold it into the energy DB.
 
-    BMS overlay is applied for the stored Wh sample the same way the
-    HTTP poll does. The cached telemetry stays the raw inverter sample
-    so serialize_status can overlay again at read time.
+    BMS + EcoFlow overlays (including ``load_sources``) are applied for
+    the stored Wh sample the same way Live does. The cached telemetry
+    stays the raw inverter sample so serialize_status can overlay again
+    at read time.
     """
     with state.siseli_lock:
         bucket = state.siseli.setdefault("telemetry_by_sn", {})
         bucket[sn] = {"telemetry": tele, "ts": ts, "origin": origin}
         if origin == "local":
             state.siseli["local_last_decode_ts"] = ts
-    rec = _apply_siseli_overlays(sn, tele) or tele
+    _record_siseli_energy(sn, name, tele, ts)
+
+
+def _record_siseli_energy(
+    sn: str,
+    name: str | None,
+    tele: dict | None,
+    ts: float,
+    *,
+    device_id: str | None = None,
+) -> None:
+    """Integrate one Siseli sample into the energy DB using Live overlays.
+
+    ``load_sources`` filters which Siseli / linked-EcoFlow loads count
+    toward ``output_power_w`` (and thus today's consumed kWh).
+    """
+    if not sn or tele is None:
+        return
+    rec = _apply_siseli_overlays(sn, tele, device_id=device_id or sn) or tele
     state.energy.upsert_device(sn, name, None, None)
     bat = rec.get("battery_percent")
     if rec.get("ignore_inverter_soc") and not rec.get("bms_source"):
@@ -1381,6 +1410,22 @@ def _ecoflow_on_update(sn: str, tele: dict[str, Any], detail: dict[str, Any]) ->
             solar_w=float(tele.get("solar_input_w") or 0),
             ac_input_w=float(tele.get("ac_input_w") or 0),
         )
+        # Linked EcoFlow load/solar rolls into the Siseli parent's energy
+        # totals (filtered by load_sources). Re-record the parent on each
+        # EcoFlow tick so Wh tracks EcoFlow load changes between Siseli polls.
+        parent = str(row.get("siseli_device_sn") or "").strip()
+        roles = set(row.get("roles") or [])
+        if parent and roles.intersection({"output", "solar", "battery"}):
+            with state.siseli_lock:
+                parent_entry = (state.siseli.get("telemetry_by_sn") or {}).get(parent) or {}
+            parent_tele = parent_entry.get("telemetry")
+            if isinstance(parent_tele, dict):
+                parent_name = None
+                for d in (state.siseli.get("devices") or []):
+                    if str(d.get("device_sn") or "") == parent:
+                        parent_name = d.get("name")
+                        break
+                _record_siseli_energy(parent, parent_name, parent_tele, ts, device_id=parent)
     except Exception as e:
         log.debug("ecoflow energy record failed: %s", e)
     loop = state.loop
@@ -1992,7 +2037,11 @@ def serialize_status(view_device_id: str | None = None) -> dict[str, Any]:
 
     if viewing_siseli and view_sn:
         view_packs = _bms_ui_rows(view_sn)
-        telemetry = _apply_siseli_overlays(view_sn, telemetry or {"source": "siseli"})
+        telemetry = _apply_siseli_overlays(
+            view_sn,
+            telemetry or {"source": "siseli"},
+            device_id=view_id,
+        )
         bms_ts = bms_devices.latest_live_ts(
             state.bms.list_packs(view_sn), state.bms_live)
         if bms_ts is not None:

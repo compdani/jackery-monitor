@@ -2275,6 +2275,12 @@ async function saveDevicePrefs(patch) {
     if ('calc_grid' in patch) {
       lastStatus.device_prefs.calc_grid = !!patch.calc_grid;
     }
+    if ('solar_flow_unified' in patch) {
+      lastStatus.device_prefs.solar_flow_unified = !!patch.solar_flow_unified;
+    }
+    if ('load_sources' in patch) {
+      lastStatus.device_prefs.load_sources = patch.load_sources;
+    }
     if ('alias' in patch && lastStatus.device) {
       lastStatus.device.name = patch.alias || lastStatus.device.portal_name || lastStatus.device.name;
     }
@@ -6067,17 +6073,8 @@ $('flow-unified-toggle')?.addEventListener('change', async (e) => {
   if (!deviceId) return;
   const on = !!e.target.checked;
   try {
-    await api('/api/device_prefs', {
-      method: 'POST',
-      body: { device_id: deviceId, solar_flow_unified: on },
-    });
-    if (lastStatus) {
-      lastStatus.device_prefs = {
-        ...(lastStatus.device_prefs || {}),
-        solar_flow_unified: on,
-      };
-      if (lastStatus.telemetry) renderPowerFlow(lastStatus.telemetry);
-    }
+    await saveDevicePrefs({ solar_flow_unified: on });
+    if (lastStatus?.telemetry) renderPowerFlow(lastStatus.telemetry);
   } catch (err) {
     console.error('solar_flow_unified', err);
     e.target.checked = !on;
@@ -6150,10 +6147,7 @@ async function onLoadSourceToggle() {
   };
   renderPowerFlow(lastStatus.telemetry);
   try {
-    await api('/api/device_prefs', {
-      method: 'POST',
-      body: { device_id: deviceId, load_sources: next },
-    });
+    await saveDevicePrefs({ load_sources: next });
   } catch (err) {
     console.error('load_sources', err);
     lastStatus.device_prefs.load_sources = prev;
