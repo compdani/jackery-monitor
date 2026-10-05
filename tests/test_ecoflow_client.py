@@ -142,6 +142,45 @@ def test_on_connect_auth_failure_sets_flags():
         client.close()
 
 
+def test_on_connect_reasoncode_success():
+    """VERSION2 passes ReasonCode; int(ReasonCode) TypeErrors — must use == 0."""
+    from paho.mqtt.enums import ConnackCode
+
+    client = EcoflowPrivateClient(email="a@b.c", password="x")
+    try:
+        client.mqtt_client_id = "ANDROID_ABCDEF0123456789ABCDEF0123456789_1"
+        client.user_id = "1"
+        client._devices = {}
+        reason = mqtt.convert_connack_rc_to_reason_code(ConnackCode.CONNACK_ACCEPTED)
+        mock_mqtt = MagicMock()
+        client._on_connect(mock_mqtt, None, None, reason, None)
+        assert client.connected is True
+        assert client.auth_failed is False
+        assert client.mqtt_error is None
+    finally:
+        client.close()
+
+
+def test_on_connect_reasoncode_not_authorized():
+    from paho.mqtt.enums import ConnackCode
+
+    client = EcoflowPrivateClient(email="a@b.c", password="x")
+    try:
+        client.mqtt_client_id = "ANDROID_ABCDEF0123456789ABCDEF0123456789_1"
+        reason = mqtt.convert_connack_rc_to_reason_code(
+            ConnackCode.CONNACK_REFUSED_NOT_AUTHORIZED,
+        )
+        client._on_connect(None, None, None, reason, None)
+        assert client.connected is False
+        assert client.auth_failed is True
+        err = client.mqtt_error or ""
+        assert "not authorized" in err.lower()
+        assert "rc=-1" not in err
+        assert "Not authorized" in err
+    finally:
+        client.close()
+
+
 def test_call_api_sends_userid_as_form_body(monkeypatch):
     """hassio-ecoflow-cloud sends userId as form body on certification GET."""
     client = EcoflowPrivateClient(email="a@b.c", password="x")

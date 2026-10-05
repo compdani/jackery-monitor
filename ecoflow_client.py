@@ -30,8 +30,14 @@ DEFAULT_API_HOST = "api.ecoflow.com"
 HTTP_TIMEOUT = 30.0
 MQTT_CONNECT_WAIT_S = 10.0
 MQTT_KEEPALIVE_S = 15
-# MQTT CONNACK 4 = bad user/pass, 5 = not authorized
+# MQTT v3.1.1 CONNACK 4/5; paho VERSION2 maps these onto ReasonCode names.
 MQTT_AUTH_FAILURE_RCS = frozenset({4, 5})
+# Same set as hassio-ecoflow-cloud ecoflow_mqtt.AUTH_FAILURE_REASONS
+AUTH_FAILURE_REASONS = frozenset({
+    "Bad user name or password",
+    "Not authorized",
+    "Banned",
+})
 
 
 def resolve_client_id(user_id: str, preferred: str | None = None) -> str:
@@ -449,51 +455,76 @@ class EcoflowPrivateClient:
             f"/app/{uid}/{raw_sn}/thing/property/get_reply",
         ]
 
-    def _mqtt_rc_code(self, rc: Any) -> int:
+    def _mqtt_reason_name(self, reason_code: Any) -> str | None:
+        getter = getattr(reason_code, "getName", None)
+        if callable(getter):
+            try:
+                name = getter()
+            except Exception:
+                return None
+            return str(name) if name is not None else None
+        return None
+
+    def _mqtt_is_auth_failure(self, reason_code: Any) -> bool:
+        """True for broker auth refusals (v3 ints 4/5 or VERSION2 ReasonCode names)."""
+        name = self._mqtt_reason_name(reason_code)
+        if name in AUTH_FAILURE_REASONS:
+            return True
         try:
-            return int(rc)
+            return int(reason_code) in MQTT_AUTH_FAILURE_RCS
         except (TypeError, ValueError):
-            return -1
+            return False
+
+    def _mqtt_reason_label(self, reason_code: Any) -> str:
+        name = self._mqtt_reason_name(reason_code)
+        if name:
+            return name
+        try:
+            return f"rc={int(reason_code)}"
+        except (TypeError, ValueError):
+            return str(reason_code)
 
     def _on_connect(self, client, userdata, flags, reason_code, properties=None):
-        code = self._mqtt_rc_code(reason_code)
-        if code != 0:
-            self.connected = False
-            self.auth_failed = code in MQTT_AUTH_FAILURE_RCS
-            if self.auth_failed:
-                self.mqtt_error = f"MQTT not authorized (rc={code})"
-            else:
-                self.mqtt_error = f"MQTT connect failed (rc={code})"
-            log.error(
-                "EcoFlow MQTT connect failed rc=%s client_id=%s",
-                code, self.mqtt_client_id,
-            )
+        # VERSION2 passes ReasonCode: int() raises TypeError; use == 0 / getName().
+        if reason_code == 0:
+            self.connected = True
+            self.auth_failed = False
+            self.mqtt_error = None
+            topics = []
+            with self._lock:
+                sns = list(self._devices.keys())
+            for sn in sns:
+                for t in self._topics_for(sn):
+                    topics.append((t, 1))
+            if topics:
+                client.subscribe(topics)
+                log.info("EcoFlow MQTT subscribed to %d topic(s)", len(topics))
+                for sn in sns:
+                    self.request_quota(sn)
             self._connect_event.set()
             return
-        self.connected = True
-        self.auth_failed = False
-        self.mqtt_error = None
-        topics = []
-        with self._lock:
-            sns = list(self._devices.keys())
-        for sn in sns:
-            for t in self._topics_for(sn):
-                topics.append((t, 1))
-        if topics:
-            client.subscribe(topics)
-            log.info("EcoFlow MQTT subscribed to %d topic(s)", len(topics))
-            for sn in sns:
-                self.request_quota(sn)
+
+        self.connected = False
+        label = self._mqtt_reason_label(reason_code)
+        self.auth_failed = self._mqtt_is_auth_failure(reason_code)
+        if self.auth_failed:
+            self.mqtt_error = f"MQTT not authorized ({label})"
+        else:
+            self.mqtt_error = f"MQTT connect failed ({label})"
+        log.error(
+            "EcoFlow MQTT connect failed %s client_id=%s",
+            label, self.mqtt_client_id,
+        )
         self._connect_event.set()
 
     def _on_disconnect(self, client, userdata, disconnect_flags, reason_code, properties=None):
         self.connected = False
-        code = self._mqtt_rc_code(reason_code)
-        if code != 0:
-            log.warning("EcoFlow MQTT disconnected rc=%s", code)
-            if code in MQTT_AUTH_FAILURE_RCS:
+        if reason_code != 0:
+            label = self._mqtt_reason_label(reason_code)
+            log.warning("EcoFlow MQTT disconnected %s", label)
+            if self._mqtt_is_auth_failure(reason_code):
                 self.auth_failed = True
-                self.mqtt_error = f"MQTT not authorized (rc={code})"
+                self.mqtt_error = f"MQTT not authorized ({label})"
         # If connect never completed, unblock waiters.
         self._connect_event.set()
 
