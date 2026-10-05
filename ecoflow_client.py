@@ -9,7 +9,6 @@ Telemetry is mapped onto the same live dict shape Jackery/Siseli use.
 from __future__ import annotations
 
 import base64
-import hashlib
 import json
 import logging
 import ssl
@@ -28,6 +27,33 @@ log = logging.getLogger("ecoflow_client")
 
 DEFAULT_API_HOST = "api.ecoflow.com"
 HTTP_TIMEOUT = 30.0
+MQTT_CONNECT_WAIT_S = 10.0
+# MQTT CONNACK 4 = bad user/pass, 5 = not authorized
+MQTT_AUTH_FAILURE_RCS = frozenset({4, 5})
+
+
+def resolve_client_id(user_id: str, preferred: str | None = None) -> str:
+    """Stable private-API MQTT client id: ANDROID_<32hex>_<userId>.
+
+    The long MD5/verify_info form used by some early reverse-engineered
+    clients is rejected by the broker (CONNACK rc=5). Match
+    hassio-ecoflow-cloud private_api's working format.
+    """
+    uid = str(user_id or "").strip()
+    if not uid:
+        raise ValueError("user_id is required")
+    pref = (preferred or "").strip()
+    if pref:
+        parts = pref.split("_", 2)
+        if (
+            len(parts) == 3
+            and parts[0] == "ANDROID"
+            and len(parts[1]) == 32
+            and all(c in "0123456789ABCDEF" for c in parts[1])
+            and parts[2] == uid
+        ):
+            return pref
+    return f"ANDROID_{uuid.uuid4().hex.upper()}_{uid}"
 
 # Flat params → (telemetry key or special handler, scale)
 # Accept snake_case (private protobuf) and camelCase (public / JSON).
@@ -228,6 +254,7 @@ class EcoflowPrivateClient:
         password: str,
         api_host: str = DEFAULT_API_HOST,
         *,
+        mqtt_client_id: str | None = None,
         on_update: Callable[[str, dict[str, Any], dict[str, Any]], None] | None = None,
         http: httpx.Client | None = None,
     ):
@@ -243,14 +270,18 @@ class EcoflowPrivateClient:
         self.mqtt_port: int = 8883
         self.mqtt_user: str | None = None
         self.mqtt_password: str | None = None
+        self._preferred_client_id = (mqtt_client_id or "").strip() or None
         self.mqtt_client_id: str | None = None
         self._mqtt: mqtt.Client | None = None
         self._lock = threading.Lock()
+        self._connect_event = threading.Event()
         # raw_sn → accumulated flat params
         self._params: dict[str, dict[str, Any]] = {}
         # raw_sn → device meta from registry
         self._devices: dict[str, dict[str, Any]] = {}
         self.connected = False
+        self.auth_failed = False
+        self.mqtt_error: str | None = None
 
     def close(self) -> None:
         self.stop_mqtt()
@@ -284,20 +315,14 @@ class EcoflowPrivateClient:
             self.mqtt_password = cert["data"]["certificatePassword"]
         except (KeyError, TypeError, ValueError) as e:
             raise EcoflowApiError(f"MQTT certification missing fields: {e}") from e
-        self.mqtt_client_id = self._gen_client_id()
-        log.info("EcoFlow login OK user_id=%s mqtt=%s:%s",
-                 self.user_id, self.mqtt_url, self.mqtt_port)
-
-    def _gen_client_id(self) -> str:
-        base = f"ANDROID_{uuid.uuid4().hex.upper()}_{self.user_id}"
-        millis = int(time.time() * 1000)
-        verify_info = "0" * 64
-        pub = verify_info[:32]
-        priv = verify_info[32:]
-        k = priv + base + str(millis)
-        return (
-            f"{base}_{pub}_{millis}_"
-            f"{hashlib.md5(k.encode('utf-8')).hexdigest()}"
+        self.mqtt_client_id = resolve_client_id(
+            self.user_id, self._preferred_client_id,
+        )
+        self._preferred_client_id = self.mqtt_client_id
+        log.info(
+            "EcoFlow login OK user_id=%s mqtt=%s:%s client_id=%s user=%s",
+            self.user_id, self.mqtt_url, self.mqtt_port,
+            self.mqtt_client_id, self.mqtt_user,
         )
 
     def _call_api(self, endpoint: str, params: dict | None = None) -> dict:
@@ -343,10 +368,15 @@ class EcoflowPrivateClient:
                 self._devices[raw] = dict(d)
                 self._params.setdefault(raw, {})
 
-    def start_mqtt(self) -> None:
+    def start_mqtt(self, wait_s: float = MQTT_CONNECT_WAIT_S) -> bool:
+        """Connect and wait for the first CONNACK. Returns True on success."""
         if not (self.mqtt_url and self.mqtt_user and self.mqtt_password and self.mqtt_client_id):
             raise EcoflowApiError("login first")
         self.stop_mqtt()
+        self.connected = False
+        self.auth_failed = False
+        self.mqtt_error = None
+        self._connect_event.clear()
         client = mqtt.Client(
             client_id=self.mqtt_client_id,
             clean_session=True,
@@ -358,9 +388,19 @@ class EcoflowPrivateClient:
         client.on_connect = self._on_connect
         client.on_disconnect = self._on_disconnect
         client.on_message = self._on_message
+        log.info(
+            "EcoFlow MQTT connecting %s:%s as client_id=%s user=%s",
+            self.mqtt_url, self.mqtt_port, self.mqtt_client_id, self.mqtt_user,
+        )
         client.connect(self.mqtt_url, self.mqtt_port, keepalive=30)
         client.loop_start()
         self._mqtt = client
+        if not self._connect_event.wait(timeout=max(1.0, float(wait_s))):
+            self.mqtt_error = "MQTT connect timed out"
+            self.connected = False
+            log.error("EcoFlow MQTT connect timed out after %.0fs", wait_s)
+            return False
+        return bool(self.connected)
 
     def stop_mqtt(self) -> None:
         client = self._mqtt
@@ -397,11 +437,26 @@ class EcoflowPrivateClient:
         ]
 
     def _on_connect(self, client, userdata, flags, rc, properties=None):
-        if rc != 0:
-            log.error("EcoFlow MQTT connect failed rc=%s", rc)
+        try:
+            code = int(rc)
+        except (TypeError, ValueError):
+            code = -1
+        if code != 0:
             self.connected = False
+            self.auth_failed = code in MQTT_AUTH_FAILURE_RCS
+            if self.auth_failed:
+                self.mqtt_error = f"MQTT not authorized (rc={code})"
+            else:
+                self.mqtt_error = f"MQTT connect failed (rc={code})"
+            log.error(
+                "EcoFlow MQTT connect failed rc=%s client_id=%s",
+                code, self.mqtt_client_id,
+            )
+            self._connect_event.set()
             return
         self.connected = True
+        self.auth_failed = False
+        self.mqtt_error = None
         topics = []
         with self._lock:
             sns = list(self._devices.keys())
@@ -413,11 +468,21 @@ class EcoflowPrivateClient:
             log.info("EcoFlow MQTT subscribed to %d topic(s)", len(topics))
             for sn in sns:
                 self.request_quota(sn)
+        self._connect_event.set()
 
     def _on_disconnect(self, client, userdata, rc, properties=None):
         self.connected = False
-        if rc != 0:
-            log.warning("EcoFlow MQTT disconnected rc=%s", rc)
+        try:
+            code = int(rc)
+        except (TypeError, ValueError):
+            code = -1
+        if code != 0:
+            log.warning("EcoFlow MQTT disconnected rc=%s", code)
+            if code in MQTT_AUTH_FAILURE_RCS:
+                self.auth_failed = True
+                self.mqtt_error = f"MQTT not authorized (rc={code})"
+        # If connect never completed, unblock waiters.
+        self._connect_event.set()
 
     def _on_message(self, client, userdata, message: mqtt.MQTTMessage):
         topic = message.topic or ""

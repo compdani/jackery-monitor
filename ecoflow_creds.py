@@ -42,6 +42,7 @@ def _normalize(d: dict) -> dict:
         "api_host": host,
         "token": str(d.get("token") or ""),
         "user_id": str(d.get("user_id") or "").strip(),
+        "mqtt_client_id": str(d.get("mqtt_client_id") or "").strip(),
     }
 
 
@@ -91,7 +92,8 @@ def load() -> dict | None:
 
 
 def save(email: str, password: str, *, api_host: str | None = None,
-         token: str = "", user_id: str = "") -> bool:
+         token: str = "", user_id: str = "",
+         mqtt_client_id: str | None = None) -> bool:
     existing = None
     try:
         existing = load()
@@ -99,25 +101,35 @@ def save(email: str, password: str, *, api_host: str | None = None,
         existing = None
     if not password and existing:
         password = existing.get("password") or ""
+    if mqtt_client_id is None and existing:
+        mqtt_client_id = existing.get("mqtt_client_id") or ""
     payload = _normalize({
         "email": email,
         "password": password,
         "api_host": api_host or (existing or {}).get("api_host") or DEFAULT_API_HOST,
         "token": token or (existing or {}).get("token") or "",
         "user_id": user_id or (existing or {}).get("user_id") or "",
+        "mqtt_client_id": mqtt_client_id or "",
     })
     if not (payload["email"] and payload["password"]):
         return False
     return _write(payload)
 
 
-def update_session(token: str, user_id: str) -> bool:
+def update_session(
+    token: str,
+    user_id: str,
+    *,
+    mqtt_client_id: str | None = None,
+) -> bool:
     d = load()
     if not d:
         return False
     d["token"] = token
     d["user_id"] = user_id
-    return _write(d)
+    if mqtt_client_id is not None:
+        d["mqtt_client_id"] = mqtt_client_id
+    return _write(_normalize(d))
 
 
 def public_view() -> dict | None:

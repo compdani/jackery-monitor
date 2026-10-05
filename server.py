@@ -289,6 +289,7 @@ class AppState:
             "devices": [],
             "telemetry_by_sn": {},
             "last_poll_ts": None,
+            "next_retry_ts": 0.0,
         }
         self.ecoflow_task: asyncio.Task | None = None
         self.ecoflow_wake: asyncio.Event = asyncio.Event()
@@ -1404,68 +1405,104 @@ def _ecoflow_start_client() -> None:
     if not creds or not devices:
         _ecoflow_stop_client()
         with state.ecoflow_lock:
-            state.ecoflow["state"] = "idle" if not creds else "idle"
+            state.ecoflow["state"] = "idle"
             state.ecoflow["error"] = None if devices else (
                 None if not creds else "no devices configured"
             )
             state.ecoflow["devices"] = devices
+            state.ecoflow["next_retry_ts"] = 0.0
         return
     _ecoflow_stop_client()
     client = ecoflow_client.EcoflowPrivateClient(
         email=creds["email"],
         password=creds["password"],
         api_host=creds.get("api_host") or ecoflow_creds.DEFAULT_API_HOST,
+        mqtt_client_id=creds.get("mqtt_client_id") or None,
         on_update=_ecoflow_on_update,
     )
     try:
         client.login()
-        ecoflow_creds.update_session(client.token or "", client.user_id or "")
+        ecoflow_creds.update_session(
+            client.token or "",
+            client.user_id or "",
+            mqtt_client_id=client.mqtt_client_id or "",
+        )
         client.configure_devices(devices)
-        client.start_mqtt()
+        ok = client.start_mqtt()
         state.ecoflow_client = client
         with state.ecoflow_lock:
-            state.ecoflow["state"] = "connected"
-            state.ecoflow["error"] = None
             state.ecoflow["devices"] = devices
+            if ok and client.connected:
+                state.ecoflow["state"] = "connected"
+                state.ecoflow["error"] = None
+                state.ecoflow["next_retry_ts"] = 0.0
+            else:
+                err = client.mqtt_error or "MQTT connect failed"
+                state.ecoflow["state"] = "error"
+                state.ecoflow["error"] = err
+                # Auth failures need a long backoff so we do not burn
+                # EcoFlow's daily unique client-id budget.
+                backoff = 300.0 if client.auth_failed else 30.0
+                state.ecoflow["next_retry_ts"] = time.time() + backoff
+                log.error("ecoflow MQTT not up: %s (retry in %.0fs)", err, backoff)
     except ecoflow_client.EcoflowAuthError as e:
         client.close()
         with state.ecoflow_lock:
             state.ecoflow["state"] = "error"
             state.ecoflow["error"] = str(e)
+            state.ecoflow["next_retry_ts"] = time.time() + 300.0
         log.error("ecoflow auth failed: %s", e)
     except Exception as e:
         client.close()
         with state.ecoflow_lock:
             state.ecoflow["state"] = "error"
             state.ecoflow["error"] = str(e)
+            state.ecoflow["next_retry_ts"] = time.time() + 30.0
         log.warning("ecoflow connect failed: %s", e)
 
 
 async def ecoflow_loop() -> None:
     """Keep EcoFlow MQTT session alive; restart on wake or periodic check."""
     while True:
+        woken = False
         try:
             if ecoflow_creds.has_credentials() and state.ecoflow_reg.list_devices():
                 client = state.ecoflow_client
+                now = time.time()
+                with state.ecoflow_lock:
+                    next_retry = float(state.ecoflow.get("next_retry_ts") or 0)
                 if client is None or not client.connected:
-                    await asyncio.to_thread(_ecoflow_start_client)
+                    if now >= next_retry:
+                        await asyncio.to_thread(_ecoflow_start_client)
             else:
                 if state.ecoflow_client is not None:
                     await asyncio.to_thread(_ecoflow_stop_client)
                 with state.ecoflow_lock:
                     state.ecoflow["state"] = "idle"
                     state.ecoflow["error"] = None
+                    state.ecoflow["next_retry_ts"] = 0.0
         except asyncio.CancelledError:
             raise
         except Exception as e:
             log.warning("ecoflow_loop: %s", e)
         state.ecoflow_wake.clear()
+        # While waiting out an auth backoff, wake sooner so a user
+        # creds/device change can clear it immediately.
+        with state.ecoflow_lock:
+            next_retry = float(state.ecoflow.get("next_retry_ts") or 0)
+        timeout = 60.0
+        if next_retry > time.time():
+            timeout = min(60.0, max(1.0, next_retry - time.time()))
         try:
-            await asyncio.wait_for(state.ecoflow_wake.wait(), timeout=60.0)
+            await asyncio.wait_for(state.ecoflow_wake.wait(), timeout=timeout)
+            woken = True
         except asyncio.TimeoutError:
             pass
         except asyncio.CancelledError:
             raise
+        if woken:
+            with state.ecoflow_lock:
+                state.ecoflow["next_retry_ts"] = 0.0
 
 
 async def bms_loop() -> None:
@@ -6249,11 +6286,13 @@ async def api_ecoflow_creds_save(body: dict):
         raise HTTPException(400, "email and password are required")
     probe = ecoflow_client.EcoflowPrivateClient(
         email=email, password=password, api_host=api_host,
+        mqtt_client_id=(existing or {}).get("mqtt_client_id") or None,
     )
     try:
         await asyncio.to_thread(probe.login)
         token = probe.token or ""
         user_id = probe.user_id or ""
+        mqtt_client_id = probe.mqtt_client_id or ""
     except ecoflow_client.EcoflowAuthError as e:
         raise HTTPException(400, str(e)) from e
     except Exception as e:
@@ -6263,6 +6302,7 @@ async def api_ecoflow_creds_save(body: dict):
     if not ecoflow_creds.save(
         email, password, api_host=api_host,
         token=token, user_id=user_id,
+        mqtt_client_id=mqtt_client_id,
     ):
         raise HTTPException(500, "failed to save credentials")
     state.ecoflow_wake.set()
@@ -6286,6 +6326,7 @@ async def api_ecoflow_creds_clear():
             "devices": state.ecoflow_reg.list_devices(),
             "telemetry_by_sn": {},
             "last_poll_ts": None,
+            "next_retry_ts": 0.0,
         }
     state.ecoflow_wake.set()
     await broadcast_status("status")

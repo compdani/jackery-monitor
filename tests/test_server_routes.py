@@ -1208,6 +1208,10 @@ def test_ecoflow_credentials_save_mocked(app, client, monkeypatch):
         def __init__(self, **kwargs):
             self.token = "tok"
             self.user_id = "uid-1"
+            self.mqtt_client_id = (
+                kwargs.get("mqtt_client_id")
+                or "ANDROID_ABCDEF0123456789ABCDEF0123456789_uid-1"
+            )
 
         def login(self):
             return None
@@ -1233,6 +1237,7 @@ def test_ecoflow_credentials_save_mocked(app, client, monkeypatch):
     saved = app.ecoflow_creds.load()
     assert saved["password"] == "secret"
     assert saved["token"] == "tok"
+    assert saved["mqtt_client_id"].startswith("ANDROID_")
     # Blank password keeps the previous secret while updating email.
     again = client.post("/api/ecoflow/credentials", json={
         "email": "other@example.com",
@@ -1251,6 +1256,10 @@ def test_ecoflow_device_add_and_link(app, client, monkeypatch):
         def __init__(self, **kwargs):
             self.token = "tok"
             self.user_id = "uid-1"
+            self.mqtt_client_id = (
+                kwargs.get("mqtt_client_id")
+                or "ANDROID_ABCDEF0123456789ABCDEF0123456789_uid-1"
+            )
 
         def login(self):
             return None

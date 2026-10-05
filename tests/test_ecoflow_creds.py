@@ -56,3 +56,28 @@ def test_clear(fresh_creds):
     ec.save("user@example.com", "hunter2")
     assert ec.clear() is True
     assert ec.load() is None
+
+
+def test_mqtt_client_id_round_trip(fresh_creds):
+    ec, _ = fresh_creds
+    assert ec.save(
+        "user@example.com", "hunter2",
+        mqtt_client_id="ANDROID_ABCDEF0123456789ABCDEF0123456789_99",
+    )
+    d = ec.load()
+    assert d["mqtt_client_id"] == "ANDROID_ABCDEF0123456789ABCDEF0123456789_99"
+    assert ec.update_session(
+        "tok", "uid-1",
+        mqtt_client_id="ANDROID_FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF_uid-1",
+    )
+    again = ec.load()
+    assert again["token"] == "tok"
+    assert again["user_id"] == "uid-1"
+    assert again["mqtt_client_id"] == (
+        "ANDROID_FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF_uid-1"
+    )
+    # save without mqtt_client_id keeps the previous value
+    assert ec.save("user@example.com", "hunter2")
+    assert ec.load()["mqtt_client_id"] == (
+        "ANDROID_FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF_uid-1"
+    )

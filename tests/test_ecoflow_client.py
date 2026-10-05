@@ -2,9 +2,44 @@
 from __future__ import annotations
 
 import json
+import re
 
-from ecoflow_client import EcoflowPrivateClient, params_to_telemetry, solar_inputs_from_params
+from ecoflow_client import (
+    EcoflowPrivateClient,
+    params_to_telemetry,
+    resolve_client_id,
+    solar_inputs_from_params,
+)
 from ecoflow_delta3 import decode_property_payload
+
+
+_CLIENT_ID_RE = re.compile(r"^ANDROID_[0-9A-F]{32}_\d+$")
+
+
+def test_resolve_client_id_simple_format():
+    cid = resolve_client_id("2104939217409142785")
+    assert _CLIENT_ID_RE.match(cid)
+    # No legacy MD5/millis suffix (would be 4+ underscore-separated segments).
+    assert cid.count("_") == 2
+
+
+def test_resolve_client_id_reuses_stable():
+    uid = "2104939217409142785"
+    first = resolve_client_id(uid)
+    again = resolve_client_id(uid, preferred=first)
+    assert again == first
+
+
+def test_resolve_client_id_rejects_legacy_md5_form():
+    uid = "2104939217409142785"
+    legacy = (
+        f"ANDROID_ABCDEF0123456789ABCDEF0123456789_{uid}_"
+        f"{'0' * 32}_1700000000000_deadbeefcafebabe0123456789abcdef"
+    )
+    fresh = resolve_client_id(uid, preferred=legacy)
+    assert fresh != legacy
+    assert _CLIENT_ID_RE.match(fresh)
+    assert fresh.count("_") == 2
 
 
 def test_solar_inputs_dual_pv():
@@ -86,6 +121,16 @@ def test_parse_json_params_envelope():
         assert len(tele["solar_inputs"]) == 2
     finally:
         client.close()
+
+
+def test_on_connect_auth_failure_sets_flags():
+    client = EcoflowPrivateClient(email="a@b.c", password="x")
+    client.mqtt_client_id = "ANDROID_ABCDEF0123456789ABCDEF0123456789_1"
+    client._on_connect(None, None, None, 5)
+    assert client.connected is False
+    assert client.auth_failed is True
+    assert "not authorized" in (client.mqtt_error or "").lower()
+    assert "rc=5" in (client.mqtt_error or "")
 
 
 def test_decode_property_payload_rejects_garbage():
