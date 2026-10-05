@@ -472,9 +472,40 @@ def to_telemetry(values: dict[str, Any]) -> dict[str, Any]:
         battery_status = 2
     else:
         battery_status = 0
+    solar_inputs: list[dict[str, Any]] = []
+    for i, key in enumerate(("pv1Power", "pv2Power", "pv3Power", "pv4Power"), start=1):
+        w = coerce_number(values.get(key))
+        if w is None or w == 0:
+            continue
+        solar_inputs.append({
+            "id": f"siseli:pv{i}",
+            "label": f"Siseli PV{i}",
+            "source": "siseli",
+            "watts": round(w),
+        })
+    # Local MQTT path may only expose pv_w / pv2_power_w via canonical aliases.
+    if not solar_inputs:
+        for i, key in enumerate(("pvPower", "pv2Power"), start=1):
+            w = coerce_number(values.get(key))
+            if w is None or w == 0:
+                continue
+            solar_inputs.append({
+                "id": f"siseli:pv{i}",
+                "label": f"Siseli PV{i}",
+                "source": "siseli",
+                "watts": round(w),
+            })
+    if not solar_inputs and solar:
+        solar_inputs.append({
+            "id": "siseli:pv",
+            "label": "Siseli solar",
+            "source": "siseli",
+            "watts": round(solar),
+        })
     out: dict[str, Any] = {
         "battery_percent": round(soc) if soc is not None else None,
         "solar_input_w": round(solar),
+        "solar_inputs": solar_inputs,
         "ac_input_w": round(grid),
         "feed_in_w": round(feed_in),
         "output_power_w": round(load),

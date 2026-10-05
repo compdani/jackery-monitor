@@ -420,7 +420,28 @@ export const endpoints = {
     live_controls?: string[];
     ignore_inverter_soc?: boolean;
     calc_grid?: boolean;
+    solar_flow_unified?: boolean;
+    load_sources?: string[] | null;
   }) => api("/api/device_prefs", { method: "POST", body }),
+  ecoflowCreds: () =>
+    api<{
+      has_credentials?: boolean;
+      email?: string;
+      api_host?: string;
+      state?: string;
+      error?: string | null;
+      devices?: Record<string, unknown>[];
+    }>("/api/ecoflow/credentials"),
+  saveEcoflowCreds: (body: { email: string; password: string; api_host?: string }) =>
+    api("/api/ecoflow/credentials", { method: "POST", body }),
+  forgetEcoflowCreds: () => api("/api/ecoflow/credentials", { method: "DELETE" }),
+  ecoflowDevices: () => api<{ devices?: Record<string, unknown>[] }>("/api/ecoflow/devices"),
+  saveEcoflowDevice: (body: Record<string, unknown>) =>
+    api("/api/ecoflow/devices", { method: "POST", body }),
+  deleteEcoflowDevice: (sn: string) =>
+    api(`/api/ecoflow/devices/${encodeURIComponent(sn)}`, { method: "DELETE" }),
+  linkEcoflowDevice: (sn: string, body: { siseli_device_sn?: string | null; roles?: string[] }) =>
+    api(`/api/ecoflow/devices/${encodeURIComponent(sn)}/link`, { method: "POST", body }),
   bmsSaved: () => api<BmsSaved>("/api/bms/saved"),
   saveBmsPack: (body: {
     mac: string;

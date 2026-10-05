@@ -482,7 +482,12 @@ export default function LiveScreen() {
 
       <Card>
         <Eyebrow>Power flow</Eyebrow>
-        <PowerFlow t={t} />
+        <PowerFlow
+          t={t}
+          deviceId={siseliId || selected || undefined}
+          unified={!!status?.device_prefs?.solar_flow_unified}
+          loadSources={status?.device_prefs?.load_sources}
+        />
       </Card>
 
       <EnergyKpi
@@ -645,6 +650,41 @@ export default function LiveScreen() {
                   .filter(Boolean)
                   .join(" · ")}
               />
+            );
+          })}
+        </Card>
+      ) : null}
+
+      {isSiseli && Array.isArray(t?.linked_ecoflow) && t!.linked_ecoflow!.length > 0 ? (
+        <Card>
+          <Eyebrow>EcoFlow</Eyebrow>
+          <Hint>
+            {t!.linked_ecoflow!.length} linked unit
+            {t!.linked_ecoflow!.length === 1 ? "" : "s"}
+          </Hint>
+          {t!.linked_ecoflow!.map((u) => {
+            const et = u.telemetry || {};
+            const detail = (u.detail || {}) as Record<string, unknown>;
+            return (
+              <View key={String(u.sn)} style={{ marginTop: 10, gap: 4 }}>
+                <Text style={{ color: colors.text, fontWeight: "600" }}>
+                  {u.alias || u.sn || "EcoFlow"}
+                  {!u.fresh ? " · stale" : ""}
+                </Text>
+                <Hint>
+                  SOC {et.battery_percent != null ? `${Math.round(Number(et.battery_percent))}%` : "—"}
+                  {" · "}solar {Math.round(Number(et.solar_input_w) || 0)} W
+                  {" · "}out {Math.round(Number(et.output_power_w) || 0)} W
+                  {" · "}in {Math.round(Number(et.input_power_w) || 0)} W
+                </Hint>
+                {detail.pow_get_pv != null || detail.pow_get_pv2 != null ? (
+                  <Hint>
+                    PV1 {detail.pow_get_pv != null ? `${Math.round(Number(detail.pow_get_pv))} W` : "—"}
+                    {" · "}
+                    PV2 {detail.pow_get_pv2 != null ? `${Math.round(Number(detail.pow_get_pv2))} W` : "—"}
+                  </Hint>
+                ) : null}
+              </View>
             );
           })}
         </Card>

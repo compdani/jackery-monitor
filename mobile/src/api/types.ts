@@ -10,6 +10,10 @@ export type Telemetry = {
   ac_input_w?: number | null;
   car_input_w?: number | null;
   solar_input_w?: number | null;
+  solar_inputs?: SolarInput[] | null;
+  load_inputs?: LoadInput[] | null;
+  linked_ecoflow?: LinkedEcoflow[] | null;
+  ecoflow_linked?: boolean | null;
   pv_voltage_v?: number | null;
   pv_current_a?: number | null;
   inverter_soc_pct?: number | null;
@@ -136,6 +140,35 @@ export type DevicePrefs = {
   live_controls?: string[];
   ignore_inverter_soc?: boolean;
   calc_grid?: boolean;
+  solar_flow_unified?: boolean;
+  load_sources?: string[] | null;
+};
+
+export type SolarInput = {
+  id?: string;
+  label?: string;
+  source?: string;
+  device_sn?: string;
+  watts?: number;
+};
+
+export type LoadInput = {
+  id?: string;
+  label?: string;
+  source?: string;
+  device_sn?: string;
+  watts?: number;
+};
+
+export type LinkedEcoflow = {
+  sn?: string;
+  alias?: string;
+  device_type?: string;
+  roles?: string[];
+  fresh?: boolean;
+  telemetry?: Telemetry;
+  detail?: Record<string, unknown>;
+  ts?: number;
 };
 
 export type SiseliReadings = {

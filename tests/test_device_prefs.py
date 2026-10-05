@@ -72,6 +72,27 @@ def test_ignore_inverter_soc_round_trip(prefs_mod):
     assert "calc_grid" not in r.get("siseli:42")
 
 
+def test_solar_flow_unified_round_trip(prefs_mod):
+    r = prefs_mod.DevicePrefs()
+    assert prefs_mod.solar_flow_unified(r.get("siseli:42")) is False
+    r.update("siseli:42", solar_flow_unified=True)
+    assert prefs_mod.solar_flow_unified(r.get("siseli:42")) is True
+    r.update("siseli:42", solar_flow_unified=False)
+    assert "solar_flow_unified" not in r.get("siseli:42")
+
+
+def test_load_sources_round_trip(prefs_mod):
+    r = prefs_mod.DevicePrefs()
+    assert prefs_mod.load_sources(r.get("siseli:42")) is None
+    r.update("siseli:42", load_sources=["siseli", "ecoflow:R351"])
+    assert prefs_mod.load_sources(r.get("siseli:42")) == ["siseli", "ecoflow:R351"]
+    r.update("siseli:42", load_sources=[])
+    assert prefs_mod.load_sources(r.get("siseli:42")) == []
+    r.update("siseli:42", load_sources=None)
+    assert "load_sources" not in r.get("siseli:42")
+    assert prefs_mod.load_sources(r.get("siseli:42")) is None
+
+
 def test_update_requires_device_id(prefs_mod):
     r = prefs_mod.DevicePrefs()
     with pytest.raises(ValueError):

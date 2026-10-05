@@ -75,6 +75,31 @@ def test_to_telemetry_mapping():
     assert tele["battery_status"] == 1
     assert tele["source"] == "siseli"
     assert tele["ac_on"] is False
+    # No per-string PV → single synthetic solar_inputs entry from the sum.
+    assert tele["solar_inputs"] == [{
+        "id": "siseli:pv",
+        "label": "Siseli solar",
+        "source": "siseli",
+        "watts": 1200,
+    }]
+
+
+def test_to_telemetry_solar_inputs_from_pv_strings():
+    tele = sc.to_telemetry({
+        "pvInputPower": 1000,
+        "pv1Power": 400,
+        "pv2Power": 600,
+        "pv3Power": 0,
+        "pv4Power": None,
+        "loadPower": 200,
+        "gridPower": 0,
+        "batterySOC": 55,
+    })
+    assert tele["solar_input_w"] == 1000
+    assert tele["solar_inputs"] == [
+        {"id": "siseli:pv1", "label": "Siseli PV1", "source": "siseli", "watts": 400},
+        {"id": "siseli:pv2", "label": "Siseli PV2", "source": "siseli", "watts": 600},
+    ]
 
 
 def test_apply_derived_values_gap_fill():

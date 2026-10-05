@@ -25,7 +25,9 @@ def decoded_to_canonical(snapshot: dict[str, Any] | None) -> dict[str, Any]:
     snap = snapshot or {}
     solar = _num(snap.get("generation_power_w"))
     if solar is None:
-        solar = _num(snap.get("pv_w")) or 0.0
+        pv1 = _num(snap.get("pv_w")) or 0.0
+        pv2 = _num(snap.get("pv2_power_w")) or 0.0
+        solar = pv1 + pv2 if (pv1 or pv2) else 0.0
     load = _num(snap.get("load_w"))
     mains = _num(snap.get("mains_power_w")) or 0.0
     direction = str(snap.get("mains_current_flow_direction") or "")
@@ -56,6 +58,13 @@ def decoded_to_canonical(snapshot: dict[str, Any] | None) -> dict[str, Any]:
     pv_a = _num(snap.get("pv_a"))
     if pv_a is not None:
         out["pvCurrent"] = pv_a
+    # Per-string PV for Live power-flow (separate solar inputs).
+    pv1 = _num(snap.get("pv_w"))
+    if pv1 is not None:
+        out["pv1Power"] = pv1
+    pv2 = _num(snap.get("pv2_power_w"))
+    if pv2 is not None:
+        out["pv2Power"] = pv2
     return out
 
 

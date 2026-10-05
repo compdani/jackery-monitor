@@ -546,7 +546,7 @@ function switchTab(name, opts = {}) {
     // User is now looking — clear the "new insights" dot.
     setAutomationDot(false);
   }
-  if (name === 'device')   { loadDeviceCapacity(); loadDeviceParams(); loadF7AcReset(); loadSiseliCreds(); loadBms(); }
+  if (name === 'device')   { loadDeviceCapacity(); loadDeviceParams(); loadF7AcReset(); loadSiseliCreds(); loadEcoflowCreds(); loadBms(); }
   else stopMqttCapturePoll();
 }
 
@@ -2044,6 +2044,11 @@ function isSiseliDevice(d) {
   return d.source === 'siseli' || String(d.device_id || d.device_sn || '').startsWith('siseli:');
 }
 
+function isEcoflowDevice(d) {
+  if (!d) return false;
+  return d.source === 'ecoflow' || String(d.device_id || d.device_sn || '').startsWith('ecoflow:');
+}
+
 function viewingSiseli(s) {
   const st = s || lastStatus;
   const active = (st && st.cloud)
@@ -2052,6 +2057,16 @@ function viewingSiseli(s) {
   if (isSiseliDevice(active)) return true;
   const dev = st && st.device;
   return isSiseliDevice(dev);
+}
+
+function viewingEcoflow(s) {
+  const st = s || lastStatus;
+  const active = (st && st.cloud)
+    ? (st.cloud.devices || []).find((d) => String(d.device_id) === String(st.cloud.selected_device_id))
+    : null;
+  if (isEcoflowDevice(active)) return true;
+  const dev = st && st.device;
+  return isEcoflowDevice(dev);
 }
 
 function renderSiseliPanels(t) {
@@ -2067,12 +2082,13 @@ function renderSiseliPanels(t) {
 
 function applySiseliChrome(s) {
   const siseli = viewingSiseli(s);
+  const ecoflow = viewingEcoflow(s);
   const power = $('power-card');
   const panels = $('siseli-panels-card');
   const controls = $('siseli-controls-card');
   const eod = $('eod-forecast');
-  if (eod && siseli) eod.hidden = true;
-  if (power) power.hidden = siseli;
+  if (eod && (siseli || ecoflow)) eod.hidden = true;
+  if (power) power.hidden = siseli || ecoflow;
   if (panels) panels.hidden = !siseli;
   const prefs = s && s.device_prefs;
   const deviceId = s && s.cloud && s.cloud.selected_device_id;
@@ -2095,11 +2111,13 @@ function applySiseliChrome(s) {
   setSiseliCalcGridUi(!!(prefs && prefs.calc_grid));
   document.querySelectorAll('[data-jackery-only]').forEach((el) => {
     if (el.id === 'unknown-model-banner') {
-      if (siseli) el.hidden = true;
+      if (siseli || ecoflow) el.hidden = true;
       return;
     }
-    el.hidden = siseli;
+    el.hidden = siseli || ecoflow;
   });
+  renderLinkedEcoflow(s);
+  syncFlowUnifiedToggle(s);
 }
 
 function siseliLivePinSet(prefs) {
@@ -2761,6 +2779,139 @@ $('siseli-creds-clear')?.addEventListener('click', async () => {
   $('siseli-creds-password').value = '';
   const status = $('siseli-creds-status');
   if (status) status.textContent = 'not configured';
+});
+
+function fillEcoflowSiseliPicker(selected) {
+  const sel = $('ecoflow-device-siseli');
+  if (!sel) return;
+  const siseli = siseliDevicesFromPicker();
+  const cur = selected || sel.value || '';
+  sel.innerHTML = '<option value="">— none —</option>' + siseli.map((d) =>
+    `<option value="${escapeHtml(d.device_sn || d.device_id)}">${escapeHtml(d.name || d.device_sn)}</option>`
+  ).join('');
+  if (cur) sel.value = cur;
+}
+
+function ecoflowRolesFromForm() {
+  const roles = [];
+  if ($('ecoflow-role-solar')?.checked) roles.push('solar');
+  if ($('ecoflow-role-battery')?.checked) roles.push('battery');
+  if ($('ecoflow-role-output')?.checked) roles.push('output');
+  return roles.length ? roles : ['solar', 'battery', 'output'];
+}
+
+function renderEcoflowDeviceList(devices) {
+  const box = $('ecoflow-device-list');
+  if (!box) return;
+  const rows = Array.isArray(devices) ? devices : [];
+  if (!rows.length) {
+    box.innerHTML = '<p class="hint">No EcoFlow devices yet.</p>';
+    return;
+  }
+  box.innerHTML = rows.map((d) => {
+    const sn = escapeHtml(d.sn || '');
+    const alias = escapeHtml(d.alias || d.raw_sn || '');
+    const link = d.siseli_device_sn
+      ? `linked → ${escapeHtml(d.siseli_device_sn)} (${escapeHtml((d.roles || []).join(', '))})`
+      : 'not linked';
+    return `<div class="device-params-row" style="display:flex; justify-content:space-between; gap:8px; align-items:center">
+      <div>
+        <strong>${alias}</strong>
+        <div class="hint">${sn} · ${escapeHtml(d.device_type || '')}</div>
+        <div class="hint">${link}</div>
+      </div>
+      <button type="button" class="btn btn-ghost btn-small" data-ecoflow-del="${sn}">Remove</button>
+    </div>`;
+  }).join('');
+  box.querySelectorAll('[data-ecoflow-del]').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const sn = btn.getAttribute('data-ecoflow-del');
+      if (!sn || !confirm(`Remove ${sn}?`)) return;
+      await fetch(`/api/ecoflow/devices/${encodeURIComponent(sn)}`, { method: 'DELETE' });
+      await loadEcoflowCreds();
+    });
+  });
+}
+
+async function loadEcoflowCreds() {
+  const status = $('ecoflow-creds-status');
+  try {
+    const r = await fetch('/api/ecoflow/credentials');
+    const j = await r.json();
+    if (j.email && $('ecoflow-creds-email')) $('ecoflow-creds-email').value = j.email;
+    if (j.api_host && $('ecoflow-creds-host')) $('ecoflow-creds-host').value = j.api_host;
+    fillEcoflowSiseliPicker();
+    renderEcoflowDeviceList(j.devices || []);
+    if (status) {
+      const st = j.state || (j.has_credentials ? 'saved' : '—');
+      status.textContent = j.error ? `error: ${j.error}` : st;
+    }
+  } catch (e) {
+    if (status) status.textContent = 'unavailable';
+    console.error('loadEcoflowCreds', e);
+  }
+}
+
+$('ecoflow-creds-form')?.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const msg = $('ecoflow-creds-msg');
+  const status = $('ecoflow-creds-status');
+  try {
+    if (msg) { msg.hidden = true; msg.textContent = ''; }
+    const r = await fetch('/api/ecoflow/credentials', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        email: $('ecoflow-creds-email').value,
+        password: $('ecoflow-creds-password').value,
+        api_host: $('ecoflow-creds-host').value,
+      }),
+    });
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.detail || r.statusText);
+    $('ecoflow-creds-password').value = '';
+    if (status) status.textContent = 'saved';
+    if (msg) { msg.hidden = false; msg.textContent = 'Saved.'; }
+    await loadEcoflowCreds();
+  } catch (err) {
+    if (msg) { msg.hidden = false; msg.textContent = err.message || String(err); }
+  }
+});
+
+$('ecoflow-creds-clear')?.addEventListener('click', async () => {
+  if (!confirm('Forget EcoFlow credentials? MQTT session will stop.')) return;
+  await fetch('/api/ecoflow/credentials', { method: 'DELETE' });
+  $('ecoflow-creds-password').value = '';
+  const status = $('ecoflow-creds-status');
+  if (status) status.textContent = 'not configured';
+  await loadEcoflowCreds();
+});
+
+$('ecoflow-device-save')?.addEventListener('click', async () => {
+  const msg = $('ecoflow-device-msg');
+  try {
+    if (msg) { msg.hidden = true; msg.textContent = ''; }
+    const siseli = $('ecoflow-device-siseli')?.value || '';
+    const r = await fetch('/api/ecoflow/devices', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        raw_sn: $('ecoflow-device-sn').value,
+        device_type: $('ecoflow-device-type').value,
+        alias: $('ecoflow-device-alias').value,
+        siseli_device_sn: siseli,
+        roles: ecoflowRolesFromForm(),
+      }),
+    });
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.detail || r.statusText);
+    $('ecoflow-device-sn').value = '';
+    $('ecoflow-device-alias').value = '';
+    if (msg) { msg.hidden = false; msg.textContent = 'Device saved.'; }
+    await loadEcoflowCreds();
+  } catch (err) {
+    if (msg) { msg.hidden = false; msg.textContent = err.message || String(err); }
+  }
 });
 
 function siseliDevicesFromPicker() {
@@ -5045,7 +5196,8 @@ function fleetCardHtml(d, selectedId) {
     ? `+${d.pack_count} pack${d.pack_count === 1 ? '' : 's'}`
     : '';
   const name = escapeHtml(d.name || d.model_name || d.device_sn || d.device_id || 'Device');
-  const src = d.source === 'siseli' ? '<span class="fleet-source">inverter</span>' : '';
+  const src = d.source === 'siseli' ? '<span class="fleet-source">inverter</span>'
+    : (d.source === 'ecoflow' ? '<span class="fleet-source">ecoflow</span>' : '');
   return `<button type="button" class="fleet-card ${st.cls}${selected ? ' is-selected' : ''}"
       data-device-id="${escapeHtml(d.device_id)}"
       aria-pressed="${selected ? 'true' : 'false'}">
@@ -5776,14 +5928,267 @@ const refreshSolarChargeButton = solarChargeToggle.refresh;
 // Threshold — anything below ~5W is inverter rounding noise, not flow.
 const FLOW_IDLE_W = 5;
 
+function renderSolarInputChips(inputs, unified) {
+  const box = $('flow-solar-inputs');
+  const toggleRow = $('flow-unified-row');
+  if (!box) return;
+  const rows = Array.isArray(inputs) ? inputs : [];
+  if (toggleRow) toggleRow.hidden = rows.length < 2;
+  if (unified || rows.length < 2) {
+    box.hidden = true;
+    box.innerHTML = '';
+    return;
+  }
+  box.hidden = false;
+  box.innerHTML = rows.map((row) => {
+    const src = escapeHtml(row.source || 'siseli');
+    const label = escapeHtml(row.label || 'Solar');
+    const w = Math.round(Number(row.watts) || 0);
+    return `<div class="flow-solar-chip source-${src}">
+      <span class="chip-label">${label}</span>
+      <span class="chip-w">${w} W</span>
+    </div>`;
+  }).join('');
+}
+
+function syncFlowUnifiedToggle(s) {
+  const el = $('flow-unified-toggle');
+  if (!el) return;
+  el.checked = !!(s && s.device_prefs && s.device_prefs.solar_flow_unified);
+}
+
+$('flow-unified-toggle')?.addEventListener('change', async (e) => {
+  const deviceId = lastStatus?.cloud?.selected_device_id;
+  if (!deviceId) return;
+  const on = !!e.target.checked;
+  try {
+    await api('/api/device_prefs', {
+      method: 'POST',
+      body: { device_id: deviceId, solar_flow_unified: on },
+    });
+    if (lastStatus) {
+      lastStatus.device_prefs = {
+        ...(lastStatus.device_prefs || {}),
+        solar_flow_unified: on,
+      };
+      if (lastStatus.telemetry) renderPowerFlow(lastStatus.telemetry);
+    }
+  } catch (err) {
+    console.error('solar_flow_unified', err);
+    e.target.checked = !on;
+  }
+});
+
+function selectedLoadSourceIds(s, inputs) {
+  const pref = s && s.device_prefs && s.device_prefs.load_sources;
+  if (Array.isArray(pref)) return new Set(pref.map(String));
+  return new Set((inputs || []).map((row) => String(row.id)));
+}
+
+function closeFlowLoadMenu() {
+  const btn = $('flow-load-gear');
+  const menu = $('flow-load-menu');
+  if (btn) btn.setAttribute('aria-expanded', 'false');
+  if (menu) menu.hidden = true;
+}
+
+function renderLoadSourceMenu(t, s) {
+  const wrap = $('flow-load-gear-wrap');
+  const menu = $('flow-load-menu');
+  if (!wrap || !menu) return;
+  const inputs = Array.isArray(t && t.load_inputs) ? t.load_inputs : [];
+  if (inputs.length < 2) {
+    wrap.hidden = true;
+    closeFlowLoadMenu();
+    return;
+  }
+  wrap.hidden = false;
+  const selected = selectedLoadSourceIds(s, inputs);
+  menu.innerHTML = inputs.map((row) => {
+    const id = escapeHtml(String(row.id || ''));
+    const label = escapeHtml(row.label || row.id || 'Load');
+    const w = Math.round(Number(row.watts) || 0);
+    const checked = selected.has(String(row.id)) ? ' checked' : '';
+    return `<label class="flow-load-option">
+      <input type="checkbox" data-load-source="${id}"${checked} />
+      <span class="opt-label">${label}</span>
+      <span class="opt-w">${w} W</span>
+    </label>`;
+  }).join('');
+  menu.querySelectorAll('input[data-load-source]').forEach((el) => {
+    el.addEventListener('change', onLoadSourceToggle);
+  });
+}
+
+async function onLoadSourceToggle() {
+  const deviceId = lastStatus?.cloud?.selected_device_id;
+  const menu = $('flow-load-menu');
+  if (!deviceId || !menu || !lastStatus?.telemetry) return;
+  const inputs = Array.isArray(lastStatus.telemetry.load_inputs)
+    ? lastStatus.telemetry.load_inputs : [];
+  const next = [...menu.querySelectorAll('input[data-load-source]:checked')]
+    .map((el) => el.getAttribute('data-load-source'))
+    .filter(Boolean);
+  const prev = lastStatus.device_prefs?.load_sources;
+  lastStatus.device_prefs = {
+    ...(lastStatus.device_prefs || {}),
+    load_sources: next,
+  };
+  // Optimistic load total from the checked sources.
+  const selected = new Set(next);
+  const total = inputs.reduce((sum, row) => (
+    selected.has(String(row.id)) ? sum + Math.max(0, Number(row.watts) || 0) : sum
+  ), 0);
+  lastStatus.telemetry = {
+    ...lastStatus.telemetry,
+    output_power_w: Math.round(total),
+  };
+  renderPowerFlow(lastStatus.telemetry);
+  try {
+    await api('/api/device_prefs', {
+      method: 'POST',
+      body: { device_id: deviceId, load_sources: next },
+    });
+  } catch (err) {
+    console.error('load_sources', err);
+    lastStatus.device_prefs.load_sources = prev;
+    if (Array.isArray(prev)) {
+      const rollback = new Set(prev.map(String));
+      const back = inputs.reduce((sum, row) => (
+        rollback.has(String(row.id)) ? sum + Math.max(0, Number(row.watts) || 0) : sum
+      ), 0);
+      lastStatus.telemetry.output_power_w = Math.round(back);
+    }
+    renderLoadSourceMenu(lastStatus.telemetry, lastStatus);
+    renderPowerFlow(lastStatus.telemetry);
+  }
+}
+
+$('flow-load-gear')?.addEventListener('click', (e) => {
+  e.stopPropagation();
+  const btn = $('flow-load-gear');
+  const menu = $('flow-load-menu');
+  if (!btn || !menu || $('flow-load-gear-wrap')?.hidden) return;
+  const open = menu.hidden;
+  menu.hidden = !open;
+  btn.setAttribute('aria-expanded', String(open));
+});
+
+document.addEventListener('click', (e) => {
+  const wrap = $('flow-load-gear-wrap');
+  if (!wrap || wrap.hidden) return;
+  if (wrap.contains(e.target)) return;
+  closeFlowLoadMenu();
+});
+
+function renderLinkedEcoflow(s) {
+  const card = $('linked-ecoflow-card');
+  const body = $('linked-ecoflow-body');
+  const summary = $('linked-ecoflow-summary');
+  if (!card || !body) return;
+  const linked = (s && s.telemetry && Array.isArray(s.telemetry.linked_ecoflow))
+    ? s.telemetry.linked_ecoflow
+    : [];
+  if (!viewingSiseli(s) || !linked.length) {
+    card.hidden = true;
+    body.innerHTML = '';
+    return;
+  }
+  card.hidden = false;
+  const freshN = linked.filter((u) => u.fresh).length;
+  if (summary) {
+    summary.textContent = linked.length === 1
+      ? `${linked[0].alias || 'EcoFlow'}${freshN ? '' : ' · stale'}`
+      : `${linked.length} units · ${freshN} live`;
+  }
+  body.innerHTML = linked.map((u) => {
+    const t = u.telemetry || {};
+    const d = u.detail || {};
+    const name = escapeHtml(u.alias || u.sn || 'EcoFlow');
+    const roles = (u.roles || []).join(', ');
+    const soc = t.battery_percent != null ? `${Math.round(t.battery_percent)}%` : '—';
+    const solar = Math.round(Number(t.solar_input_w) || 0);
+    const outW = Math.round(Number(t.output_power_w) || 0);
+    const inW = Math.round(Number(t.input_power_w) || 0);
+    const acIn = Math.round(Number(t.ac_input_w) || 0);
+    const pv1 = d.pow_get_pv != null ? Math.round(d.pow_get_pv) : null;
+    const pv2 = d.pow_get_pv2 != null ? Math.round(d.pow_get_pv2) : null;
+    const status = ({ 0: 'idle', 1: 'discharging', 2: 'charging' })[t.battery_status] || '—';
+    return `<div class="linked-ecoflow-unit">
+      <div class="card-header" style="margin-bottom:8px">
+        <strong>${name}</strong>
+        <span class="hint">${escapeHtml(roles || 'linked')}${u.fresh ? '' : ' · stale'}</span>
+      </div>
+      <div class="linked-ecoflow-grid">
+        <div class="linked-ecoflow-stat"><span class="stat-label">Battery</span><span class="stat-value">${soc}</span></div>
+        <div class="linked-ecoflow-stat"><span class="stat-label">Status</span><span class="stat-value">${status}</span></div>
+        <div class="linked-ecoflow-stat"><span class="stat-label">Solar</span><span class="stat-value">${solar} W</span></div>
+        <div class="linked-ecoflow-stat"><span class="stat-label">Output</span><span class="stat-value">${outW} W</span></div>
+        <div class="linked-ecoflow-stat"><span class="stat-label">Input</span><span class="stat-value">${inW} W</span></div>
+        <div class="linked-ecoflow-stat"><span class="stat-label">AC in</span><span class="stat-value">${acIn} W</span></div>
+        ${pv1 != null ? `<div class="linked-ecoflow-stat"><span class="stat-label">PV1</span><span class="stat-value">${pv1} W</span></div>` : ''}
+        ${pv2 != null ? `<div class="linked-ecoflow-stat"><span class="stat-label">PV2</span><span class="stat-value">${pv2} W</span></div>` : ''}
+        <div class="linked-ecoflow-stat"><span class="stat-label">AC</span><span class="stat-value">${t.ac_on ? 'on' : 'off'}</span></div>
+        <div class="linked-ecoflow-stat"><span class="stat-label">DC</span><span class="stat-value">${t.dc_on ? 'on' : 'off'}</span></div>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+const ECOFLOW_COLLAPSE_KEY = 'jackery-linked-ecoflow-collapsed';
+
+function applyLinkedEcoflowCollapseState() {
+  const card = $('linked-ecoflow-card');
+  const hdr = $('linked-ecoflow-toggle');
+  if (!card || !hdr) return;
+  const saved = localStorage.getItem(ECOFLOW_COLLAPSE_KEY);
+  const collapsed = saved == null ? true : (saved === '1');
+  card.classList.toggle('collapsed', collapsed);
+  hdr.setAttribute('aria-expanded', String(!collapsed));
+}
+
+function toggleLinkedEcoflowCollapsed() {
+  const card = $('linked-ecoflow-card');
+  const hdr = $('linked-ecoflow-toggle');
+  if (!card || !hdr) return;
+  const nowCollapsed = !card.classList.contains('collapsed');
+  card.classList.toggle('collapsed', nowCollapsed);
+  hdr.setAttribute('aria-expanded', String(!nowCollapsed));
+  localStorage.setItem(ECOFLOW_COLLAPSE_KEY, nowCollapsed ? '1' : '0');
+}
+
+$('linked-ecoflow-toggle')?.addEventListener('click', toggleLinkedEcoflowCollapsed);
+$('linked-ecoflow-toggle')?.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' || e.key === ' ') {
+    e.preventDefault();
+    toggleLinkedEcoflowCollapsed();
+  }
+});
+applyLinkedEcoflowCollapseState();
+
 function renderPowerFlow(t) {
   if (!t) return;
-  const solarW = Math.max(0, Math.round(Number(t.solar_input_w ?? 0)));
+  const inputs = Array.isArray(t.solar_inputs) ? t.solar_inputs : [];
+  const unified = !!(lastStatus && lastStatus.device_prefs
+    && lastStatus.device_prefs.solar_flow_unified);
+  const solarFromInputs = inputs.reduce((sum, row) => sum + Math.max(0, Number(row.watts) || 0), 0);
+  const solarW = Math.max(0, Math.round(
+    inputs.length ? solarFromInputs : Number(t.solar_input_w ?? 0),
+  ));
   const gridW  = Math.max(0, Math.round(Number(t.ac_input_w    ?? 0)));
   const loadW  = Math.max(0, Math.round(Number(t.output_power_w ?? 0)));
   setFlow('solar', solarW);
   setFlow('grid',  gridW);
   setFlow('load',  loadW);
+
+  const label = $('flow-solar-label');
+  if (label) {
+    label.textContent = (!unified && inputs.length > 1)
+      ? `SOLAR (${inputs.length})`
+      : 'SOLAR';
+  }
+  renderSolarInputChips(inputs, unified);
+  renderLoadSourceMenu(t, lastStatus);
 
   // Battery node — color encodes direction. Net = sources - load.
   // Charging when sources outpace load, discharging the other way.

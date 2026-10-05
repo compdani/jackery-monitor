@@ -71,6 +71,8 @@ export function patchDevicePrefs(patch: {
   live_controls?: string[];
   ignore_inverter_soc?: boolean;
   calc_grid?: boolean;
+  solar_flow_unified?: boolean;
+  load_sources?: string[] | null;
   alias?: string;
 }) {
   useLive.setState((s) => {

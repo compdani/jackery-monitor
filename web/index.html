@@ -145,7 +145,13 @@
           <div class="card-eyebrow">
             <span>Power flow</span>
             <span class="hint" id="flow-ac-meta">—</span>
+            <label class="flow-unified-toggle" id="flow-unified-row" hidden title="Collapse all solar inputs into one node">
+              <input type="checkbox" id="flow-unified-toggle" />
+              <span>Unified solar</span>
+            </label>
           </div>
+          <div id="flow-solar-inputs" class="flow-solar-inputs" hidden></div>
+          <div class="power-flow-diagram">
           <!-- Power flow diagram, Tesla-app style:
                Solid translucent channel + bright traveling dot per
                flow line. animateMotion + <mpath> drives the dot along
@@ -196,7 +202,7 @@
             </g>
 
             <!-- Solar node (top column @ x=200) -->
-            <text class="flow-label" x="200" y="32">SOLAR</text>
+            <text class="flow-label" id="flow-solar-label" x="200" y="32">SOLAR</text>
             <g class="flow-node-group">
               <circle class="flow-node solar" id="flow-node-solar"
                       cx="200" cy="80" r="40" />
@@ -243,6 +249,15 @@
               <tspan id="flow-load-w">0</tspan> W
             </text>
           </svg>
+          <div class="flow-load-gear-wrap" id="flow-load-gear-wrap" hidden>
+            <button type="button" class="flow-load-gear" id="flow-load-gear"
+                    aria-label="Choose load sources" aria-expanded="false"
+                    aria-controls="flow-load-menu" title="Load sources">⚙</button>
+            <div class="flow-load-menu" id="flow-load-menu" hidden role="group"
+                 aria-label="Load sources">
+            </div>
+          </div>
+          </div>
         </section>
 
         <section class="card kpi-card today has-accent" data-card="today">
@@ -351,6 +366,17 @@
           <span class="collapsible-chevron" aria-hidden="true">▾</span>
         </div>
         <div id="battery-packs-list" class="battery-packs-list"></div>
+      </section>
+
+      <section id="linked-ecoflow-card" class="card collapsible collapsed" hidden>
+        <div class="card-header collapsible-header" id="linked-ecoflow-toggle"
+             role="button" tabindex="0" aria-expanded="false"
+             aria-controls="linked-ecoflow-body">
+          <h2>EcoFlow</h2>
+          <span id="linked-ecoflow-summary" class="hint">—</span>
+          <span class="collapsible-chevron" aria-hidden="true">▾</span>
+        </div>
+        <div id="linked-ecoflow-body" class="linked-ecoflow-body"></div>
       </section>
 
       <!-- Live chart -->
@@ -1078,6 +1104,83 @@
             <button id="siseli-creds-clear" class="btn btn-ghost" type="button">Forget</button>
           </div>
         </form>
+      </section>
+
+      <section class="card device-card">
+        <div class="card-header">
+          <h2>EcoFlow account</h2>
+          <span id="ecoflow-creds-status" class="hint">—</span>
+        </div>
+        <p class="hint" style="margin:6px 0 12px">
+          Optional EcoFlow power station via the EcoFlow app cloud
+          (<code>mqtt.ecoflow.com</code>). Sign in with the same email/password
+          as the EcoFlow app, then add a device by serial number. Devices
+          appear in the fleet strip and can be linked to a Siseli inverter as
+          extra solar, battery, and output. Credentials are encrypted at rest.
+        </p>
+        <form id="ecoflow-creds-form">
+          <div class="auto-form-grid">
+            <label class="auto-field">
+              <span class="auto-label">Email</span>
+              <input id="ecoflow-creds-email" type="email" required autocomplete="username" />
+            </label>
+            <label class="auto-field">
+              <span class="auto-label">Password</span>
+              <input id="ecoflow-creds-password" type="password" autocomplete="current-password" placeholder="unchanged if blank" />
+            </label>
+            <label class="auto-field">
+              <span class="auto-label">API host</span>
+              <select id="ecoflow-creds-host">
+                <option value="api.ecoflow.com">Global / US (api.ecoflow.com)</option>
+                <option value="api-e.ecoflow.com">Europe (api-e.ecoflow.com)</option>
+              </select>
+            </label>
+            <span id="ecoflow-creds-msg" class="hint" hidden></span>
+          </div>
+          <div style="margin-top:14px; display:flex; gap:8px">
+            <button class="btn btn-primary" type="submit">Save credentials</button>
+            <button id="ecoflow-creds-clear" class="btn btn-ghost" type="button">Forget</button>
+          </div>
+        </form>
+        <hr style="margin:18px 0; border:none; border-top:1px solid var(--border, #333)" />
+        <h3 style="margin:0 0 8px; font-size:14px">Devices</h3>
+        <form id="ecoflow-device-form" class="auto-form-grid">
+          <label class="auto-field">
+            <span class="auto-label">Serial number</span>
+            <input id="ecoflow-device-sn" type="text" required placeholder="from EcoFlow app" autocomplete="off" />
+          </label>
+          <label class="auto-field">
+            <span class="auto-label">Model</span>
+            <select id="ecoflow-device-type">
+              <option value="DELTA_3_MAX_PLUS">Delta 3 Max Plus</option>
+              <option value="DELTA_3">Delta 3</option>
+              <option value="DELTA_3_1500">Delta 3 1500</option>
+            </select>
+          </label>
+          <label class="auto-field">
+            <span class="auto-label">Alias</span>
+            <input id="ecoflow-device-alias" type="text" placeholder="optional" />
+          </label>
+          <label class="auto-field">
+            <span class="auto-label">Link to Siseli</span>
+            <select id="ecoflow-device-siseli">
+              <option value="">— none —</option>
+            </select>
+          </label>
+          <label class="auto-field" style="grid-column:1/-1">
+            <span class="auto-label">Roles when linked</span>
+            <span style="display:flex; gap:12px; flex-wrap:wrap">
+              <label><input type="checkbox" id="ecoflow-role-solar" checked /> solar</label>
+              <label><input type="checkbox" id="ecoflow-role-battery" checked /> battery</label>
+              <label><input type="checkbox" id="ecoflow-role-output" checked /> output</label>
+            </span>
+          </label>
+          <span id="ecoflow-device-msg" class="hint" hidden></span>
+        </form>
+        <div style="margin-top:14px; display:flex; gap:8px">
+          <button id="ecoflow-device-save" class="btn btn-primary" type="button">Add / update device</button>
+        </div>
+        <div id="ecoflow-device-list" class="device-params-list" style="margin-top:14px"></div>
       </section>
 
       <section class="card device-card">

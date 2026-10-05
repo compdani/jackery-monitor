@@ -1,0 +1,2 @@
+# Vendored from https://github.com/tolwi/hassio-ecoflow-cloud
+# (Apache-2.0). Only the Delta 3 protobuf bindings are included.

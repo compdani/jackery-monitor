@@ -17,6 +17,9 @@ inverter exposes". An explicit empty list means nothing on Live.
 from Live, history, and the packs card.
 `calc_grid` (Siseli only) estimates grid watts on this dashboard from
 solar, battery discharge, and load. It never writes to Siseli.
+`load_sources` (Siseli + linked EcoFlow) is which load contributors
+count toward Live `output_power_w`. Missing key → all available;
+explicit list → only those ids (e.g. ``siseli``, ``ecoflow:R351…``).
 """
 
 from __future__ import annotations
@@ -33,6 +36,22 @@ log = logging.getLogger("device_prefs")
 PREFS_PATH = os.environ.get("JACKERY_DEVICE_PREFS_FILE", "/data/device_prefs.json")
 
 _UNSET = object()
+
+
+def _clean_load_sources(raw: Any) -> list[str] | None:
+    """Normalize a load_sources payload. None means 'use all'."""
+    if raw is None:
+        return None
+    if not isinstance(raw, (list, tuple)):
+        return None
+    out: list[str] = []
+    seen: set[str] = set()
+    for item in raw:
+        s = str(item or "").strip()
+        if s and s not in seen:
+            seen.add(s)
+            out.append(s)
+    return out
 
 
 def _clean_id(device_id: str | None) -> str:
@@ -77,6 +96,25 @@ def calc_grid(pref: dict[str, Any] | None) -> bool:
     return bool((pref or {}).get("calc_grid"))
 
 
+def solar_flow_unified(pref: dict[str, Any] | None) -> bool:
+    """True when Live power flow collapses all solar inputs into one node.
+
+    Default False = show Siseli PV strings and linked EcoFlow PV inputs
+    as separate solar nodes.
+    """
+    return bool((pref or {}).get("solar_flow_unified"))
+
+
+def load_sources(pref: dict[str, Any] | None) -> list[str] | None:
+    """Which load_inputs ids contribute to output_power_w.
+
+    None → all available sources. Explicit list (incl. empty) → filter.
+    """
+    if not pref or "load_sources" not in pref:
+        return None
+    return _clean_load_sources(pref.get("load_sources"))
+
+
 class DevicePrefs:
     def __init__(self) -> None:
         self.by_id: dict[str, dict[str, Any]] = {}
@@ -119,7 +157,9 @@ class DevicePrefs:
     def update(self, device_id: str, *, alias: Any = _UNSET,
                live_controls: Any = _UNSET,
                ignore_inverter_soc: Any = _UNSET,
-               calc_grid: Any = _UNSET) -> dict[str, Any]:
+               calc_grid: Any = _UNSET,
+               solar_flow_unified: Any = _UNSET,
+               load_sources: Any = _UNSET) -> dict[str, Any]:
         did = _clean_id(device_id)
         if not did:
             raise ValueError("device_id is required")
@@ -152,6 +192,17 @@ class DevicePrefs:
                 row["calc_grid"] = True
             else:
                 row.pop("calc_grid", None)
+        if solar_flow_unified is not _UNSET:
+            if solar_flow_unified:
+                row["solar_flow_unified"] = True
+            else:
+                row.pop("solar_flow_unified", None)
+        if load_sources is not _UNSET:
+            cleaned = _clean_load_sources(load_sources)
+            if cleaned is None:
+                row.pop("load_sources", None)
+            else:
+                row["load_sources"] = cleaned
         if row:
             self.by_id[did] = row
         else:

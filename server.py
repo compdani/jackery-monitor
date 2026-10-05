@@ -48,6 +48,9 @@ import backup_discover
 import bms_ble
 import bms_devices
 import cost as cost_module
+import ecoflow_client
+import ecoflow_creds
+import ecoflow_devices
 import energy_db
 import forecast_solar
 import forecaster
@@ -76,6 +79,7 @@ from device_client import (
 from energy_db import EnergyDB
 from kasa_devices import KasaRegistry
 from bms_devices import BmsRegistry
+from ecoflow_devices import EcoflowRegistry
 import device_prefs
 from device_prefs import DevicePrefs
 
@@ -276,6 +280,20 @@ class AppState:
         self.bms_task: asyncio.Task | None = None
         self.bms_wake: asyncio.Event = asyncio.Event()
         self.device_prefs: DevicePrefs = DevicePrefs()
+        # EcoFlow private-API MQTT. Registry is durable; live readings and
+        # the active MQTT client live here so a reconnect can rebuild cleanly.
+        self.ecoflow_reg: EcoflowRegistry = EcoflowRegistry()
+        self.ecoflow: dict[str, Any] = {
+            "state": "idle",
+            "error": None,
+            "devices": [],
+            "telemetry_by_sn": {},
+            "last_poll_ts": None,
+        }
+        self.ecoflow_task: asyncio.Task | None = None
+        self.ecoflow_wake: asyncio.Event = asyncio.Event()
+        self.ecoflow_lock = threading.Lock()
+        self.ecoflow_client: ecoflow_client.EcoflowPrivateClient | None = None
 
     @property
     def backend(self) -> str:
@@ -937,18 +955,45 @@ def _apply_bms_overlay(sn: str | None, tele: dict | None) -> dict | None:
     )
 
 
+def _apply_ecoflow_overlay(sn: str | None, tele: dict | None) -> dict | None:
+    """Merge linked EcoFlow solar/battery/output into Siseli telemetry."""
+    if tele is None or not sn:
+        return tele
+    linked = state.ecoflow_reg.list_devices(sn)
+    if not linked:
+        return tele
+    with state.ecoflow_lock:
+        live = dict(state.ecoflow.get("telemetry_by_sn") or {})
+    return ecoflow_devices.overlay_telemetry(
+        tele,
+        linked=linked,
+        live_by_sn=live,
+        bms_already=bool(tele.get("bms_source")),
+        load_sources=device_prefs.load_sources(_siseli_pref(sn)),
+    )
+
+
+def _apply_siseli_overlays(sn: str | None, tele: dict | None) -> dict | None:
+    """BMS then EcoFlow overlays for a Siseli view (merge-at-read)."""
+    out = _apply_bms_overlay(sn, tele)
+    return _apply_ecoflow_overlay(sn, out)
+
+
 def _merged_cloud_meta() -> dict:
-    """Jackery cloud_meta plus any Siseli inverters, for fleet/view APIs."""
+    """Jackery cloud_meta plus Siseli + EcoFlow fleet devices."""
     cloud = dict(state.last_cloud_meta) if state.last_cloud_meta else {}
     jackery_devices = [d for d in (cloud.get("devices") or []) if isinstance(d, dict)]
     tele = dict(cloud.get("devices_telemetry") or {})
     siseli_devices = list(state.siseli.get("devices") or [])
     tele.update(state.siseli.get("telemetry_by_sn") or {})
+    ecoflow_devices_meta = state.ecoflow_reg.fleet_meta()
+    with state.ecoflow_lock:
+        tele.update(state.ecoflow.get("telemetry_by_sn") or {})
     cloud["devices"] = [
         device_prefs.overlay_device(
             d, state.device_prefs.get(d.get("device_id") or d.get("device_sn")),
         )
-        for d in (jackery_devices + siseli_devices)
+        for d in (jackery_devices + siseli_devices + ecoflow_devices_meta)
         if isinstance(d, dict)
     ]
     cloud["devices_telemetry"] = tele
@@ -990,7 +1035,7 @@ def _store_siseli_sample(sn: str, name: str | None, tele: dict, ts: float, *, or
         bucket[sn] = {"telemetry": tele, "ts": ts, "origin": origin}
         if origin == "local":
             state.siseli["local_last_decode_ts"] = ts
-    rec = _apply_bms_overlay(sn, tele) or tele
+    rec = _apply_siseli_overlays(sn, tele) or tele
     state.energy.upsert_device(sn, name, None, None)
     bat = rec.get("battery_percent")
     if rec.get("ignore_inverter_soc") and not rec.get("bms_source"):
@@ -1309,6 +1354,120 @@ async def siseli_loop() -> None:
             raise
 
 
+def _ecoflow_on_update(sn: str, tele: dict[str, Any], detail: dict[str, Any]) -> None:
+    """MQTT callback (paho thread) → update cache and nudge the event loop."""
+    ts = time.time()
+    with state.ecoflow_lock:
+        bucket = state.ecoflow.setdefault("telemetry_by_sn", {})
+        bucket[sn] = {"telemetry": tele, "detail": detail, "ts": ts}
+        state.ecoflow["last_poll_ts"] = ts
+        state.ecoflow["state"] = "connected"
+        state.ecoflow["error"] = None
+    try:
+        row = state.ecoflow_reg.get(sn) or {}
+        state.energy.upsert_device(
+            sn, row.get("alias") or sn, None, None,
+        )
+        bat = tele.get("battery_percent")
+        state.energy.record(
+            sn, ts,
+            input_w=float(tele.get("input_power_w") or 0),
+            output_w=float(tele.get("output_power_w") or 0),
+            battery_pct=int(bat) if bat is not None else None,
+            solar_w=float(tele.get("solar_input_w") or 0),
+            ac_input_w=float(tele.get("ac_input_w") or 0),
+        )
+    except Exception as e:
+        log.debug("ecoflow energy record failed: %s", e)
+    loop = state.loop
+    if loop and loop.is_running():
+        try:
+            asyncio.run_coroutine_threadsafe(broadcast_status("telemetry"), loop)
+        except Exception:
+            pass
+
+
+def _ecoflow_stop_client() -> None:
+    client = state.ecoflow_client
+    state.ecoflow_client = None
+    if client:
+        try:
+            client.close()
+        except Exception as e:
+            log.debug("ecoflow client close: %s", e)
+
+
+def _ecoflow_start_client() -> None:
+    """Login + MQTT subscribe for every saved EcoFlow device."""
+    creds = ecoflow_creds.load()
+    devices = state.ecoflow_reg.list_devices()
+    if not creds or not devices:
+        _ecoflow_stop_client()
+        with state.ecoflow_lock:
+            state.ecoflow["state"] = "idle" if not creds else "idle"
+            state.ecoflow["error"] = None if devices else (
+                None if not creds else "no devices configured"
+            )
+            state.ecoflow["devices"] = devices
+        return
+    _ecoflow_stop_client()
+    client = ecoflow_client.EcoflowPrivateClient(
+        email=creds["email"],
+        password=creds["password"],
+        api_host=creds.get("api_host") or ecoflow_creds.DEFAULT_API_HOST,
+        on_update=_ecoflow_on_update,
+    )
+    try:
+        client.login()
+        ecoflow_creds.update_session(client.token or "", client.user_id or "")
+        client.configure_devices(devices)
+        client.start_mqtt()
+        state.ecoflow_client = client
+        with state.ecoflow_lock:
+            state.ecoflow["state"] = "connected"
+            state.ecoflow["error"] = None
+            state.ecoflow["devices"] = devices
+    except ecoflow_client.EcoflowAuthError as e:
+        client.close()
+        with state.ecoflow_lock:
+            state.ecoflow["state"] = "error"
+            state.ecoflow["error"] = str(e)
+        log.error("ecoflow auth failed: %s", e)
+    except Exception as e:
+        client.close()
+        with state.ecoflow_lock:
+            state.ecoflow["state"] = "error"
+            state.ecoflow["error"] = str(e)
+        log.warning("ecoflow connect failed: %s", e)
+
+
+async def ecoflow_loop() -> None:
+    """Keep EcoFlow MQTT session alive; restart on wake or periodic check."""
+    while True:
+        try:
+            if ecoflow_creds.has_credentials() and state.ecoflow_reg.list_devices():
+                client = state.ecoflow_client
+                if client is None or not client.connected:
+                    await asyncio.to_thread(_ecoflow_start_client)
+            else:
+                if state.ecoflow_client is not None:
+                    await asyncio.to_thread(_ecoflow_stop_client)
+                with state.ecoflow_lock:
+                    state.ecoflow["state"] = "idle"
+                    state.ecoflow["error"] = None
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            log.warning("ecoflow_loop: %s", e)
+        state.ecoflow_wake.clear()
+        try:
+            await asyncio.wait_for(state.ecoflow_wake.wait(), timeout=60.0)
+        except asyncio.TimeoutError:
+            pass
+        except asyncio.CancelledError:
+            raise
+
+
 async def bms_loop() -> None:
     """Poll assigned JBD/Overkill packs sequentially; overlay is merge-at-read."""
     while True:
@@ -1376,13 +1535,13 @@ def _devices_overview(cloud_src: dict | None) -> list[dict]:
         entry = tele_by_sn.get(sn) or {}
         tele = entry.get("telemetry") or {}
         if siseli_client.is_siseli_sn(sn):
-            tele = _apply_bms_overlay(sn, tele) or tele
+            tele = _apply_siseli_overlays(sn, tele) or tele
         ts = entry.get("ts")
         main_pct = tele.get("battery_percent")
         soc = None
         if main_pct is not None:
             try:
-                if tele.get("bms_source"):
+                if tele.get("bms_source") or tele.get("ecoflow_source"):
                     soc = round(float(main_pct), 1)
                 else:
                     soc = round(_system_soc_pct(float(main_pct), sn or None, mc), 1)
@@ -1396,6 +1555,8 @@ def _devices_overview(cloud_src: dict | None) -> list[dict]:
                 age_s = None
         if siseli_client.is_siseli_sn(sn):
             pack_count = len(state.bms.list_packs(sn))
+        elif ecoflow_devices.is_ecoflow_sn(sn):
+            pack_count = 0
         else:
             pack_count = len(state.battery_packs_by_sn.get(sn, [])) if sn else 0
         out.append({
@@ -1645,6 +1806,9 @@ def serialize_status(view_device_id: str | None = None) -> dict[str, Any]:
     viewing_siseli = bool(
         view_meta and siseli_client.is_siseli_sn(view_meta.get("device_id"))
     )
+    viewing_ecoflow = bool(
+        view_meta and ecoflow_devices.is_ecoflow_sn(view_meta.get("device_id"))
+    )
 
     if view_meta is None:
         device_info = state.device.to_dict() if state.device else None
@@ -1659,37 +1823,43 @@ def serialize_status(view_device_id: str | None = None) -> dict[str, Any]:
     else:
         view_sn = str(view_meta.get("device_sn") or "") or None
         view_id = str(view_meta["device_id"])
+        if viewing_siseli:
+            addr, src_name, dtype = "siseli", "siseli", "inverter"
+        elif viewing_ecoflow:
+            addr, src_name, dtype = "ecoflow", "ecoflow", "powerstation"
+        else:
+            addr, src_name, dtype = (
+                "cloud", "jackery", device_type_for(view_meta.get("model_code"))
+            )
         device_info = {
             "name": view_meta.get("name") or view_meta.get("model_name"),
             "portal_name": view_meta.get("portal_name"),
-            "address": "siseli" if viewing_siseli else "cloud",
+            "address": addr,
             "rssi": 0,
             "model_code": view_meta.get("model_code"),
             "device_sn": view_sn,
-            "device_type": (
-                "inverter" if viewing_siseli
-                else device_type_for(view_meta.get("model_code"))
-            ),
-            "source": "siseli" if viewing_siseli else "jackery",
+            "device_type": dtype,
+            "source": src_name,
         }
         devs_t = (cloud_src.get("devices_telemetry") or {})
         entry = devs_t.get(view_sn) or {}
         telemetry = entry.get("telemetry")
         view_packs = (
-            [] if viewing_siseli
+            [] if (viewing_siseli or viewing_ecoflow)
             else state.battery_packs_by_sn.get(view_sn or "", [])
         )
         history = _view_history(view_sn)
         model_code = view_meta.get("model_code")
         last_update_ts = entry.get("ts") or (
             state.siseli.get("last_poll_ts") if viewing_siseli
-            else state.last_update_ts
+            else (state.ecoflow.get("last_poll_ts") if viewing_ecoflow
+                  else state.last_update_ts)
         )
-        source = "siseli" if viewing_siseli else state.last_source
+        source = src_name if (viewing_siseli or viewing_ecoflow) else state.last_source
 
     if viewing_siseli and view_sn:
         view_packs = _bms_ui_rows(view_sn)
-        telemetry = _apply_bms_overlay(view_sn, telemetry or {"source": "siseli"})
+        telemetry = _apply_siseli_overlays(view_sn, telemetry or {"source": "siseli"})
         bms_ts = bms_devices.latest_live_ts(
             state.bms.list_packs(view_sn), state.bms_live)
         if bms_ts is not None:
@@ -1699,12 +1869,19 @@ def serialize_status(view_device_id: str | None = None) -> dict[str, Any]:
                 last_update_ts = bms_ts
 
     if viewing_siseli:
-        if telemetry and view_sn and not telemetry.get("bms_source"):
+        if telemetry and view_sn and not telemetry.get("bms_source") and not telemetry.get("ecoflow_source"):
             main_wh, pack_wh = _capacity_hints(view_sn)
             telemetry = {**telemetry,
                          "capacity_wh": _total_capacity_wh(view_sn, model_code),
                          "main_capacity_wh": main_wh,
                          "pack_capacity_wh": pack_wh}
+    elif viewing_ecoflow and telemetry:
+        cap = None
+        row = state.ecoflow_reg.get(view_sn or "")
+        if row and row.get("capacity_wh"):
+            cap = int(row["capacity_wh"])
+        if cap:
+            telemetry = {**telemetry, "capacity_wh": cap}
     elif telemetry and view_packs:
         main_pct = telemetry.get("battery_percent")
         if main_pct is not None:
@@ -1737,7 +1914,7 @@ def serialize_status(view_device_id: str | None = None) -> dict[str, Any]:
     cloud_out["devices_overview"] = _devices_overview(cloud_src)
 
     watchdog_state = None
-    if view_id and not viewing_siseli:
+    if view_id and not viewing_siseli and not viewing_ecoflow:
         watchdog_state = inverter_watchdog.state_to_dict(
             inverter_watchdog.get_state(view_id))
 
@@ -1773,12 +1950,21 @@ def serialize_status(view_device_id: str | None = None) -> dict[str, Any]:
                 pref, siseli_controls),
             "ignore_inverter_soc": device_prefs.ignore_inverter_soc(pref),
             "calc_grid": device_prefs.calc_grid(pref),
+            "solar_flow_unified": device_prefs.solar_flow_unified(pref),
+            "load_sources": device_prefs.load_sources(pref),
         },
         "siseli": {
             "state": state.siseli.get("state"),
             "error": state.siseli.get("error"),
             "last_poll_ts": state.siseli.get("last_poll_ts"),
             "has_credentials": siseli_creds.has_credentials(),
+        },
+        "ecoflow": {
+            "state": state.ecoflow.get("state"),
+            "error": state.ecoflow.get("error"),
+            "last_poll_ts": state.ecoflow.get("last_poll_ts"),
+            "has_credentials": ecoflow_creds.has_credentials(),
+            "devices": state.ecoflow_reg.list_devices(),
         },
     }
 
@@ -3610,6 +3796,7 @@ async def lifespan(app: FastAPI):
     except Exception as exc:
         log.warning("siseli local read not started: %s", exc)
     state.bms_task = asyncio.create_task(bms_loop())
+    state.ecoflow_task = asyncio.create_task(ecoflow_loop())
     state.smart_charge_task = asyncio.create_task(smart_charge_loop())
     state.solar_charge_task = asyncio.create_task(solar_charge_loop())
     # Daily AI-insights auto-run is intentionally NOT started here.
@@ -3641,6 +3828,12 @@ async def lifespan(app: FastAPI):
         state.siseli_task.cancel()
     if getattr(state, "bms_task", None):
         state.bms_task.cancel()
+    if getattr(state, "ecoflow_task", None):
+        state.ecoflow_task.cancel()
+    try:
+        _ecoflow_stop_client()
+    except Exception:
+        pass
     if getattr(state, "smart_charge_task", None):
         state.smart_charge_task.cancel()
     if getattr(state, "solar_charge_task", None):
@@ -5136,7 +5329,7 @@ async def api_devices_battery_packs(device_sn: str | None = None,
     if siseli_client.is_siseli_sn(device_sn):
         packs = _bms_ui_rows(device_sn)
         entry = (state.siseli.get("telemetry_by_sn") or {}).get(device_sn) or {}
-        tele = _apply_bms_overlay(device_sn, entry.get("telemetry") or {"source": "siseli"}) or {}
+        tele = _apply_siseli_overlays(device_sn, entry.get("telemetry") or {"source": "siseli"}) or {}
         bms_ts = bms_devices.latest_live_ts(
             state.bms.list_packs(device_sn), state.bms_live)
         return {
@@ -6029,6 +6222,134 @@ async def api_bms_inverter_flag(sn: str, body: dict):
     return {"ok": True, "siseli_device_sn": sn, **row}
 
 
+@app.get("/api/ecoflow/credentials")
+def api_ecoflow_creds_status():
+    view = ecoflow_creds.public_view() or {}
+    return {
+        "has_credentials": bool(view),
+        "email": view.get("email"),
+        "api_host": view.get("api_host") or ecoflow_creds.DEFAULT_API_HOST,
+        "has_password": bool(view.get("has_password")),
+        "state": state.ecoflow.get("state"),
+        "error": state.ecoflow.get("error"),
+        "last_poll_ts": state.ecoflow.get("last_poll_ts"),
+        "devices": state.ecoflow_reg.list_devices(),
+    }
+
+
+@app.post("/api/ecoflow/credentials")
+async def api_ecoflow_creds_save(body: dict):
+    email = ((body or {}).get("email") or "").strip()
+    password = (body or {}).get("password") or ""
+    api_host = ((body or {}).get("api_host") or ecoflow_creds.DEFAULT_API_HOST).strip()
+    existing = ecoflow_creds.load()
+    if not password and existing:
+        password = existing.get("password") or ""
+    if not email or not password:
+        raise HTTPException(400, "email and password are required")
+    probe = ecoflow_client.EcoflowPrivateClient(
+        email=email, password=password, api_host=api_host,
+    )
+    try:
+        await asyncio.to_thread(probe.login)
+        token = probe.token or ""
+        user_id = probe.user_id or ""
+    except ecoflow_client.EcoflowAuthError as e:
+        raise HTTPException(400, str(e)) from e
+    except Exception as e:
+        raise HTTPException(502, f"Could not reach EcoFlow API: {e}") from e
+    finally:
+        probe.close()
+    if not ecoflow_creds.save(
+        email, password, api_host=api_host,
+        token=token, user_id=user_id,
+    ):
+        raise HTTPException(500, "failed to save credentials")
+    state.ecoflow_wake.set()
+    await broadcast_status("status")
+    return {
+        "ok": True,
+        "email": email,
+        "api_host": api_host,
+        "devices": state.ecoflow_reg.list_devices(),
+    }
+
+
+@app.delete("/api/ecoflow/credentials")
+async def api_ecoflow_creds_clear():
+    ecoflow_creds.clear()
+    await asyncio.to_thread(_ecoflow_stop_client)
+    with state.ecoflow_lock:
+        state.ecoflow = {
+            "state": "idle",
+            "error": None,
+            "devices": state.ecoflow_reg.list_devices(),
+            "telemetry_by_sn": {},
+            "last_poll_ts": None,
+        }
+    state.ecoflow_wake.set()
+    await broadcast_status("status")
+    return {"ok": True}
+
+
+@app.get("/api/ecoflow/devices")
+def api_ecoflow_devices_list(siseli_sn: str | None = None):
+    return {"devices": state.ecoflow_reg.list_devices(siseli_sn)}
+
+
+@app.post("/api/ecoflow/devices")
+async def api_ecoflow_devices_upsert(body: dict):
+    payload = body or {}
+    raw_sn = (payload.get("raw_sn") or payload.get("sn") or "").strip()
+    if not raw_sn:
+        raise HTTPException(400, "sn / raw_sn is required")
+    try:
+        row = state.ecoflow_reg.upsert(
+            raw_sn,
+            device_type=payload.get("device_type") or ecoflow_devices.DEFAULT_TYPE,
+            alias=payload.get("alias") or "",
+            capacity_wh=payload.get("capacity_wh"),
+            siseli_device_sn=payload.get("siseli_device_sn")
+            if "siseli_device_sn" in payload else None,
+            roles=payload.get("roles") if "roles" in payload else None,
+        )
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+    state.ecoflow_wake.set()
+    await broadcast_status("status")
+    return {"ok": True, "device": row}
+
+
+@app.post("/api/ecoflow/devices/{sn:path}/link")
+async def api_ecoflow_devices_link(sn: str, body: dict):
+    payload = body or {}
+    try:
+        row = state.ecoflow_reg.link(
+            sn,
+            siseli_device_sn=payload.get("siseli_device_sn"),
+            roles=payload.get("roles") if "roles" in payload else None,
+        )
+    except KeyError:
+        raise HTTPException(404, "device not found") from None
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+    await broadcast_status("status")
+    return {"ok": True, "device": row}
+
+
+@app.delete("/api/ecoflow/devices/{sn:path}")
+async def api_ecoflow_devices_delete(sn: str):
+    if not state.ecoflow_reg.delete(sn):
+        raise HTTPException(404, "device not found")
+    with state.ecoflow_lock:
+        (state.ecoflow.get("telemetry_by_sn") or {}).pop(
+            ecoflow_devices.make_sn(sn), None
+        )
+    state.ecoflow_wake.set()
+    await broadcast_status("status")
+    return {"ok": True}
+
+
 @app.get("/api/device_prefs")
 def api_device_prefs_list():
     return {"prefs": state.device_prefs.all()}
@@ -6049,8 +6370,16 @@ async def api_device_prefs_update(body: dict):
         kwargs["ignore_inverter_soc"] = bool(payload.get("ignore_inverter_soc"))
     if "calc_grid" in payload:
         kwargs["calc_grid"] = bool(payload.get("calc_grid"))
+    if "solar_flow_unified" in payload:
+        kwargs["solar_flow_unified"] = bool(payload.get("solar_flow_unified"))
+    if "load_sources" in payload:
+        kwargs["load_sources"] = payload.get("load_sources")
     if not kwargs:
-        raise HTTPException(400, "alias, live_controls, ignore_inverter_soc, or calc_grid required")
+        raise HTTPException(
+            400,
+            "alias, live_controls, ignore_inverter_soc, calc_grid, "
+            "solar_flow_unified, or load_sources required",
+        )
     try:
         row = state.device_prefs.update(did, **kwargs)
     except ValueError as e:

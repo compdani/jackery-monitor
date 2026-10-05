@@ -11,6 +11,7 @@ def test_decoded_snapshot_maps_watts_and_soc():
     canonical = decoded_to_canonical({
         "generation_power_w": 800,
         "pv_w": 500,
+        "pv2_power_w": 300,
         "load_w": 267,
         "mains_power_w": 40,
         "mains_current_flow_direction": "Inverter To Mains",
@@ -20,6 +21,8 @@ def test_decoded_snapshot_maps_watts_and_soc():
         "dischg_current": 0.0,
     })
     assert canonical["pvInputPower"] == 800
+    assert canonical["pv1Power"] == 500
+    assert canonical["pv2Power"] == 300
     assert canonical["loadPower"] == 267
     assert canonical["feedInPower"] == 40
     assert canonical["gridPower"] == 0
@@ -35,6 +38,10 @@ def test_decoded_snapshot_maps_watts_and_soc():
     assert tele["ac_input_w"] == 0
     assert tele["battery_percent"] == 88
     assert tele["source"] == "siseli"
+    assert tele["solar_inputs"] == [
+        {"id": "siseli:pv1", "label": "Siseli PV1", "source": "siseli", "watts": 500},
+        {"id": "siseli:pv2", "label": "Siseli PV2", "source": "siseli", "watts": 300},
+    ]
 
 
 def test_probe_outcome_names_the_three_results():

@@ -41,6 +41,10 @@ def server_state(isolated_data, monkeypatch):
     importlib.reload(siseli_creds)
     import bms_devices
     importlib.reload(bms_devices)
+    import ecoflow_creds
+    importlib.reload(ecoflow_creds)
+    import ecoflow_devices
+    importlib.reload(ecoflow_devices)
     import device_prefs
     importlib.reload(device_prefs)
     import server as server_mod

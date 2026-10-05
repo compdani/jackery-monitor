@@ -51,6 +51,7 @@ def app(isolated_data, monkeypatch, tmp_path):
         "kasa_creds", "kasa_devices", "backup_creds", "energy_db",
         "solar_array", "forecast_solar", "load_schedule",
         "siseli_creds", "bms_devices", "device_prefs",
+        "ecoflow_creds", "ecoflow_devices",
     ):
         mod = importlib.import_module(name)
         importlib.reload(mod)
@@ -1178,3 +1179,100 @@ def test_device_prefs_alias_and_pins(client):
     })
     assert grid.status_code == 200
     assert client.get("/api/device_prefs").json()["prefs"]["siseli:42"]["calc_grid"] is True
+    unified = client.post("/api/device_prefs", json={
+        "device_id": "siseli:42",
+        "solar_flow_unified": True,
+    })
+    assert unified.status_code == 200
+    assert client.get("/api/device_prefs").json()["prefs"]["siseli:42"]["solar_flow_unified"] is True
+    loads = client.post("/api/device_prefs", json={
+        "device_id": "siseli:42",
+        "load_sources": ["siseli", "ecoflow:R351"],
+    })
+    assert loads.status_code == 200
+    assert client.get("/api/device_prefs").json()["prefs"]["siseli:42"]["load_sources"] == [
+        "siseli", "ecoflow:R351",
+    ]
+
+
+def test_ecoflow_credentials_status_empty(client):
+    r = client.get("/api/ecoflow/credentials")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["has_credentials"] is False
+    assert body["devices"] == []
+
+
+def test_ecoflow_credentials_save_mocked(app, client, monkeypatch):
+    class FakeClient:
+        def __init__(self, **kwargs):
+            self.token = "tok"
+            self.user_id = "uid-1"
+
+        def login(self):
+            return None
+
+        def close(self):
+            return None
+
+    monkeypatch.setattr(app.ecoflow_client, "EcoflowPrivateClient", FakeClient)
+    r = client.post("/api/ecoflow/credentials", json={
+        "email": "user@example.com",
+        "password": "secret",
+        "api_host": "api.ecoflow.com",
+    })
+    assert r.status_code == 200, r.text
+    st = client.get("/api/ecoflow/credentials")
+    assert st.status_code == 200
+    body = st.json()
+    assert body["has_credentials"] is True
+    assert body["email"] == "user@example.com"
+    assert body["has_password"] is True
+    saved = app.ecoflow_creds.load()
+    assert saved["password"] == "secret"
+    assert saved["token"] == "tok"
+
+
+def test_ecoflow_device_add_and_link(app, client, monkeypatch):
+    class FakeClient:
+        def __init__(self, **kwargs):
+            self.token = "tok"
+            self.user_id = "uid-1"
+
+        def login(self):
+            return None
+
+        def close(self):
+            return None
+
+    monkeypatch.setattr(app.ecoflow_client, "EcoflowPrivateClient", FakeClient)
+    assert client.post("/api/ecoflow/credentials", json={
+        "email": "user@example.com",
+        "password": "secret",
+    }).status_code == 200
+
+    added = client.post("/api/ecoflow/devices", json={
+        "raw_sn": "R351TEST",
+        "device_type": "DELTA_3_MAX_PLUS",
+        "alias": "Garage",
+        "capacity_wh": 2048,
+    })
+    assert added.status_code == 200, added.text
+    assert added.json()["device"]["sn"] == "ecoflow:R351TEST"
+
+    listed = client.get("/api/ecoflow/devices").json()
+    assert len(listed["devices"]) == 1
+
+    linked = client.post("/api/ecoflow/devices/ecoflow:R351TEST/link", json={
+        "siseli_device_sn": "siseli:42",
+        "roles": ["solar", "battery", "output"],
+    })
+    assert linked.status_code == 200, linked.text
+    assert linked.json()["device"]["siseli_device_sn"] == "siseli:42"
+
+    by_siseli = client.get("/api/ecoflow/devices", params={"siseli_sn": "siseli:42"})
+    assert len(by_siseli.json()["devices"]) == 1
+
+    gone = client.delete("/api/ecoflow/devices/ecoflow:R351TEST")
+    assert gone.status_code == 200
+    assert client.get("/api/ecoflow/devices").json()["devices"] == []
