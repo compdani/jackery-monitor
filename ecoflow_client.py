@@ -503,6 +503,44 @@ class EcoflowPrivateClient:
         for sn in sns:
             self.request_quota(sn)
 
+    def set_output(self, raw_sn: str, port: str, on: bool) -> None:
+        """Toggle AC / 12V DC / USB via private MQTT ConfigWrite.
+
+        ``raw_sn`` is the bare EcoFlow serial (no ``ecoflow:`` prefix).
+        Raises EcoflowApiError when MQTT is down or the port is unsupported.
+        """
+        field = ecoflow_delta3.OUTPUT_SET_FIELDS.get(port)
+        if not field:
+            raise EcoflowApiError(f"EcoFlow does not support output port '{port}'")
+        if not self._mqtt or not self.user_id or not self.connected:
+            raise EcoflowApiError("EcoFlow MQTT not connected")
+        sn = (raw_sn or "").strip()
+        if not sn:
+            raise EcoflowApiError("device serial required")
+        with self._lock:
+            if sn not in self._devices:
+                raise EcoflowApiError(f"unknown EcoFlow device {sn}")
+        payload = ecoflow_delta3.build_set_command(field, 1 if on else 0, sn)
+        if not payload:
+            raise EcoflowApiError(
+                "EcoFlow set command unavailable (protobuf stubs missing)"
+            )
+        topic = f"/app/{self.user_id}/{sn}/thing/property/set"
+        try:
+            info = self._mqtt.publish(topic, payload, qos=1)
+            if info.rc != mqtt.MQTT_ERR_SUCCESS:
+                raise EcoflowApiError(f"MQTT publish failed rc={info.rc}")
+        except EcoflowApiError:
+            raise
+        except Exception as e:
+            raise EcoflowApiError(f"MQTT publish failed: {e}") from e
+        # Optimistic local merge so the next snapshot reflects the toggle
+        # before SetReply / flow_info_* arrives.
+        with self._lock:
+            merged = merge_params(self._params.get(sn) or {}, {field: 1 if on else 0})
+            self._params[sn] = merged
+        log.info("EcoFlow set_output %s %s=%s", sn, port, "on" if on else "off")
+
     def _topics_for(self, raw_sn: str) -> list[str]:
         uid = self.user_id or ""
         return [

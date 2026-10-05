@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ActivityIndicator, Animated, Pressable, Text, View } from "react-native";
+import { ActivityIndicator, Alert, Animated, Pressable, Text, View } from "react-native";
 import { endpoints } from "../../../src/api/client";
 import { reconnectLive } from "../../../src/api/ws";
+import type { LinkedEcoflow } from "../../../src/api/types";
 import { LineChart } from "../../../src/components/LineChart";
 import { PowerFlow } from "../../../src/components/PowerFlow";
 import { SiseliLiveControls } from "../../../src/components/SiseliControls";
@@ -83,6 +84,7 @@ function PowerChip({
   inFlight,
   pending,
   onPress,
+  disabled = false,
   accent = colors.accent,
   onBg = "rgba(74,222,128,0.18)",
   minWidth = 72,
@@ -93,6 +95,7 @@ function PowerChip({
   inFlight?: boolean;
   pending?: boolean;
   onPress: () => void;
+  disabled?: boolean;
   accent?: string;
   onBg?: string;
   minWidth?: number;
@@ -102,7 +105,7 @@ function PowerChip({
   return (
     <Pressable
       onPress={onPress}
-      disabled={!!inFlight}
+      disabled={!!inFlight || disabled}
       style={({ pressed }) => ({
         paddingVertical: 12,
         paddingHorizontal: 16,
@@ -112,11 +115,11 @@ function PowerChip({
         borderColor: waiting ? accent : on ? accent : colors.border,
         minWidth,
         alignItems: "center",
-        opacity: pressed ? 0.65 : 1,
-        transform: [{ scale: pressed ? 0.96 : 1 }],
+        opacity: disabled ? 0.45 : pressed ? 0.65 : 1,
+        transform: [{ scale: pressed && !disabled ? 0.96 : 1 }],
       })}
     >
-      <PendingPulse active={waiting} color={accent} />
+      <PendingPulse active={waiting && !disabled} color={accent} />
       <Text style={{ color: colors.textDim, fontSize: 11 }}>{label}</Text>
       {inFlight && !inFlightShowsValue ? (
         <View style={{ flexDirection: "row", alignItems: "center", gap: 6, minHeight: 20 }}>
@@ -218,6 +221,7 @@ export default function LiveScreen() {
   const alerts = useLive((s) => s.alerts);
   const tempUnit = usePrefs((s) => s.tempUnit);
   const [pending, setPending] = useState<Record<string, PendingToggle>>({});
+  const [efPending, setEfPending] = useState<Record<string, PendingToggle>>({});
   const [toggleErr, setToggleErr] = useState<string | null>(null);
   const [kasaBusy, setKasaBusy] = useState<"charge" | "divert" | null>(null);
   const [chargeHost, setChargeHost] = useState<string | null>(null);
@@ -234,6 +238,11 @@ export default function LiveScreen() {
   const selected = status?.cloud?.selected_device_id;
   const energy = status?.energy;
   const packs = (status?.battery_packs || []) as Pack[];
+  const linkedEcoflow = (Array.isArray(t?.linked_ecoflow) ? t!.linked_ecoflow : []) as LinkedEcoflow[];
+  const efBattUnits = linkedEcoflow.filter(
+    (u) => (u.roles || []).includes("battery") && (u.fresh || u.telemetry?.battery_percent != null),
+  );
+  const showPacks = packs.length > 0 || efBattUnits.length > 0;
   const hist = status?.history || [];
   const conn = status?.connection_status || (connected ? "connected" : "disconnected");
   const source = status?.source ? String(status.source).toUpperCase() : null;
@@ -311,6 +320,7 @@ export default function LiveScreen() {
 
   useEffect(() => {
     setPending({});
+    setEfPending({});
     setToggleErr(null);
   }, [sn]);
 
@@ -332,8 +342,32 @@ export default function LiveScreen() {
     });
   }, [t?.ac_on, t?.dc_on, t?.usb_on, t?.car_on]);
 
+  // Clear EcoFlow pending toggles when linked telemetry matches (or times out).
   useEffect(() => {
-    const waits = Object.entries(pending).filter(([, p]) => !p.inFlight && p.until > Date.now());
+    const now = Date.now();
+    setEfPending((prev) => {
+      let changed = false;
+      const next = { ...prev };
+      for (const key of Object.keys(next)) {
+        const p = next[key];
+        if (p.inFlight) continue;
+        const [efSn, port] = key.split(":");
+        const unit = linkedEcoflow.find((u) => String(u.sn) === efSn);
+        const live = portFlag(unit?.telemetry?.[`${port}_on` as keyof typeof unit.telemetry]);
+        if (now > p.until || live === p.expected) {
+          delete next[key];
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
+  }, [linkedEcoflow]);
+
+  useEffect(() => {
+    const waits = [
+      ...Object.entries(pending).filter(([, p]) => !p.inFlight && p.until > Date.now()),
+      ...Object.entries(efPending).filter(([, p]) => !p.inFlight && p.until > Date.now()),
+    ];
     if (!waits.length) return;
     const ms = Math.min(...waits.map(([, p]) => p.until - Date.now())) + 25;
     const id = setTimeout(() => {
@@ -349,9 +383,20 @@ export default function LiveScreen() {
         }
         return changed ? next : prev;
       });
+      setEfPending((prev) => {
+        let changed = false;
+        const next = { ...prev };
+        for (const key of Object.keys(next)) {
+          if (!next[key].inFlight && next[key].until <= now) {
+            delete next[key];
+            changed = true;
+          }
+        }
+        return changed ? next : prev;
+      });
     }, Math.max(ms, 0));
     return () => clearTimeout(id);
-  }, [pending]);
+  }, [pending, efPending]);
 
   async function pickDevice(id: string) {
     useLive.getState().setViewDeviceId(id);
@@ -383,6 +428,45 @@ export default function LiveScreen() {
       });
       setToggleErr(e instanceof Error ? e.message : `Failed to toggle ${port.toUpperCase()}`);
     }
+  }
+
+  async function toggleEcoflow(sn: string, port: "ac" | "dc", on: boolean) {
+    const key = `${sn}:${port}`;
+    const run = async () => {
+      setToggleErr(null);
+      setEfPending((prev) => ({
+        ...prev,
+        [key]: { expected: on, until: Date.now() + PENDING_TOGGLE_MS, inFlight: true },
+      }));
+      try {
+        await endpoints.setOutput(port, on, sn);
+        setEfPending((prev) => ({
+          ...prev,
+          [key]: { expected: on, until: Date.now() + PENDING_TOGGLE_MS, inFlight: false },
+        }));
+      } catch (e: unknown) {
+        setEfPending((prev) => {
+          const next = { ...prev };
+          delete next[key];
+          return next;
+        });
+        setToggleErr(
+          e instanceof Error ? e.message : `Failed to toggle EcoFlow ${port.toUpperCase()}`,
+        );
+      }
+    };
+    if (port === "ac" && !on) {
+      Alert.alert(
+        "Turn EcoFlow AC OFF?",
+        "Anything plugged in will lose power.",
+        [
+          { text: "Cancel", style: "cancel" },
+          { text: "Turn OFF", style: "destructive", onPress: () => void run() },
+        ],
+      );
+      return;
+    }
+    await run();
   }
 
   async function toggleKasa(kind: "charge" | "divert", host: string, current: boolean | null) {
@@ -515,7 +599,15 @@ export default function LiveScreen() {
           <View style={{ flexDirection: "row", gap: 12 }}>
             {(
               [
-                ["Power", fmt(t?.solar_input_w, 0), "W"],
+                // Siseli-only — never the EcoFlow-combined solar_input_w total.
+                [
+                  "Power",
+                  fmt(
+                    t?.siseli_solar_w != null ? t.siseli_solar_w : t?.solar_input_w,
+                    0,
+                  ),
+                  "W",
+                ],
                 ["Voltage", fmt(t?.pv_voltage_v, 1), "V"],
                 ["Current", fmt(t?.pv_current_a, 2), "A"],
               ] as const
@@ -604,35 +696,42 @@ export default function LiveScreen() {
         </Card>
       ) : null}
 
-      {packs.length > 0 ? (
+      {showPacks ? (
         <Card>
           <Eyebrow>Battery packs</Eyebrow>
           <Hint>
-            {packs.length} pack{packs.length === 1 ? "" : "s"}
+            {packs.length > 0
+              ? `${packs.length} pack${packs.length === 1 ? "" : "s"}`
+              : `${efBattUnits.length} EcoFlow`}
+            {efBattUnits.length && packs.length
+              ? ` · ${efBattUnits.length} EcoFlow`
+              : ""}
             {soc != null ? ` · system ${Math.round(soc)}%` : ""}
           </Hint>
-          {isSiseli ? (
-            t?.inverter_soc_pct != null || t?.main_soc_pct != null ? (
+          {packs.length > 0 ? (
+            isSiseli ? (
+              t?.inverter_soc_pct != null || t?.main_soc_pct != null ? (
+                <PackRow
+                  idx="★"
+                  isMain
+                  soc={t?.inverter_soc_pct ?? t?.main_soc_pct ?? null}
+                  meta="Inverter (portal)"
+                />
+              ) : null
+            ) : (
               <PackRow
                 idx="★"
                 isMain
-                soc={t?.inverter_soc_pct ?? t?.main_soc_pct ?? null}
-                meta="Inverter (portal)"
+                soc={t?.main_soc_pct ?? t?.battery_percent ?? null}
+                meta={[
+                  t?.battery_temp_c != null ? fmtTemp(t.battery_temp_c, tempUnit) : null,
+                  "Main",
+                ]
+                  .filter(Boolean)
+                  .join(" · ")}
               />
-            ) : null
-          ) : (
-            <PackRow
-              idx="★"
-              isMain
-              soc={t?.main_soc_pct ?? t?.battery_percent ?? null}
-              meta={[
-                t?.battery_temp_c != null ? fmtTemp(t.battery_temp_c, tempUnit) : null,
-                "Main",
-              ]
-                .filter(Boolean)
-                .join(" · ")}
-            />
-          )}
+            )
+          ) : null}
           {packs.map((p, i) => {
             const order = typeof p.deviceOrder === "number" ? p.deviceOrder : i;
             const sn = String(p.deviceSn || "");
@@ -652,31 +751,66 @@ export default function LiveScreen() {
               />
             );
           })}
+          {efBattUnits.map((u, i) => {
+            const et = u.telemetry || {};
+            const solarW = Math.round(Number(et.solar_input_w) || 0);
+            const outW = Math.round(Number(et.output_power_w) || 0);
+            const flow = !u.fresh
+              ? "stale"
+              : solarW > 0
+                ? `+${solarW}W`
+                : outW > 0
+                  ? `−${outW}W`
+                  : "idle";
+            return (
+              <PackRow
+                key={String(u.sn || `ef-${i}`)}
+                idx={String(packs.length + i + 1)}
+                soc={et.battery_percent != null ? Math.round(Number(et.battery_percent)) : null}
+                meta={[
+                  flow,
+                  et.battery_temp_c != null ? fmtTemp(et.battery_temp_c, tempUnit) : null,
+                  u.alias || "EcoFlow",
+                ]
+                  .filter(Boolean)
+                  .join(" · ")}
+              />
+            );
+          })}
         </Card>
       ) : null}
 
-      {isSiseli && Array.isArray(t?.linked_ecoflow) && t!.linked_ecoflow!.length > 0 ? (
+      {isSiseli && linkedEcoflow.length > 0 ? (
         <Card>
           <Eyebrow>EcoFlow</Eyebrow>
           <Hint>
-            {t!.linked_ecoflow!.length} linked unit
-            {t!.linked_ecoflow!.length === 1 ? "" : "s"}
+            {linkedEcoflow.length} linked unit
+            {linkedEcoflow.length === 1 ? "" : "s"}
           </Hint>
-          {t!.linked_ecoflow!.map((u) => {
+          {linkedEcoflow.map((u) => {
             const et = u.telemetry || {};
             const detail = (u.detail || {}) as Record<string, unknown>;
+            const efSn = String(u.sn || "");
+            const socNum =
+              et.battery_percent != null ? Math.round(Number(et.battery_percent)) : null;
             return (
-              <View key={String(u.sn)} style={{ marginTop: 10, gap: 4 }}>
+              <View key={efSn || u.alias || "ecoflow"} style={{ marginTop: 12, gap: 8 }}>
                 <Text style={{ color: colors.text, fontWeight: "600" }}>
                   {u.alias || u.sn || "EcoFlow"}
                   {!u.fresh ? " · stale" : ""}
                 </Text>
-                <Hint>
-                  SOC {et.battery_percent != null ? `${Math.round(Number(et.battery_percent))}%` : "—"}
-                  {" · "}solar {Math.round(Number(et.solar_input_w) || 0)} W
-                  {" · "}out {Math.round(Number(et.output_power_w) || 0)} W
-                  {" · "}in {Math.round(Number(et.input_power_w) || 0)} W
-                </Hint>
+                <PackRow
+                  idx="·"
+                  soc={socNum}
+                  meta={[
+                    et.battery_temp_c != null ? fmtTemp(et.battery_temp_c, tempUnit) : null,
+                    `solar ${Math.round(Number(et.solar_input_w) || 0)} W`,
+                    `out ${Math.round(Number(et.output_power_w) || 0)} W`,
+                    `in ${Math.round(Number(et.input_power_w) || 0)} W`,
+                  ]
+                    .filter(Boolean)
+                    .join(" · ")}
+                />
                 {detail.pow_get_pv != null || detail.pow_get_pv2 != null ? (
                   <Hint>
                     PV1 {detail.pow_get_pv != null ? `${Math.round(Number(detail.pow_get_pv))} W` : "—"}
@@ -684,9 +818,37 @@ export default function LiveScreen() {
                     PV2 {detail.pow_get_pv2 != null ? `${Math.round(Number(detail.pow_get_pv2))} W` : "—"}
                   </Hint>
                 ) : null}
+                <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
+                  {(["ac", "dc"] as const).map((port) => {
+                    const key = `${efSn}:${port}`;
+                    const liveOn = portOn(port === "ac" ? et.ac_on : et.dc_on);
+                    const pend = efPending[key];
+                    const inFlight = !!pend?.inFlight;
+                    const waiting = !!pend && !pend.inFlight && Date.now() <= pend.until;
+                    const on = pend && Date.now() <= pend.until ? pend.expected : liveOn;
+                    const disabled = !u.fresh || !efSn;
+                    return (
+                      <PowerChip
+                        key={port}
+                        label={port.toUpperCase()}
+                        on={on}
+                        inFlight={inFlight}
+                        pending={waiting}
+                        disabled={disabled}
+                        onPress={() => {
+                          if (disabled) return;
+                          void toggleEcoflow(efSn, port, !on);
+                        }}
+                      />
+                    );
+                  })}
+                </View>
               </View>
             );
           })}
+          {toggleErr ? (
+            <Text style={{ color: colors.danger, fontSize: 12 }}>{toggleErr}</Text>
+          ) : null}
         </Card>
       ) : null}
 

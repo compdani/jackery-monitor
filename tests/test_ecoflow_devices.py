@@ -100,6 +100,7 @@ def test_overlay_sums_solar_and_output(reg):
     out = reg.overlay_telemetry(base, linked=linked, live_by_sn=live, now=now)
     assert base["solar_input_w"] == 1000  # original not mutated
     assert out["solar_input_w"] == 1700
+    assert out["siseli_solar_w"] == 1000
     assert out["additional_solar_w"] == 700
     assert out["output_power_w"] == 350
     assert out["additional_output_w"] == 150

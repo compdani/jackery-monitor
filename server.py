@@ -7062,12 +7062,39 @@ async def api_set_output(body: dict):
     command to whatever device it happens to be polling, which silently
     targets the wrong Jackery for any browser whose view doesn't match
     the bridge-active device. Defaults to the bridge-active SN when
-    omitted (back-compat for older clients)."""
+    omitted (back-compat for older clients).
+
+    EcoFlow SNs (``ecoflow:…``) are routed to the private MQTT client
+    instead of the Jackery bridge.
+    """
     port = (body or {}).get("port")
     on = bool((body or {}).get("on"))
     device_sn = (body or {}).get("device_sn") or None
     if port not in ("ac", "dc", "usb", "car"):
         raise HTTPException(400, "port must be one of: ac, dc, usb, car")
+
+    if device_sn and ecoflow_devices.is_ecoflow_sn(device_sn):
+        client = state.ecoflow_client
+        if client is None:
+            raise HTTPException(503, "EcoFlow MQTT client not running")
+        raw = ecoflow_devices.raw_sn_from_sn(device_sn)
+        try:
+            await asyncio.to_thread(client.set_output, raw, port, on)
+        except ecoflow_client.EcoflowApiError as e:
+            raise HTTPException(400, str(e)) from e
+        # Push optimistic telemetry so the linked EcoFlow card flips
+        # before the next MQTT property update arrives.
+        with state.ecoflow_lock:
+            bucket = state.ecoflow.setdefault("telemetry_by_sn", {})
+            row = dict(bucket.get(device_sn) or {})
+            tele = dict(row.get("telemetry") or {})
+            tele[{"ac": "ac_on", "dc": "dc_on", "usb": "usb_on"}.get(port, port)] = on
+            row["telemetry"] = tele
+            row["ts"] = time.time()
+            bucket[device_sn] = row
+        await broadcast_status("status")
+        return {"ok": True, "port": port, "on": on, "device_sn": device_sn}
+
     setter = getattr(state.client, "set_output", None)
     if not setter:
         raise HTTPException(501, "Backend does not support output toggles")

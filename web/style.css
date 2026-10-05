@@ -1091,13 +1091,17 @@ main {
   font-size: 15px;
   font-variant-numeric: tabular-nums;
 }
-
-  display: flex; justify-content: space-between; align-items: center;
-  font-size: 11px;
-  color: var(--text-dim);
-  text-transform: uppercase;
-  letter-spacing: .06em;
+.linked-ecoflow-batt {
+  display: grid;
+  grid-template-columns: 1fr 56px 56px;
+  align-items: center;
+  gap: 10px;
   margin-bottom: 10px;
+  font-family: var(--font-mono);
+  font-size: 13px;
+}
+.linked-ecoflow-switches {
+  margin-top: 10px;
 }
 .card-header {
   display: flex; justify-content: space-between; align-items: center;

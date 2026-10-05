@@ -2075,7 +2075,13 @@ function renderSiseliPanels(t) {
     const el = $(id);
     if (el) el.textContent = fmt(value, digits);
   };
-  set('siseli-pv-w', tele.solar_input_w, 0);
+  // Solar panels card is Siseli-only — never the EcoFlow-combined total.
+  // Overlay stores the pre-merge inverter watts as siseli_solar_w when
+  // linked EcoFlow solar is added into solar_input_w for power-flow.
+  const siseliW = tele.siseli_solar_w != null
+    ? tele.siseli_solar_w
+    : tele.solar_input_w;
+  set('siseli-pv-w', siseliW, 0);
   set('siseli-pv-v', tele.pv_voltage_v, 1);
   set('siseli-pv-a', tele.pv_current_a, 2);
 }
@@ -6203,9 +6209,12 @@ function renderLinkedEcoflow(s) {
   body.innerHTML = linked.map((u) => {
     const t = u.telemetry || {};
     const d = u.detail || {};
+    const sn = String(u.sn || '');
     const name = escapeHtml(u.alias || u.sn || 'EcoFlow');
     const roles = (u.roles || []).join(', ');
-    const soc = t.battery_percent != null ? `${Math.round(t.battery_percent)}%` : '—';
+    const socNum = t.battery_percent != null ? Math.round(t.battery_percent) : null;
+    const soc = socNum != null ? `${socNum}%` : '—';
+    const barPct = socNum != null ? Math.max(0, Math.min(100, socNum)) : 0;
     const solar = Math.round(Number(t.solar_input_w) || 0);
     const outW = Math.round(Number(t.output_power_w) || 0);
     const inW = Math.round(Number(t.input_power_w) || 0);
@@ -6213,13 +6222,21 @@ function renderLinkedEcoflow(s) {
     const pv1 = d.pow_get_pv != null ? Math.round(d.pow_get_pv) : null;
     const pv2 = d.pow_get_pv2 != null ? Math.round(d.pow_get_pv2) : null;
     const status = ({ 0: 'idle', 1: 'discharging', 2: 'charging' })[t.battery_status] || '—';
-    return `<div class="linked-ecoflow-unit">
+    const temp = t.battery_temp_c != null ? formatTemp(t.battery_temp_c) : '—';
+    const acOn = !!t.ac_on;
+    const dcOn = !!t.dc_on;
+    const snAttr = escapeHtml(sn);
+    return `<div class="linked-ecoflow-unit" data-ecoflow-sn="${snAttr}">
       <div class="card-header" style="margin-bottom:8px">
         <strong>${name}</strong>
         <span class="hint">${escapeHtml(roles || 'linked')}${u.fresh ? '' : ' · stale'}</span>
       </div>
+      <div class="linked-ecoflow-batt">
+        <span class="pack-bar"><span class="pack-bar-fill" style="width:${barPct}%"></span></span>
+        <span class="pack-soc">${socNum != null ? socNum : '—'}<small>%</small></span>
+        <span class="pack-temp">${temp}</span>
+      </div>
       <div class="linked-ecoflow-grid">
-        <div class="linked-ecoflow-stat"><span class="stat-label">Battery</span><span class="stat-value">${soc}</span></div>
         <div class="linked-ecoflow-stat"><span class="stat-label">Status</span><span class="stat-value">${status}</span></div>
         <div class="linked-ecoflow-stat"><span class="stat-label">Solar</span><span class="stat-value">${solar} W</span></div>
         <div class="linked-ecoflow-stat"><span class="stat-label">Output</span><span class="stat-value">${outW} W</span></div>
@@ -6227,12 +6244,61 @@ function renderLinkedEcoflow(s) {
         <div class="linked-ecoflow-stat"><span class="stat-label">AC in</span><span class="stat-value">${acIn} W</span></div>
         ${pv1 != null ? `<div class="linked-ecoflow-stat"><span class="stat-label">PV1</span><span class="stat-value">${pv1} W</span></div>` : ''}
         ${pv2 != null ? `<div class="linked-ecoflow-stat"><span class="stat-label">PV2</span><span class="stat-value">${pv2} W</span></div>` : ''}
-        <div class="linked-ecoflow-stat"><span class="stat-label">AC</span><span class="stat-value">${t.ac_on ? 'on' : 'off'}</span></div>
-        <div class="linked-ecoflow-stat"><span class="stat-label">DC</span><span class="stat-value">${t.dc_on ? 'on' : 'off'}</span></div>
+      </div>
+      <div class="switches linked-ecoflow-switches">
+        <button class="switch${acOn ? ' on' : ''}" type="button" data-ecoflow-port="ac" data-ecoflow-sn="${snAttr}" ${u.fresh ? '' : 'disabled'}>
+          <span class="sw-label">AC</span><span class="sw-state">${acOn ? 'ON' : 'OFF'}</span>
+        </button>
+        <button class="switch${dcOn ? ' on' : ''}" type="button" data-ecoflow-port="dc" data-ecoflow-sn="${snAttr}" ${u.fresh ? '' : 'disabled'}>
+          <span class="sw-label">DC</span><span class="sw-state">${dcOn ? 'ON' : 'OFF'}</span>
+        </button>
       </div>
     </div>`;
   }).join('');
 }
+
+async function toggleLinkedEcoflowOutput(btn) {
+  const port = btn.dataset.ecoflowPort;
+  const sn = btn.dataset.ecoflowSn;
+  if (!port || !sn) return;
+  const lbl = btn.querySelector('.sw-state');
+  const currentState = (lbl?.textContent || '').trim();
+  if (currentState !== 'ON' && currentState !== 'OFF') return;
+  const turnOn = currentState === 'OFF';
+  if (port === 'ac' && !turnOn) {
+    if (!confirm('Turn EcoFlow AC output OFF? Anything plugged in will lose power.')) return;
+  }
+  btn.disabled = true;
+  btn.classList.add('pending');
+  const original = lbl.textContent;
+  lbl.textContent = '…';
+  try {
+    const r = await fetch('/api/set_output', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ port, on: turnOn, device_sn: sn }),
+    });
+    if (!r.ok) {
+      const j = await r.json().catch(() => ({}));
+      throw new Error(j.detail || j.error || ('HTTP ' + r.status));
+    }
+    lbl.textContent = turnOn ? 'ON' : 'OFF';
+    btn.classList.toggle('on', turnOn);
+  } catch (e) {
+    lbl.textContent = original;
+    alert(`Failed to toggle EcoFlow ${port.toUpperCase()}: ${e.message || e}`);
+  } finally {
+    btn.disabled = false;
+    btn.classList.remove('pending');
+  }
+}
+
+$('linked-ecoflow-body')?.addEventListener('click', (e) => {
+  const btn = e.target.closest('button[data-ecoflow-port]');
+  if (!btn || !$('linked-ecoflow-body').contains(btn)) return;
+  e.preventDefault();
+  toggleLinkedEcoflowOutput(btn);
+});
 
 const ECOFLOW_COLLAPSE_KEY = 'jackery-linked-ecoflow-collapsed';
 
@@ -8892,19 +8958,22 @@ function renderBatteryPacks() {
   const packs = window._cachedPacks || [];
   const err = window._cachedPacksError;
   const isNoPackDevice = window._cachedNoPacks === true;
+  const linkedEfEarly = (window._lastStatus?.linked_ecoflow) || [];
+  const hasEfBatt = linkedEfEarly.some((u) => (u.roles || []).includes('battery')
+    && (u.fresh || u.telemetry?.battery_percent != null));
 
   // Device with no expansion packs (e.g. HomePower 3000): hide the
   // card cleanly and clear any system-SOC overlay so the SOC card
-  // shows the main reading directly. Temp segment visibility is
-  // managed centrally in applyStatus().
-  if (isNoPackDevice && !packs.length && !err) {
+  // shows the main reading directly — unless linked EcoFlow batteries
+  // still need a pack row with a bar.
+  if (isNoPackDevice && !packs.length && !err && !hasEfBatt) {
     window._systemSoc = null;
     window._mainSoc = null;
     card.hidden = true;
     return;
   }
 
-  if (!packs.length) {
+  if (!packs.length && !hasEfBatt) {
     if (err) {
       summary.textContent = `error: ${err}`;
       list.innerHTML = '';
@@ -9004,6 +9073,54 @@ function renderBatteryPacks() {
       needUpgrade: !!p.needUpgrade,
     }));
   });
+
+  // Linked EcoFlow units with the battery role — show as pack rows with
+  // the same SOC bar + temp so they aren't only folded into system %.
+  const linkedEf = (window._lastStatus?.linked_ecoflow) || [];
+  let efIdx = packs.length;
+  linkedEf.forEach((u) => {
+    const roles = u.roles || [];
+    if (!roles.includes('battery')) return;
+    const et = u.telemetry || {};
+    const soc = et.battery_percent;
+    if (soc == null && !u.fresh) return;
+    efIdx += 1;
+    const solarW = Math.round(Number(et.solar_input_w) || 0);
+    const outW = Math.round(Number(et.output_power_w) || 0);
+    const flow = !u.fresh
+      ? 'stale'
+      : (solarW > 0 ? `+${solarW}W` : (outW > 0 ? `−${outW}W` : 'idle'));
+    rows.push(packRow({
+      idx: efIdx,
+      soc: soc != null ? Math.round(soc) : null,
+      flow,
+      flowClass: !u.fresh ? 'flow-idle' : (solarW > 0 ? 'flow-in' : (outW > 0 ? 'flow-out' : 'flow-idle')),
+      temp: formatPackTempHtml(et.battery_temp_c, u.alias || 'ecoflow'),
+      label: u.alias || 'EcoFlow',
+      snTitle: [u.sn, u.fresh ? '' : 'stale'].filter(Boolean).join(' · '),
+      isMain: false,
+    }));
+  });
+
+  if (!rows.length) {
+    card.hidden = true;
+    return;
+  }
+
+  const efBattN = linkedEf.filter((u) => (u.roles || []).includes('battery')
+    && (u.fresh || u.telemetry?.battery_percent != null)).length;
+  if (efBattN && !packs.length && !err) {
+    // EcoFlow-only battery rows (no BMS packs) — still show the card.
+    const withSoc = linkedEf.filter((u) => (u.roles || []).includes('battery')
+      && u.telemetry?.battery_percent != null);
+    const avg = withSoc.length
+      ? withSoc.reduce((s, u) => s + Number(u.telemetry.battery_percent), 0) / withSoc.length
+      : 0;
+    summary.textContent = `${efBattN} EcoFlow · avg ${Math.round(avg)}%${sysTxt}`;
+  } else if (efBattN && packs.length) {
+    summary.textContent = `${summary.textContent} · ${efBattN} EcoFlow`;
+  }
+
   list.innerHTML = rows.join('');
   card.hidden = false;
 }

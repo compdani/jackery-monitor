@@ -366,3 +366,32 @@ def test_request_quota_skips_publish_when_stubs_missing(monkeypatch):
         mock_mqtt.publish.assert_not_called()
     finally:
         client.close()
+
+
+def test_build_set_command_ac_dc():
+    import ecoflow_delta3 as d3
+
+    ac = d3.build_set_command("cfg_ac_out_open", 1, "D3M1TEST")
+    dc = d3.build_set_command("cfg_dc12v_out_open", 0, "D3M1TEST")
+    assert isinstance(ac, (bytes, bytearray)) and len(ac) > 10
+    assert isinstance(dc, (bytes, bytearray)) and len(dc) > 10
+    assert d3.build_set_command("not_a_field", 1, "D3M1TEST") == b""
+
+
+def test_set_output_publishes_config_write():
+    client = EcoflowPrivateClient(email="a@b.c", password="x")
+    try:
+        client.user_id = "2104"
+        client.connected = True
+        client._devices = {"D3M1TEST": {"raw_sn": "D3M1TEST", "alias": "G"}}
+        mock_mqtt = MagicMock()
+        mock_mqtt.publish.return_value = MagicMock(rc=mqtt.MQTT_ERR_SUCCESS)
+        client._mqtt = mock_mqtt
+        client.set_output("D3M1TEST", "ac", True)
+        mock_mqtt.publish.assert_called_once()
+        topic, payload = mock_mqtt.publish.call_args[0][:2]
+        assert topic == "/app/2104/D3M1TEST/thing/property/set"
+        assert isinstance(payload, (bytes, bytearray)) and len(payload) > 10
+        assert client._params["D3M1TEST"]["cfg_ac_out_open"] == 1
+    finally:
+        client.close()

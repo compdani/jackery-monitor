@@ -211,6 +211,49 @@ def build_quota_request(device_sn: str) -> bytes:
     return packet.SerializeToString()
 
 
+# Output port → Delta3SetCommand field (HA / ioBroker parity).
+OUTPUT_SET_FIELDS = {
+    "ac": "cfg_ac_out_open",
+    "dc": "cfg_dc12v_out_open",
+    "usb": "cfg_usb_open",
+}
+
+
+def build_set_command(field_name: str, value: int, device_sn: str) -> bytes:
+    """Protobuf ConfigWrite (cmdFunc=254, cmdId=17) for one SetCommand field.
+
+    Returns b'' when stubs are missing or the field is unknown.
+    """
+    try:
+        pb2 = _pb2()
+    except ImportError:
+        return b""
+    payload = pb2.Delta3SetCommand()
+    if not hasattr(payload, field_name):
+        log.error("unknown Delta3 set field: %s", field_name)
+        return b""
+    setattr(payload, field_name, int(value))
+    pdata = payload.SerializeToString()
+
+    packet = pb2.Delta3SendHeaderMsg()
+    message = packet.msg.add()
+    message.src = 32
+    message.dest = 2
+    message.d_src = 1
+    message.d_dest = 1
+    message.cmd_func = 254
+    message.cmd_id = 17
+    message.need_ack = 1
+    message.seq = int(time_seq())
+    message.product_id = 1
+    message.version = 19
+    message.payload_ver = 1
+    message.device_sn = device_sn
+    message.data_len = len(pdata)
+    message.pdata = pdata
+    return packet.SerializeToString()
+
+
 def time_seq() -> int:
     import time
     return int(time.time() * 1000) % 2147483647

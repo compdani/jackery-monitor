@@ -10,6 +10,9 @@ export type Telemetry = {
   ac_input_w?: number | null;
   car_input_w?: number | null;
   solar_input_w?: number | null;
+  /** Siseli-only PV watts when EcoFlow solar is overlaid into solar_input_w. */
+  siseli_solar_w?: number | null;
+  additional_solar_w?: number | null;
   solar_inputs?: SolarInput[] | null;
   load_inputs?: LoadInput[] | null;
   linked_ecoflow?: LinkedEcoflow[] | null;
