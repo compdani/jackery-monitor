@@ -15,6 +15,7 @@ import ssl
 import threading
 import time
 import uuid
+import urllib.parse
 from typing import Any, Callable
 
 import httpx
@@ -28,6 +29,7 @@ log = logging.getLogger("ecoflow_client")
 DEFAULT_API_HOST = "api.ecoflow.com"
 HTTP_TIMEOUT = 30.0
 MQTT_CONNECT_WAIT_S = 10.0
+MQTT_KEEPALIVE_S = 15
 # MQTT CONNACK 4 = bad user/pass, 5 = not authorized
 MQTT_AUTH_FAILURE_RCS = frozenset({4, 5})
 
@@ -326,18 +328,29 @@ class EcoflowPrivateClient:
         )
 
     def _call_api(self, endpoint: str, params: dict | None = None) -> dict:
+        """Private-API GET matching hassio-ecoflow-cloud private_api.__call_api.
+
+        userId is sent as a form body on the GET (HA uses aiohttp ``data=``),
+        not only as a query parameter.
+        """
         headers = {
             "lang": "en_US",
             "authorization": f"Bearer {self.token}",
+            # HA keeps this header even while posting form userId; mirror it.
             "content-type": "application/json",
         }
         q = dict(params or {})
-        if self.user_id and "userId" not in q:
-            q["userId"] = self.user_id
-        resp = self._http.get(
+        body: bytes | None = None
+        if self.user_id:
+            # Form body like HA's data={"userId": ...} on GET.
+            body = urllib.parse.urlencode({"userId": self.user_id}).encode("utf-8")
+            headers["content-type"] = "application/x-www-form-urlencoded"
+        resp = self._http.request(
+            "GET",
             f"https://{self.api_host}{endpoint}",
             headers=headers,
             params=q,
+            content=body,
         )
         return self._json(resp, auth_endpoint=False)
 
@@ -378,8 +391,8 @@ class EcoflowPrivateClient:
         self.mqtt_error = None
         self._connect_event.clear()
         client = mqtt.Client(
+            callback_api_version=mqtt.CallbackAPIVersion.VERSION2,
             client_id=self.mqtt_client_id,
-            clean_session=True,
             protocol=mqtt.MQTTv311,
         )
         client.username_pw_set(self.mqtt_user, self.mqtt_password)
@@ -392,7 +405,7 @@ class EcoflowPrivateClient:
             "EcoFlow MQTT connecting %s:%s as client_id=%s user=%s",
             self.mqtt_url, self.mqtt_port, self.mqtt_client_id, self.mqtt_user,
         )
-        client.connect(self.mqtt_url, self.mqtt_port, keepalive=30)
+        client.connect(self.mqtt_url, self.mqtt_port, keepalive=MQTT_KEEPALIVE_S)
         client.loop_start()
         self._mqtt = client
         if not self._connect_event.wait(timeout=max(1.0, float(wait_s))):
@@ -436,11 +449,14 @@ class EcoflowPrivateClient:
             f"/app/{uid}/{raw_sn}/thing/property/get_reply",
         ]
 
-    def _on_connect(self, client, userdata, flags, rc, properties=None):
+    def _mqtt_rc_code(self, rc: Any) -> int:
         try:
-            code = int(rc)
+            return int(rc)
         except (TypeError, ValueError):
-            code = -1
+            return -1
+
+    def _on_connect(self, client, userdata, flags, reason_code, properties=None):
+        code = self._mqtt_rc_code(reason_code)
         if code != 0:
             self.connected = False
             self.auth_failed = code in MQTT_AUTH_FAILURE_RCS
@@ -470,12 +486,9 @@ class EcoflowPrivateClient:
                 self.request_quota(sn)
         self._connect_event.set()
 
-    def _on_disconnect(self, client, userdata, rc, properties=None):
+    def _on_disconnect(self, client, userdata, disconnect_flags, reason_code, properties=None):
         self.connected = False
-        try:
-            code = int(rc)
-        except (TypeError, ValueError):
-            code = -1
+        code = self._mqtt_rc_code(reason_code)
         if code != 0:
             log.warning("EcoFlow MQTT disconnected rc=%s", code)
             if code in MQTT_AUTH_FAILURE_RCS:

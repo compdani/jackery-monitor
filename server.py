@@ -290,6 +290,7 @@ class AppState:
             "telemetry_by_sn": {},
             "last_poll_ts": None,
             "next_retry_ts": 0.0,
+            "client_id_rotated": False,
         }
         self.ecoflow_task: asyncio.Task | None = None
         self.ecoflow_wake: asyncio.Event = asyncio.Event()
@@ -1411,6 +1412,7 @@ def _ecoflow_start_client() -> None:
             )
             state.ecoflow["devices"] = devices
             state.ecoflow["next_retry_ts"] = 0.0
+            state.ecoflow["client_id_rotated"] = False
         return
     _ecoflow_stop_client()
     client = ecoflow_client.EcoflowPrivateClient(
@@ -1436,15 +1438,30 @@ def _ecoflow_start_client() -> None:
                 state.ecoflow["state"] = "connected"
                 state.ecoflow["error"] = None
                 state.ecoflow["next_retry_ts"] = 0.0
+                state.ecoflow["client_id_rotated"] = False
             else:
                 err = client.mqtt_error or "MQTT connect failed"
                 state.ecoflow["state"] = "error"
                 state.ecoflow["error"] = err
-                # Auth failures need a long backoff so we do not burn
-                # EcoFlow's daily unique client-id budget.
-                backoff = 300.0 if client.auth_failed else 30.0
-                state.ecoflow["next_retry_ts"] = time.time() + backoff
-                log.error("ecoflow MQTT not up: %s (retry in %.0fs)", err, backoff)
+                if client.auth_failed and not state.ecoflow.get("client_id_rotated"):
+                    # One fresh ANDROID_* id (HA regenerates per login); then
+                    # a short retry. Further auth failures use the long backoff.
+                    fresh = ecoflow_client.resolve_client_id(client.user_id or "")
+                    ecoflow_creds.update_session(
+                        client.token or "",
+                        client.user_id or "",
+                        mqtt_client_id=fresh,
+                    )
+                    state.ecoflow["client_id_rotated"] = True
+                    state.ecoflow["next_retry_ts"] = time.time() + 5.0
+                    log.error(
+                        "ecoflow MQTT auth failed (%s); rotated client_id, retry in 5s",
+                        err,
+                    )
+                else:
+                    backoff = 300.0 if client.auth_failed else 30.0
+                    state.ecoflow["next_retry_ts"] = time.time() + backoff
+                    log.error("ecoflow MQTT not up: %s (retry in %.0fs)", err, backoff)
     except ecoflow_client.EcoflowAuthError as e:
         client.close()
         with state.ecoflow_lock:
@@ -6327,6 +6344,7 @@ async def api_ecoflow_creds_clear():
             "telemetry_by_sn": {},
             "last_poll_ts": None,
             "next_retry_ts": 0.0,
+            "client_id_rotated": False,
         }
     state.ecoflow_wake.set()
     await broadcast_status("status")

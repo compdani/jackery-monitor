@@ -3,9 +3,14 @@ from __future__ import annotations
 
 import json
 import re
+from unittest.mock import MagicMock
+
+import httpx
+import paho.mqtt.client as mqtt
 
 from ecoflow_client import (
     EcoflowPrivateClient,
+    MQTT_KEEPALIVE_S,
     params_to_telemetry,
     resolve_client_id,
     solar_inputs_from_params,
@@ -125,12 +130,94 @@ def test_parse_json_params_envelope():
 
 def test_on_connect_auth_failure_sets_flags():
     client = EcoflowPrivateClient(email="a@b.c", password="x")
+    try:
+        client.mqtt_client_id = "ANDROID_ABCDEF0123456789ABCDEF0123456789_1"
+        # VERSION2 signature: (client, userdata, flags, reason_code, properties=None)
+        client._on_connect(None, None, None, 5, None)
+        assert client.connected is False
+        assert client.auth_failed is True
+        assert "not authorized" in (client.mqtt_error or "").lower()
+        assert "rc=5" in (client.mqtt_error or "")
+    finally:
+        client.close()
+
+
+def test_call_api_sends_userid_as_form_body(monkeypatch):
+    """hassio-ecoflow-cloud sends userId as form body on certification GET."""
+    client = EcoflowPrivateClient(email="a@b.c", password="x")
+    client.token = "tok"
+    client.user_id = "2104939217409142785"
+    captured: dict = {}
+
+    def fake_request(method, url, headers=None, params=None, content=None, **kwargs):
+        captured.update({
+            "method": method,
+            "url": url,
+            "headers": dict(headers or {}),
+            "params": params,
+            "content": content,
+        })
+        return httpx.Response(
+            200,
+            json={"message": "Success", "code": "0", "data": {"ok": True}},
+            request=httpx.Request(method, url),
+        )
+
+    monkeypatch.setattr(client._http, "request", fake_request)
+    try:
+        body = client._call_api("/iot-auth/app/certification")
+        assert body["data"]["ok"] is True
+        assert captured["method"] == "GET"
+        assert captured["url"].endswith("/iot-auth/app/certification")
+        assert "userId" not in (captured["params"] or {})
+        assert captured["headers"].get("content-type") == (
+            "application/x-www-form-urlencoded"
+        )
+        assert captured["content"] == b"userId=2104939217409142785"
+    finally:
+        client.close()
+
+
+def test_start_mqtt_uses_callback_api_v2_and_keepalive_15(monkeypatch):
+    import ecoflow_client as ec
+
+    client = EcoflowPrivateClient(email="a@b.c", password="x")
+    client.mqtt_url = "mqtt-e.ecoflow.com"
+    client.mqtt_port = 8883
+    client.mqtt_user = "cert-user"
+    client.mqtt_password = "cert-pass"
     client.mqtt_client_id = "ANDROID_ABCDEF0123456789ABCDEF0123456789_1"
-    client._on_connect(None, None, None, 5)
-    assert client.connected is False
-    assert client.auth_failed is True
-    assert "not authorized" in (client.mqtt_error or "").lower()
-    assert "rc=5" in (client.mqtt_error or "")
+    client.user_id = "1"
+
+    constructed: dict = {}
+    mock_mqtt = MagicMock()
+
+    def fake_client(**kwargs):
+        constructed.update(kwargs)
+        return mock_mqtt
+
+    monkeypatch.setattr(ec.mqtt, "Client", fake_client)
+
+    def fake_wait(timeout=None):
+        client.connected = True
+        return True
+
+    monkeypatch.setattr(client._connect_event, "wait", fake_wait)
+    try:
+        assert MQTT_KEEPALIVE_S == 15
+        ok = client.start_mqtt(wait_s=1.0)
+        assert ok is True
+        assert constructed.get("callback_api_version") == (
+            mqtt.CallbackAPIVersion.VERSION2
+        )
+        assert constructed.get("client_id") == client.mqtt_client_id
+        assert constructed.get("protocol") == mqtt.MQTTv311
+        mock_mqtt.connect.assert_called_once_with(
+            "mqtt-e.ecoflow.com", 8883, keepalive=15,
+        )
+        mock_mqtt.loop_start.assert_called_once()
+    finally:
+        client.close()
 
 
 def test_decode_property_payload_rejects_garbage():
