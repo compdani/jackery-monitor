@@ -240,9 +240,15 @@ class EcoflowRegistry:
         return changed
 
     def fleet_meta(self) -> list[dict]:
-        """Device dicts for the merged cloud fleet strip."""
+        """Unattached EcoFlow devices for the Live fleet strip / picker.
+
+        Rows linked to a Siseli (`siseli_device_sn`) are omitted; their
+        watts overlay onto the Siseli view instead.
+        """
         out = []
         for d in self.devices:
+            if d.get("siseli_device_sn"):
+                continue
             out.append({
                 "device_id": d["sn"],
                 "device_sn": d["sn"],

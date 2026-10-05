@@ -2088,7 +2088,8 @@ function applySiseliChrome(s) {
   const controls = $('siseli-controls-card');
   const eod = $('eod-forecast');
   if (eod && (siseli || ecoflow)) eod.hidden = true;
-  if (power) power.hidden = siseli || ecoflow;
+  // Siseli has its own panels; unattached EcoFlow still uses the power card.
+  if (power) power.hidden = siseli;
   if (panels) panels.hidden = !siseli;
   const prefs = s && s.device_prefs;
   const deviceId = s && s.cloud && s.cloud.selected_device_id;
@@ -2885,7 +2886,19 @@ function ecoflowCredsStatusText(j) {
   if (!j || !j.has_credentials) return 'not configured';
   if (j.error) return `error: ${j.error}`;
   const email = j.email ? ` (${j.email})` : '';
-  if (j.state === 'connected') return `connected${email}`;
+  if (j.state === 'connected') {
+    const lastPoll = j.last_poll_ts != null ? Number(j.last_poll_ts) : null;
+    const msgs = Number(j.mqtt_msg_count || 0);
+    const updates = Number(j.mqtt_update_count || 0);
+    if (lastPoll && Number.isFinite(lastPoll)) {
+      const age = Math.max(0, Math.round(Date.now() / 1000 - lastPoll));
+      return `connected · live ${age}s ago${email}`;
+    }
+    if (msgs > 0 && updates === 0) {
+      return `connected · MQTT msgs but decode empty${email}`;
+    }
+    return `connected · waiting for telemetry${email}`;
+  }
   if (j.state && j.state !== 'idle') return `${j.state}${email}`;
   return `saved${email}`;
 }

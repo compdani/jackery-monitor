@@ -261,3 +261,62 @@ def test_start_mqtt_uses_callback_api_v2_and_keepalive_15(monkeypatch):
 
 def test_decode_property_payload_rejects_garbage():
     assert decode_property_payload(b"not-a-protobuf") == {}
+
+
+def test_on_message_empty_protobuf_increments_decode_empty():
+    updates: list = []
+    client = EcoflowPrivateClient(
+        email="a@b.c", password="x",
+        on_update=lambda sn, tele, detail: updates.append(sn),
+    )
+    try:
+        client._devices = {"R351TEST": {"raw_sn": "R351TEST", "alias": "G"}}
+        msg = MagicMock()
+        msg.topic = "/app/device/property/R351TEST"
+        msg.payload = b"not-a-protobuf"
+        client._on_message(None, None, msg)
+        assert client.mqtt_msg_count == 1
+        assert client.mqtt_decode_empty == 1
+        assert client.mqtt_update_count == 0
+        assert updates == []
+    finally:
+        client.close()
+
+
+def test_on_message_json_params_increments_update_count():
+    updates: list = []
+    client = EcoflowPrivateClient(
+        email="a@b.c", password="x",
+        on_update=lambda sn, tele, detail: updates.append((sn, tele)),
+    )
+    try:
+        client._devices = {
+            "R351TEST": {
+                "raw_sn": "R351TEST",
+                "alias": "Garage",
+                "device_type": "DELTA_3_MAX_PLUS",
+                "capacity_wh": 2048,
+            },
+        }
+        msg = MagicMock()
+        msg.topic = "/app/device/property/R351TEST"
+        msg.payload = json.dumps({
+            "params": {
+                "cms_batt_soc": 55,
+                "pow_get_pv": 120,
+                "pow_out_sum_w": 40,
+            },
+        }).encode()
+        client._on_message(None, None, msg)
+        assert client.mqtt_msg_count == 1
+        assert client.mqtt_decode_empty == 0
+        assert client.mqtt_update_count == 1
+        assert len(updates) == 1
+        assert updates[0][0] == "ecoflow:R351TEST"
+        assert updates[0][1]["battery_percent"] == 55
+        assert updates[0][1]["solar_input_w"] == 120
+        stats = client.mqtt_stats()
+        assert stats["mqtt_update_count"] == 1
+        assert stats["last_mqtt_topic"] == msg.topic
+    finally:
+        client.close()

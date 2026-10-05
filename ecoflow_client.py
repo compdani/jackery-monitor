@@ -290,6 +290,14 @@ class EcoflowPrivateClient:
         self.connected = False
         self.auth_failed = False
         self.mqtt_error: str | None = None
+        self.mqtt_msg_count = 0
+        self.mqtt_decode_empty = 0
+        self.mqtt_update_count = 0
+        self.last_mqtt_topic: str | None = None
+        self.last_mqtt_bytes = 0
+        self.last_decode_cmds: list[str] = []
+        self._logged_first_msg = False
+        self._logged_first_update = False
 
     def close(self) -> None:
         self.stop_mqtt()
@@ -387,6 +395,22 @@ class EcoflowPrivateClient:
                 self._devices[raw] = dict(d)
                 self._params.setdefault(raw, {})
 
+    def configured_raw_sns(self) -> set[str]:
+        """Raw serials currently registered for MQTT subscribe."""
+        with self._lock:
+            return set(self._devices.keys())
+
+    def mqtt_stats(self) -> dict[str, Any]:
+        """Snapshot of MQTT RX counters for the credentials status API."""
+        return {
+            "mqtt_msg_count": int(self.mqtt_msg_count),
+            "mqtt_decode_empty": int(self.mqtt_decode_empty),
+            "mqtt_update_count": int(self.mqtt_update_count),
+            "last_mqtt_topic": self.last_mqtt_topic,
+            "last_mqtt_bytes": int(self.last_mqtt_bytes),
+            "last_decode_cmds": list(self.last_decode_cmds),
+        }
+
     def start_mqtt(self, wait_s: float = MQTT_CONNECT_WAIT_S) -> bool:
         """Connect and wait for the first CONNACK. Returns True on success."""
         if not (self.mqtt_url and self.mqtt_user and self.mqtt_password and self.mqtt_client_id):
@@ -395,6 +419,14 @@ class EcoflowPrivateClient:
         self.connected = False
         self.auth_failed = False
         self.mqtt_error = None
+        self.mqtt_msg_count = 0
+        self.mqtt_decode_empty = 0
+        self.mqtt_update_count = 0
+        self.last_mqtt_topic = None
+        self.last_mqtt_bytes = 0
+        self.last_decode_cmds = []
+        self._logged_first_msg = False
+        self._logged_first_update = False
         self._connect_event.clear()
         client = mqtt.Client(
             callback_api_version=mqtt.CallbackAPIVersion.VERSION2,
@@ -411,15 +443,26 @@ class EcoflowPrivateClient:
             "EcoFlow MQTT connecting %s:%s as client_id=%s user=%s",
             self.mqtt_url, self.mqtt_port, self.mqtt_client_id, self.mqtt_user,
         )
-        client.connect(self.mqtt_url, self.mqtt_port, keepalive=MQTT_KEEPALIVE_S)
-        client.loop_start()
-        self._mqtt = client
-        if not self._connect_event.wait(timeout=max(1.0, float(wait_s))):
-            self.mqtt_error = "MQTT connect timed out"
+        try:
+            client.connect(self.mqtt_url, self.mqtt_port, keepalive=MQTT_KEEPALIVE_S)
+            client.loop_start()
+            self._mqtt = client
+            if not self._connect_event.wait(timeout=max(1.0, float(wait_s))):
+                self.mqtt_error = "MQTT connect timed out"
+                self.connected = False
+                log.error("EcoFlow MQTT connect timed out after %.0fs", wait_s)
+                self.stop_mqtt()
+                return False
+            if not self.connected:
+                self.stop_mqtt()
+                return False
+            return True
+        except Exception as e:
+            self.mqtt_error = f"MQTT connect error: {e}"
             self.connected = False
-            log.error("EcoFlow MQTT connect timed out after %.0fs", wait_s)
+            log.error("EcoFlow MQTT connect error: %s", e)
+            self.stop_mqtt()
             return False
-        return bool(self.connected)
 
     def stop_mqtt(self) -> None:
         client = self._mqtt
@@ -446,6 +489,13 @@ class EcoflowPrivateClient:
             self._mqtt.publish(topic, payload, qos=1)
         except Exception as e:
             log.debug("quota request failed for %s: %s", raw_sn, e)
+
+    def request_quota_all(self) -> None:
+        """Re-request quota for every configured device."""
+        with self._lock:
+            sns = list(self._devices.keys())
+        for sn in sns:
+            self.request_quota(sn)
 
     def _topics_for(self, raw_sn: str) -> list[str]:
         uid = self.user_id or ""
@@ -530,11 +580,31 @@ class EcoflowPrivateClient:
 
     def _on_message(self, client, userdata, message: mqtt.MQTTMessage):
         topic = message.topic or ""
+        payload = message.payload or b""
+        self.mqtt_msg_count += 1
+        self.last_mqtt_topic = topic
+        self.last_mqtt_bytes = len(payload)
+        if not self._logged_first_msg:
+            self._logged_first_msg = True
+            log.info(
+                "EcoFlow MQTT first message topic=%s bytes=%d",
+                topic, len(payload),
+            )
         raw_sn = self._sn_from_topic(topic)
         if not raw_sn:
+            log.info("EcoFlow MQTT message on unmatched topic=%s", topic)
             return
-        params = self._parse_payload(message.payload or b"", topic)
+        params = self._parse_payload(payload, topic)
         if not params:
+            self.mqtt_decode_empty += 1
+            cmds = ecoflow_delta3.peek_header_cmds(payload)
+            self.last_decode_cmds = cmds
+            log.info(
+                "EcoFlow MQTT decode empty topic=%s bytes=%d cmds=%s",
+                topic, len(payload), ",".join(cmds) or "none",
+            )
+            if payload:
+                log.debug("EcoFlow MQTT empty payload hex=%s", payload[:64].hex())
             return
         with self._lock:
             merged = merge_params(self._params.get(raw_sn) or {}, params)
@@ -548,6 +618,14 @@ class EcoflowPrivateClient:
             capacity_wh=meta.get("capacity_wh"),
         )
         detail = dict(tele.get("ecoflow_detail") or {})
+        self.mqtt_update_count += 1
+        if not self._logged_first_update:
+            self._logged_first_update = True
+            log.info(
+                "EcoFlow telemetry %s battery=%s solar=%sW keys=%d",
+                sn, tele.get("battery_percent"), tele.get("solar_input_w"),
+                len(params),
+            )
         if self.on_update:
             try:
                 self.on_update(sn, tele, detail)

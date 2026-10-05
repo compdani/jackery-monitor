@@ -291,6 +291,8 @@ class AppState:
             "last_poll_ts": None,
             "next_retry_ts": 0.0,
             "client_id_rotated": False,
+            "quota_attempts": 0,
+            "last_quota_ts": 0.0,
         }
         self.ecoflow_task: asyncio.Task | None = None
         self.ecoflow_wake: asyncio.Event = asyncio.Event()
@@ -1439,6 +1441,8 @@ def _ecoflow_start_client() -> None:
                 state.ecoflow["error"] = None
                 state.ecoflow["next_retry_ts"] = 0.0
                 state.ecoflow["client_id_rotated"] = False
+                state.ecoflow["quota_attempts"] = 0
+                state.ecoflow["last_quota_ts"] = time.time()
             else:
                 err = client.mqtt_error or "MQTT connect failed"
                 state.ecoflow["state"] = "error"
@@ -1478,6 +1482,25 @@ def _ecoflow_start_client() -> None:
         log.warning("ecoflow connect failed: %s", e)
 
 
+def _ecoflow_registry_raw_sns() -> set[str]:
+    out: set[str] = set()
+    for d in state.ecoflow_reg.list_devices():
+        raw = str(d.get("raw_sn") or ecoflow_devices.raw_sn_from_sn(d.get("sn") or ""))
+        if raw:
+            out.add(raw)
+    return out
+
+
+def _ecoflow_needs_resubscribe(client: ecoflow_client.EcoflowPrivateClient | None) -> bool:
+    """True when registry raw SNs diverge from the live MQTT client's devices."""
+    wanted = _ecoflow_registry_raw_sns()
+    if not wanted:
+        return False
+    if client is None:
+        return True
+    return client.configured_raw_sns() != wanted
+
+
 async def ecoflow_loop() -> None:
     """Keep EcoFlow MQTT session alive; restart on wake or periodic check."""
     while True:
@@ -1488,9 +1511,46 @@ async def ecoflow_loop() -> None:
                 now = time.time()
                 with state.ecoflow_lock:
                     next_retry = float(state.ecoflow.get("next_retry_ts") or 0)
-                if client is None or not client.connected:
+                needs_start = (
+                    client is None
+                    or not client.connected
+                    or _ecoflow_needs_resubscribe(client)
+                )
+                if needs_start:
                     if now >= next_retry:
+                        if client is not None and client.connected and _ecoflow_needs_resubscribe(client):
+                            log.info("ecoflow registry SN set changed; restarting MQTT")
                         await asyncio.to_thread(_ecoflow_start_client)
+                        client = state.ecoflow_client
+                # Silent-session quota watchdog while connected.
+                if client is not None and client.connected:
+                    with state.ecoflow_lock:
+                        last_poll = state.ecoflow.get("last_poll_ts")
+                        quota_attempts = int(state.ecoflow.get("quota_attempts") or 0)
+                        last_quota = float(state.ecoflow.get("last_quota_ts") or 0)
+                    stale = (
+                        last_poll is None
+                        or (now - float(last_poll)) > 60.0
+                    )
+                    if stale and quota_attempts < 3 and (now - last_quota) >= 20.0:
+                        log.info(
+                            "ecoflow connected but no fresh telemetry; "
+                            "quota retry %d/3",
+                            quota_attempts + 1,
+                        )
+                        await asyncio.to_thread(client.request_quota_all)
+                        with state.ecoflow_lock:
+                            state.ecoflow["quota_attempts"] = quota_attempts + 1
+                            state.ecoflow["last_quota_ts"] = now
+                            if (
+                                state.ecoflow.get("last_poll_ts") is None
+                                and quota_attempts + 1 >= 3
+                                and not state.ecoflow.get("error")
+                            ):
+                                state.ecoflow["error"] = (
+                                    "MQTT up but no telemetry yet "
+                                    "(check SN / device online)"
+                                )
             else:
                 if state.ecoflow_client is not None:
                     await asyncio.to_thread(_ecoflow_stop_client)
@@ -1498,18 +1558,29 @@ async def ecoflow_loop() -> None:
                     state.ecoflow["state"] = "idle"
                     state.ecoflow["error"] = None
                     state.ecoflow["next_retry_ts"] = 0.0
+                    state.ecoflow["quota_attempts"] = 0
         except asyncio.CancelledError:
             raise
         except Exception as e:
             log.warning("ecoflow_loop: %s", e)
         state.ecoflow_wake.clear()
         # While waiting out an auth backoff, wake sooner so a user
-        # creds/device change can clear it immediately.
+        # creds/device change can clear it immediately. Also wake ~20s
+        # while connected-but-silent so quota retries happen promptly.
         with state.ecoflow_lock:
             next_retry = float(state.ecoflow.get("next_retry_ts") or 0)
+            last_poll = state.ecoflow.get("last_poll_ts")
+            quota_attempts = int(state.ecoflow.get("quota_attempts") or 0)
         timeout = 60.0
         if next_retry > time.time():
             timeout = min(60.0, max(1.0, next_retry - time.time()))
+        elif (
+            state.ecoflow_client is not None
+            and state.ecoflow_client.connected
+            and (last_poll is None or (time.time() - float(last_poll)) > 60.0)
+            and quota_attempts < 3
+        ):
+            timeout = 20.0
         try:
             await asyncio.wait_for(state.ecoflow_wake.wait(), timeout=timeout)
             woken = True
@@ -1849,6 +1920,14 @@ def serialize_status(view_device_id: str | None = None) -> dict[str, Any]:
     cloud_src = _merged_cloud_meta()
     bridge_active_id = (state.last_cloud_meta or {}).get("selected_device_id")
     bridge_active_sn = state.device.device_sn if state.device else None
+
+    # Linked EcoFlow units are hidden from fleet_meta; if the browser still
+    # has that ecoflow: id selected, view the Siseli parent instead.
+    if view_device_id and ecoflow_devices.is_ecoflow_sn(view_device_id):
+        linked_row = state.ecoflow_reg.get(str(view_device_id))
+        parent = (linked_row or {}).get("siseli_device_sn")
+        if parent:
+            view_device_id = str(parent)
 
     view_meta: dict | None = None
     if view_device_id and str(view_device_id) != str(bridge_active_id or ""):
@@ -6279,6 +6358,8 @@ async def api_bms_inverter_flag(sn: str, body: dict):
 @app.get("/api/ecoflow/credentials")
 def api_ecoflow_creds_status():
     view = ecoflow_creds.public_view() or {}
+    client = state.ecoflow_client
+    stats = client.mqtt_stats() if client is not None else {}
     return {
         "has_credentials": bool(view),
         "email": view.get("email"),
@@ -6287,6 +6368,10 @@ def api_ecoflow_creds_status():
         "state": state.ecoflow.get("state"),
         "error": state.ecoflow.get("error"),
         "last_poll_ts": state.ecoflow.get("last_poll_ts"),
+        "mqtt_msg_count": stats.get("mqtt_msg_count", 0),
+        "mqtt_decode_empty": stats.get("mqtt_decode_empty", 0),
+        "mqtt_update_count": stats.get("mqtt_update_count", 0),
+        "last_mqtt_topic": stats.get("last_mqtt_topic"),
         "devices": state.ecoflow_reg.list_devices(),
     }
 
@@ -6345,6 +6430,8 @@ async def api_ecoflow_creds_clear():
             "last_poll_ts": None,
             "next_retry_ts": 0.0,
             "client_id_rotated": False,
+            "quota_attempts": 0,
+            "last_quota_ts": 0.0,
         }
     state.ecoflow_wake.set()
     await broadcast_status("status")

@@ -115,6 +115,23 @@ def _maybe_b64(raw: bytes) -> bytes:
         return raw
 
 
+def peek_header_cmds(raw_data: bytes) -> list[str]:
+    """Return cmdFunc/cmdId labels from a HeaderMessage without full decode."""
+    pb2 = _pb2()
+    raw_data = _maybe_b64(raw_data)
+    try:
+        header_msg = pb2.Delta3HeaderMessage()
+        header_msg.ParseFromString(raw_data)
+    except Exception:
+        return []
+    out: list[str] = []
+    for header in header_msg.header or []:
+        cmd_func = getattr(header, "cmd_func", 0)
+        cmd_id = getattr(header, "cmd_id", 0)
+        out.append(f"{cmd_func}/{cmd_id}")
+    return out
+
+
 def decode_property_payload(raw_data: bytes) -> dict[str, Any]:
     """Decode one private-API MQTT property push into a flat params dict.
 

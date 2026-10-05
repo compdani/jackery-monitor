@@ -50,6 +50,21 @@ def test_upsert_link_delete(reg):
     assert r.get("ecoflow:R351TEST") is None
 
 
+def test_fleet_meta_omits_linked_keeps_unattached(reg):
+    r = reg.EcoflowRegistry()
+    r.upsert("FREE1", alias="Solo", device_type="DELTA_3_MAX_PLUS")
+    r.upsert(
+        "LINK1",
+        alias="Attached",
+        device_type="DELTA_3_MAX_PLUS",
+        siseli_device_sn="siseli:42",
+    )
+    meta = r.fleet_meta()
+    ids = {d["device_id"] for d in meta}
+    assert ids == {"ecoflow:FREE1"}
+    assert all(d["source"] == "ecoflow" for d in meta)
+
+
 def test_overlay_sums_solar_and_output(reg):
     now = time.time()
     ef = params_to_telemetry({
