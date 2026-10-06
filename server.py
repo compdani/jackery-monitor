@@ -6404,8 +6404,8 @@ async def api_bms_inverter_flag(sn: str, body: dict):
     return {"ok": True, "siseli_device_sn": sn, **row}
 
 
-@app.get("/api/ecoflow/credentials")
-def api_ecoflow_creds_status():
+def _ecoflow_creds_status() -> dict[str, Any]:
+    """Shared status payload for EcoFlow credentials / reconnect routes."""
     view = ecoflow_creds.public_view() or {}
     client = state.ecoflow_client
     stats = client.mqtt_stats() if client is not None else {}
@@ -6423,6 +6423,29 @@ def api_ecoflow_creds_status():
         "last_mqtt_topic": stats.get("last_mqtt_topic"),
         "devices": state.ecoflow_reg.list_devices(),
     }
+
+
+@app.get("/api/ecoflow/credentials")
+def api_ecoflow_creds_status():
+    return _ecoflow_creds_status()
+
+
+@app.post("/api/ecoflow/reconnect")
+async def api_ecoflow_reconnect():
+    """Force-restart the EcoFlow MQTT session (Live card Reconnect).
+
+    Soft wake is not enough when the client still reports connected but
+    telemetry is stale — stop first so ecoflow_loop must start again.
+    """
+    if not ecoflow_creds.has_credentials():
+        raise HTTPException(400, "EcoFlow credentials not configured")
+    if not state.ecoflow_reg.list_devices():
+        raise HTTPException(400, "No EcoFlow devices registered")
+    with state.ecoflow_lock:
+        state.ecoflow["next_retry_ts"] = 0.0
+    await asyncio.to_thread(_ecoflow_stop_client)
+    state.ecoflow_wake.set()
+    return {"ok": True, **_ecoflow_creds_status()}
 
 
 @app.post("/api/ecoflow/credentials")

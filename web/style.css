@@ -1103,6 +1103,14 @@ main {
 .linked-ecoflow-switches {
   margin-top: 10px;
 }
+.linked-ecoflow-reconnect {
+  margin-left: auto;
+  flex-shrink: 0;
+}
+.linked-ecoflow-reconnect:disabled {
+  opacity: .5;
+  cursor: wait;
+}
 .card-header {
   display: flex; justify-content: space-between; align-items: center;
   flex-wrap: wrap; gap: 10px;

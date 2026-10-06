@@ -374,6 +374,9 @@
              aria-controls="linked-ecoflow-body">
           <h2>EcoFlow</h2>
           <span id="linked-ecoflow-summary" class="hint">—</span>
+          <button id="linked-ecoflow-reconnect" type="button"
+                  class="btn btn-ghost btn-small linked-ecoflow-reconnect"
+                  title="Restart EcoFlow MQTT session">Reconnect</button>
           <span class="collapsible-chevron" aria-hidden="true">▾</span>
         </div>
         <div id="linked-ecoflow-body" class="linked-ecoflow-body"></div>
@@ -900,10 +903,11 @@
         <button id="umb-dismiss" class="btn btn-ghost" type="button">Dismiss for this session</button>
       </section>
 
-      <section class="card device-card">
-        <div class="card-header">
+      <section class="card device-card collapsible" data-collapse-key="device-info">
+        <div class="card-header collapsible-header" role="button" tabindex="0" aria-expanded="true">
           <h2>Device info</h2>
           <span id="source-badge-2" class="pill pill-source">—</span>
+          <span class="collapsible-chevron" aria-hidden="true">▾</span>
         </div>
         <dl>
           <dt>Display name</dt>
@@ -921,10 +925,11 @@
         </dl>
       </section>
 
-      <section id="siseli-device-settings-card" class="card device-card" hidden>
-        <div class="card-header">
+      <section id="siseli-device-settings-card" class="card device-card collapsible" hidden data-collapse-key="controller-settings">
+        <div class="card-header collapsible-header" role="button" tabindex="0" aria-expanded="true">
           <h2>Controller settings</h2>
           <span id="siseli-device-settings-status" class="hint">—</span>
+          <span class="collapsible-chevron" aria-hidden="true">▾</span>
         </div>
         <p class="hint" style="margin:6px 0 12px">
           All writable inverter fields. Check <strong>Live</strong> to show a control on the Live page.
@@ -934,10 +939,11 @@
         <div id="siseli-device-settings-body" class="siseli-device-settings"></div>
       </section>
 
-      <section class="card device-card" id="f7-ac-reset-card" data-jackery-only>
-        <div class="card-header">
+      <section class="card device-card collapsible" id="f7-ac-reset-card" data-jackery-only data-collapse-key="f7-ac-reset">
+        <div class="card-header collapsible-header" role="button" tabindex="0" aria-expanded="true">
           <h2>F7 AC reset</h2>
           <span class="hint" id="f7-ac-reset-status">off</span>
+          <span class="collapsible-chevron" aria-hidden="true">▾</span>
         </div>
         <p class="hint" style="margin:6px 0 12px">
           Explorer 2000 Plus can latch a solar-inverter fault (F7 / error 8) at low morning PV.
@@ -984,10 +990,11 @@
         <div id="f7-ac-reset-events" class="hint" style="margin-top:8px"></div>
       </section>
 
-      <section class="card device-card">
-        <div class="card-header">
+      <section class="card device-card collapsible" data-collapse-key="battery-capacity">
+        <div class="card-header collapsible-header" role="button" tabindex="0" aria-expanded="true">
           <h2>Battery capacity</h2>
           <span id="capacity-status" class="hint" hidden></span>
+          <span class="collapsible-chevron" aria-hidden="true">▾</span>
         </div>
         <p class="hint" style="margin:6px 0 12px">
           Override the total Wh capacity for this device — set this if you have <strong>extension batteries</strong> stacked on the host unit (e.g. 5000 Plus + 1× B5000+ = 10080 Wh). Used by the forecast SOC math; affects nothing the device itself reports.
@@ -1002,10 +1009,11 @@
         </form>
       </section>
 
-      <section class="card device-card" data-jackery-only>
-        <div class="card-header">
+      <section class="card device-card collapsible" data-jackery-only data-collapse-key="learned-parameters">
+        <div class="card-header collapsible-header" role="button" tabindex="0" aria-expanded="true">
           <h2>Learned parameters</h2>
           <span id="device-params-status" class="hint" hidden></span>
+          <span class="collapsible-chevron" aria-hidden="true">▾</span>
         </div>
         <p class="hint" style="margin:6px 0 12px">
           Per-device values the dashboard learns from your data. Resolution order: <strong>your override → cached fit → live fit → catalog/probe → default → ask you</strong>. Click "Override" on any row to pin a manual value, "Reset" to fall back to the auto-learned value.
@@ -1015,10 +1023,11 @@
         </div>
       </section>
 
-      <section class="card device-card" data-jackery-only>
-        <div class="card-header">
+      <section class="card device-card collapsible" data-jackery-only data-collapse-key="cloud-properties">
+        <div class="card-header collapsible-header" role="button" tabindex="0" aria-expanded="true">
           <h2>Cloud properties (debug)</h2>
           <button id="raw-props-toggle" class="btn btn-ghost" type="button">Show</button>
+          <span class="collapsible-chevron" aria-hidden="true">▾</span>
         </div>
         <p class="hint" style="margin:6px 0 12px">
           Raw key/value dump from the Jackery cloud for the active device. Useful to spot keys we don't yet parse — extension-battery state, per-PV-port solar, etc.
@@ -1026,10 +1035,11 @@
         <pre id="raw-props-dump" class="raw-props" hidden>—</pre>
       </section>
 
-      <section class="card device-card" data-jackery-only>
-        <div class="card-header">
+      <section class="card device-card collapsible" data-jackery-only data-collapse-key="cloud-endpoint-probe">
+        <div class="card-header collapsible-header" role="button" tabindex="0" aria-expanded="true">
           <h2>Cloud endpoint probe (debug)</h2>
           <button id="cloud-probe-btn" class="btn btn-ghost" type="button">Probe now</button>
+          <span class="collapsible-chevron" aria-hidden="true">▾</span>
         </div>
         <p class="hint" style="margin:6px 0 12px">
           Tries a handful of speculative cloud endpoints (<code>/v1/device/expansionPack</code>, <code>/v1/device/subDevices</code>, etc.) to find data the iOS app uses but we don't currently parse — per-battery state, attached pack count, etc. Most will return errors; one or two might hit. Paste anything interesting back to a maintainer.
@@ -1037,9 +1047,10 @@
         <pre id="cloud-probe-dump" class="raw-props" hidden>—</pre>
       </section>
 
-      <section class="card device-card" data-jackery-only>
-        <div class="card-header">
+      <section class="card device-card collapsible" data-jackery-only data-collapse-key="polling">
+        <div class="card-header collapsible-header" role="button" tabindex="0" aria-expanded="true">
           <h2>Polling</h2>
+          <span class="collapsible-chevron" aria-hidden="true">▾</span>
         </div>
         <p class="hint" style="margin:6px 0 12px">
           The Jackery cloud only allows one active session per account. While the bridge is polling, the phone app can't stay signed in. Pause polling to hand the session over to your phone.
@@ -1057,9 +1068,10 @@
         </div>
       </section>
 
-      <section class="card device-card">
-        <div class="card-header">
+      <section class="card device-card collapsible" data-collapse-key="account">
+        <div class="card-header collapsible-header" role="button" tabindex="0" aria-expanded="true">
           <h2>Account</h2>
+          <span class="collapsible-chevron" aria-hidden="true">▾</span>
         </div>
         <p class="hint" style="margin:6px 0 12px">
           Your Jackery credentials are encrypted on disk. Sign out to wipe them — you'll be asked to sign in again on next load.
@@ -1068,10 +1080,11 @@
         <p id="forget-msg" class="login-error" hidden style="margin-top:10px"></p>
       </section>
 
-      <section class="card device-card">
-        <div class="card-header">
+      <section class="card device-card collapsible" data-collapse-key="siseli-account">
+        <div class="card-header collapsible-header" role="button" tabindex="0" aria-expanded="true">
           <h2>Siseli account</h2>
           <span id="siseli-creds-status" class="hint">—</span>
+          <span class="collapsible-chevron" aria-hidden="true">▾</span>
         </div>
         <p class="hint" style="margin:6px 0 12px">
           Optional house-inverter connection via the Solar of Things portal
@@ -1106,10 +1119,11 @@
         </form>
       </section>
 
-      <section class="card device-card">
-        <div class="card-header">
+      <section class="card device-card collapsible" data-collapse-key="ecoflow-account">
+        <div class="card-header collapsible-header" role="button" tabindex="0" aria-expanded="true">
           <h2>EcoFlow account</h2>
           <span id="ecoflow-creds-status" class="hint">—</span>
+          <span class="collapsible-chevron" aria-hidden="true">▾</span>
         </div>
         <p class="hint" style="margin:6px 0 12px">
           Optional EcoFlow power station via the EcoFlow app cloud
@@ -1184,10 +1198,11 @@
         <div id="ecoflow-device-list" class="device-params-list" style="margin-top:14px"></div>
       </section>
 
-      <section class="card device-card">
-        <div class="card-header">
+      <section class="card device-card collapsible" data-collapse-key="lan-read">
+        <div class="card-header collapsible-header" role="button" tabindex="0" aria-expanded="true">
           <h2>LAN read</h2>
           <button type="button" class="btn" id="siseli-local-read" aria-pressed="false">off</button>
+          <span class="collapsible-chevron" aria-hidden="true">▾</span>
         </div>
         <p class="hint" style="margin:0 0 12px">
           Optional. The inverter dongle already sends MQTT to the Siseli cloud.
@@ -1243,10 +1258,11 @@
         </div>
       </section>
 
-      <section class="card device-card">
-        <div class="card-header">
+      <section class="card device-card collapsible" data-collapse-key="bluetooth-bms">
+        <div class="card-header collapsible-header" role="button" tabindex="0" aria-expanded="true">
           <h2>Bluetooth BMS</h2>
           <span id="bms-status" class="hint">—</span>
+          <span class="collapsible-chevron" aria-hidden="true">▾</span>
         </div>
         <p class="hint" style="margin:6px 0 12px">
           Overkill / JBD / XiaoXiang packs assigned to a Siseli inverter

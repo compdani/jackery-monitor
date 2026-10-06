@@ -1304,3 +1304,73 @@ def test_ecoflow_device_add_and_link(app, client, monkeypatch):
     gone = client.delete("/api/ecoflow/devices/ecoflow:R351TEST")
     assert gone.status_code == 200
     assert client.get("/api/ecoflow/devices").json()["devices"] == []
+
+
+def test_ecoflow_reconnect_requires_setup(client):
+    r = client.post("/api/ecoflow/reconnect")
+    assert r.status_code == 400
+    assert "credentials" in r.json()["detail"].lower()
+
+
+def test_ecoflow_reconnect_stops_and_wakes(app, client, monkeypatch):
+    class FakeClient:
+        def __init__(self, **kwargs):
+            self.token = "tok"
+            self.user_id = "uid-1"
+            self.mqtt_client_id = (
+                kwargs.get("mqtt_client_id")
+                or "ANDROID_ABCDEF0123456789ABCDEF0123456789_uid-1"
+            )
+
+        def login(self):
+            return None
+
+        def close(self):
+            return None
+
+    monkeypatch.setattr(app.ecoflow_client, "EcoflowPrivateClient", FakeClient)
+    assert client.post("/api/ecoflow/credentials", json={
+        "email": "user@example.com",
+        "password": "secret",
+    }).status_code == 200
+    assert client.post("/api/ecoflow/devices", json={
+        "raw_sn": "R351TEST",
+        "device_type": "DELTA_3_MAX_PLUS",
+        "alias": "Garage",
+    }).status_code == 200
+
+    stopped = {"n": 0}
+    cleared_at_stop = {"next_retry": None}
+
+    def fake_stop():
+        stopped["n"] += 1
+        with app.state.ecoflow_lock:
+            cleared_at_stop["next_retry"] = float(
+                app.state.ecoflow.get("next_retry_ts") or 0
+            )
+        app.state.ecoflow_client = None
+
+    monkeypatch.setattr(app, "_ecoflow_stop_client", fake_stop)
+    # Prevent ecoflow_loop from racing a real start after wake.
+    monkeypatch.setattr(app, "_ecoflow_start_client", lambda: None)
+    with app.state.ecoflow_lock:
+        app.state.ecoflow["next_retry_ts"] = 9_999_999_999.0
+        app.state.ecoflow["state"] = "connected"
+    wake_sets = {"n": 0}
+    orig_wake_set = app.state.ecoflow_wake.set
+
+    def counting_wake_set():
+        wake_sets["n"] += 1
+        return orig_wake_set()
+
+    monkeypatch.setattr(app.state.ecoflow_wake, "set", counting_wake_set)
+
+    r = client.post("/api/ecoflow/reconnect")
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["ok"] is True
+    assert body["has_credentials"] is True
+    assert len(body["devices"]) == 1
+    assert stopped["n"] == 1
+    assert cleared_at_stop["next_retry"] == 0.0
+    assert wake_sets["n"] >= 1

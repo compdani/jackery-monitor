@@ -223,6 +223,7 @@ export default function LiveScreen() {
   const [pending, setPending] = useState<Record<string, PendingToggle>>({});
   const [efPending, setEfPending] = useState<Record<string, PendingToggle>>({});
   const [toggleErr, setToggleErr] = useState<string | null>(null);
+  const [efReconnectBusy, setEfReconnectBusy] = useState(false);
   const [kasaBusy, setKasaBusy] = useState<"charge" | "divert" | null>(null);
   const [chargeHost, setChargeHost] = useState<string | null>(null);
   const [divertHost, setDivertHost] = useState<string | null>(null);
@@ -467,6 +468,19 @@ export default function LiveScreen() {
       return;
     }
     await run();
+  }
+
+  async function reconnectEcoflow() {
+    if (efReconnectBusy) return;
+    setEfReconnectBusy(true);
+    setToggleErr(null);
+    try {
+      await endpoints.ecoflowReconnect();
+    } catch (e: unknown) {
+      setToggleErr(e instanceof Error ? e.message : "EcoFlow reconnect failed");
+    } finally {
+      setTimeout(() => setEfReconnectBusy(false), 800);
+    }
   }
 
   async function toggleKasa(kind: "charge" | "divert", host: string, current: boolean | null) {
@@ -782,11 +796,29 @@ export default function LiveScreen() {
 
       {isSiseli && linkedEcoflow.length > 0 ? (
         <Card>
-          <Eyebrow>EcoFlow</Eyebrow>
-          <Hint>
-            {linkedEcoflow.length} linked unit
-            {linkedEcoflow.length === 1 ? "" : "s"}
-          </Hint>
+          <View
+            style={{
+              flexDirection: "row",
+              alignItems: "center",
+              justifyContent: "space-between",
+              gap: 8,
+            }}
+          >
+            <View style={{ flex: 1, minWidth: 0 }}>
+              <Eyebrow>EcoFlow</Eyebrow>
+              <Hint>
+                {linkedEcoflow.length} linked unit
+                {linkedEcoflow.length === 1 ? "" : "s"}
+              </Hint>
+            </View>
+            <Btn
+              title="Reconnect"
+              kind="ghost"
+              loading={efReconnectBusy}
+              disabled={efReconnectBusy}
+              onPress={() => void reconnectEcoflow()}
+            />
+          </View>
           {linkedEcoflow.map((u) => {
             const et = u.telemetry || {};
             const detail = (u.detail || {}) as Record<string, unknown>;

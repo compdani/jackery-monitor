@@ -6294,6 +6294,29 @@ $('linked-ecoflow-body')?.addEventListener('click', (e) => {
   toggleLinkedEcoflowOutput(btn);
 });
 
+$('linked-ecoflow-reconnect')?.addEventListener('click', async (e) => {
+  e.preventDefault();
+  e.stopPropagation();
+  const btn = $('linked-ecoflow-reconnect');
+  if (!btn || btn.disabled) return;
+  btn.disabled = true;
+  try {
+    const r = await fetch('/api/ecoflow/reconnect', { method: 'POST' });
+    if (!r.ok) {
+      const body = await r.json().catch(() => ({}));
+      throw new Error(body.detail || r.statusText || 'reconnect failed');
+    }
+  } catch (err) {
+    console.error('ecoflow reconnect', err);
+    alert(`EcoFlow reconnect failed: ${err.message || err}`);
+  } finally {
+    setTimeout(() => { btn.disabled = false; }, 800);
+  }
+});
+$('linked-ecoflow-reconnect')?.addEventListener('keydown', (e) => {
+  e.stopPropagation();
+});
+
 const ECOFLOW_COLLAPSE_KEY = 'jackery-linked-ecoflow-collapsed';
 
 function applyLinkedEcoflowCollapseState() {

@@ -435,6 +435,14 @@ export const endpoints = {
   saveEcoflowCreds: (body: { email: string; password: string; api_host?: string }) =>
     api("/api/ecoflow/credentials", { method: "POST", body }),
   forgetEcoflowCreds: () => api("/api/ecoflow/credentials", { method: "DELETE" }),
+  ecoflowReconnect: () =>
+    api<{
+      ok?: boolean;
+      has_credentials?: boolean;
+      state?: string;
+      error?: string | null;
+      devices?: Record<string, unknown>[];
+    }>("/api/ecoflow/reconnect", { method: "POST" }),
   ecoflowDevices: () => api<{ devices?: Record<string, unknown>[] }>("/api/ecoflow/devices"),
   saveEcoflowDevice: (body: Record<string, unknown>) =>
     api("/api/ecoflow/devices", { method: "POST", body }),
