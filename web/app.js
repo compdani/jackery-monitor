@@ -6200,7 +6200,7 @@ function renderLinkedEcoflow(s) {
       ? `${linked[0].alias || 'EcoFlow'}${freshN ? '' : ' · stale'}`
       : `${linked.length} units · ${freshN} live`;
   }
-  body.innerHTML = linked.map((u) => {
+  body.innerHTML = linked.map((u, i) => {
     const t = u.telemetry || {};
     const d = u.detail || {};
     const sn = String(u.sn || '');
@@ -6220,6 +6220,11 @@ function renderLinkedEcoflow(s) {
     const acOn = !!t.ac_on;
     const dcOn = !!t.dc_on;
     const snAttr = escapeHtml(sn);
+    const reconnectBtn = i === 0
+      ? `<button id="linked-ecoflow-reconnect" type="button"
+           class="btn btn-ghost btn-small linked-ecoflow-reconnect"
+           title="Restart EcoFlow MQTT session">Reconnect</button>`
+      : '';
     return `<div class="linked-ecoflow-unit" data-ecoflow-sn="${snAttr}">
       <div class="card-header" style="margin-bottom:8px">
         <strong>${name}</strong>
@@ -6246,6 +6251,7 @@ function renderLinkedEcoflow(s) {
         <button class="switch${dcOn ? ' on' : ''}" type="button" data-ecoflow-port="dc" data-ecoflow-sn="${snAttr}" ${u.fresh ? '' : 'disabled'}>
           <span class="sw-label">DC</span><span class="sw-state">${dcOn ? 'ON' : 'OFF'}</span>
         </button>
+        ${reconnectBtn}
       </div>
     </div>`;
   }).join('');
@@ -6288,16 +6294,19 @@ async function toggleLinkedEcoflowOutput(btn) {
 }
 
 $('linked-ecoflow-body')?.addEventListener('click', (e) => {
+  const reconnect = e.target.closest('#linked-ecoflow-reconnect');
+  if (reconnect && $('linked-ecoflow-body').contains(reconnect)) {
+    e.preventDefault();
+    reconnectEcoflowMqtt(reconnect);
+    return;
+  }
   const btn = e.target.closest('button[data-ecoflow-port]');
   if (!btn || !$('linked-ecoflow-body').contains(btn)) return;
   e.preventDefault();
   toggleLinkedEcoflowOutput(btn);
 });
 
-$('linked-ecoflow-reconnect')?.addEventListener('click', async (e) => {
-  e.preventDefault();
-  e.stopPropagation();
-  const btn = $('linked-ecoflow-reconnect');
+async function reconnectEcoflowMqtt(btn) {
   if (!btn || btn.disabled) return;
   btn.disabled = true;
   try {
@@ -6312,10 +6321,7 @@ $('linked-ecoflow-reconnect')?.addEventListener('click', async (e) => {
   } finally {
     setTimeout(() => { btn.disabled = false; }, 800);
   }
-});
-$('linked-ecoflow-reconnect')?.addEventListener('keydown', (e) => {
-  e.stopPropagation();
-});
+}
 
 const ECOFLOW_COLLAPSE_KEY = 'jackery-linked-ecoflow-collapsed';
 

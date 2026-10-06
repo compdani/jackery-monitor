@@ -1102,10 +1102,15 @@ main {
 }
 .linked-ecoflow-switches {
   margin-top: 10px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
 }
 .linked-ecoflow-reconnect {
   margin-left: auto;
   flex-shrink: 0;
+  align-self: center;
 }
 .linked-ecoflow-reconnect:disabled {
   opacity: .5;
