@@ -7289,17 +7289,19 @@ function drawLiveChart(s) {
             <div class="cht-row"><i style="background:${SERIES_COLORS.output}"></i> Output <b>${fmt(p.output_power_w)}</b> W</div>
             <div class="cht-row"><i style="background:${SERIES_COLORS.input}"></i> Input <b>${fmt(p.input_power_w)}</b> W</div>
             <div class="cht-row"><i style="background:${SERIES_COLORS.battery}"></i> Battery <b>${fmt(p.battery_percent)}</b> %</div>`;
-  }, () => ({ xs, padL, padR, w, h, baseY: h - padB, padT, padB, indexForX }));
+  }, () => ({ xs, padL, padR, w, h, baseY: h - padB, padT, padB, indexForX }),
+  () => drawLiveChart(lastStatus));
 }
 
 // Generic chart-hover binder. Stores the per-render data + geometry +
 // tooltip-builder on the canvas element so the (one-time) listener always
 // reads the freshest closures, not stale ones from when it was bound.
-function _attachChartHover(canvas, hist, htmlFn, geomFn) {
+function _attachChartHover(canvas, hist, htmlFn, geomFn, redrawFn) {
   // Refresh per-render state every call.
   canvas._chartData = hist;
   canvas._chartHtml = htmlFn;
   canvas._chartGeom = geomFn();
+  if (redrawFn) canvas._redraw = redrawFn;
   if (canvas._hoverBound) return;
   canvas._hoverBound = true;
   canvas.style.cursor = 'crosshair';
@@ -7317,7 +7319,7 @@ function _attachChartHover(canvas, hist, htmlFn, geomFn) {
     // Redraw the chart, then overlay the crosshair.
     if (canvas._redraw) canvas._redraw();
     const ctx = canvas.getContext('2d');
-    const xPos = geom.xs(idx);
+    const xPos = typeof geom.xs === 'function' ? geom.xs(idx) : geom.xs[idx];
     ctx.strokeStyle = 'rgba(255,255,255,.18)';
     ctx.lineWidth = 1;
     ctx.beginPath();
@@ -7327,9 +7329,8 @@ function _attachChartHover(canvas, hist, htmlFn, geomFn) {
   const onLeave = () => chartTooltip(null);
   canvas.addEventListener('mousemove', onMove);
   canvas.addEventListener('mouseleave', onLeave);
-  canvas._redraw = () => drawLiveChart(lastStatus);
+  if (!canvas._redraw) canvas._redraw = () => drawLiveChart(lastStatus);
 }
-
 function energyChartSeries(j) {
   if (Array.isArray(j?.series) && j.series.length) return j.series;
   if (Array.isArray(j?.history)) {
@@ -9364,6 +9365,28 @@ function drawForecastChart(j) {
     });
     ctx.stroke();
   }
+
+  _attachChartHover(canvas, fc, (i) => {
+    const p = fc[i];
+    const ts = p.ts
+      ? new Date(p.ts * 1000).toLocaleString([], {
+          weekday: 'short', hour: '2-digit', minute: '2-digit',
+        })
+      : '';
+    const rows = [`<div class="cht-ts">${ts}</div>`];
+    if (vis.solar) {
+      rows.push(`<div class="cht-row"><i style="background:${SERIES_COLORS.input}"></i> Solar <b>${fmt(p.solar_w)}</b> W</div>`);
+    }
+    if (vis.load) {
+      rows.push(`<div class="cht-row"><i style="background:${SERIES_COLORS.output}"></i> Load <b>${fmt(p.load_w)}</b> W</div>`);
+    }
+    if (vis.soc) {
+      rows.push(`<div class="cht-row"><i style="background:${SERIES_COLORS.battery}"></i> SOC <b>${fmt(p.predicted_soc)}</b> %</div>`);
+    }
+    return rows.join('');
+  }, () => ({
+    xs: xAt, padL, padR, w, h, baseY: h - padB, padT, padB,
+  }), () => forecastCache && drawForecastChart(forecastCache));
 }
 
 // ============================================================

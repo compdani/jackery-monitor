@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Pressable, Text, View } from "react-native";
-import Svg, { Circle, G, Line, Polygon, Polyline, Text as SvgText } from "react-native-svg";
+import Svg, { Circle, G, Line, Polygon, Polyline, Rect, Text as SvgText } from "react-native-svg";
 import { colors } from "../theme";
 
 export type Series = {
@@ -15,6 +15,12 @@ export type Series = {
   dashed?: boolean;
 };
 
+export type ThresholdBand = {
+  /** Axis whose scale maps `value` (Forecast SOC uses left). */
+  axis?: "left" | "right";
+  value: number;
+  color?: string;
+};
 const TICKS = 4;
 const CARD_W = 168;
 
@@ -96,10 +102,13 @@ export function LineChart({
   series,
   height = 180,
   toggleable = false,
+  thresholdBand,
 }: {
   series: Series[];
   height?: number;
   toggleable?: boolean;
+  /** Shade below this value on the chosen axis (e.g. low-SOC band). */
+  thresholdBand?: ThresholdBand | null;
 }) {
   const [width, setWidth] = useState(0);
   const [selectedX, setSelectedX] = useState<number | null>(null);
@@ -299,6 +308,46 @@ export function LineChart({
               );
             })}
 
+            {(() => {
+              if (thresholdBand == null || !Number.isFinite(thresholdBand.value)) return null;
+              const bandAxis = thresholdBand.axis ?? "left";
+              // Use full `series` (not legend-filtered) so SOC 0–100
+              // pinning stays correct when the SOC line is toggled off.
+              const bandSeries = series.filter((s) =>
+                bandAxis === "right"
+                  ? s.axis === "right"
+                  : (s.axis ?? "left") === "left",
+              );
+              const range = axisRange(bandSeries.length ? bandSeries : series);
+              if (!(range.max > range.min)) return null;
+              const clamped = Math.max(range.min, Math.min(range.max, thresholdBand.value));
+              const yThr = scaleY(clamped, range.min, range.max);
+              const bandH = Math.max(0, baseY - yThr);
+              if (bandH <= 0) return null;
+              const color = thresholdBand.color || colors.danger;
+              return (
+                <G key="threshold-band">
+                  <Rect
+                    x={pad.l}
+                    y={yThr}
+                    width={innerW}
+                    height={bandH}
+                    fill={color}
+                    fillOpacity={0.08}
+                  />
+                  <Line
+                    x1={pad.l}
+                    y1={yThr}
+                    x2={W - pad.r}
+                    y2={yThr}
+                    stroke={color}
+                    strokeOpacity={0.4}
+                    strokeWidth={1}
+                    strokeDasharray="4 4"
+                  />
+                </G>
+              );
+            })()}
             {drawn.map((s) => {
               const { min, max } = rangeFor(s);
               const pts = s.values.filter((v) => Number.isFinite(v.x) && Number.isFinite(v.y));

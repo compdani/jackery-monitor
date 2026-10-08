@@ -993,6 +993,37 @@ def _apply_siseli_overlays(
     return _apply_ecoflow_overlay(sn, out, device_id=device_id)
 
 
+def _siseli_forecast_seed(device_sn: str) -> tuple[float | None, int | None]:
+    """Starting SOC % and capacity Wh from Live Siseli overlays (BMS + EcoFlow).
+
+    Forecast used to seed Siseli from Jackery-only ``last_cloud_meta``,
+    which left combo setups at ~50% SOC and the default 3024 Wh while
+    Live / energy history already used overlaid values.
+    """
+    if not device_sn or not siseli_client.is_siseli_sn(device_sn):
+        return None, None
+    with state.siseli_lock:
+        entry = (state.siseli.get("telemetry_by_sn") or {}).get(device_sn) or {}
+    raw = entry.get("telemetry")
+    if not isinstance(raw, dict):
+        return None, None
+    tele = _apply_siseli_overlays(device_sn, raw, device_id=device_sn) or raw
+    soc_f: float | None = None
+    cap_i: int | None = None
+    try:
+        if tele.get("battery_percent") is not None:
+            soc_f = float(tele["battery_percent"])
+    except (TypeError, ValueError):
+        soc_f = None
+    try:
+        cap_raw = tele.get("capacity_wh")
+        if cap_raw is not None and float(cap_raw) > 0:
+            cap_i = int(float(cap_raw))
+    except (TypeError, ValueError):
+        cap_i = None
+    return soc_f, cap_i
+
+
 def _merged_cloud_meta() -> dict:
     """Jackery cloud_meta plus Siseli + EcoFlow fleet devices."""
     cloud = dict(state.last_cloud_meta) if state.last_cloud_meta else {}
@@ -4418,6 +4449,16 @@ async def _build_and_record_forecast(device_sn: str | None) -> dict:
     capacity = _total_capacity_wh(device_sn, model_code)
     starting_soc = _system_soc_pct(main_soc, device_sn, model_code)
     main_wh, pack_wh = _capacity_hints(device_sn)
+
+    # Siseli (+ linked EcoFlow / BMS): seed from the same Live overlays
+    # used by energy recording, not Jackery-only last_cloud_meta.
+    if siseli_client.is_siseli_sn(device_sn):
+        seed_soc, seed_cap = _siseli_forecast_seed(device_sn)
+        if seed_soc is not None:
+            starting_soc = float(seed_soc)
+        if seed_cap is not None and not state.energy.get_capacity_override(device_sn):
+            capacity = int(seed_cap)
+            main_wh, pack_wh = int(seed_cap), None
 
     energy_hist = state.energy.history(
         device_sn, hours=14 * 24, bucket_s=3600,

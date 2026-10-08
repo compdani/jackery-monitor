@@ -645,6 +645,10 @@ export default function ForecastScreen() {
             <LineChart
               height={220}
               toggleable
+              thresholdBand={{
+                axis: "left",
+                value: fc.low_battery_threshold || 20,
+              }}
               series={[
                 {
                   id: "soc",

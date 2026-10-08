@@ -637,3 +637,44 @@ def test_siseli_energy_record_honors_load_sources(server_state):
     server_state.state.device_prefs.update("siseli:42", load_sources=["siseli"])
     server_state._record_siseli_energy("siseli:42", "House", tele, now + 2)
     assert recorded[-1]["output_w"] == 400
+
+
+def test_siseli_forecast_seed_uses_ecoflow_overlay(server_state):
+    """Siseli+EcoFlow forecast must seed SOC/capacity from Live overlays."""
+    import time
+
+    from ecoflow_client import params_to_telemetry
+
+    _seed_siseli(server_state, soc=64)
+    now = time.time()
+    ef = params_to_telemetry({
+        "cms_batt_soc": 80,
+        "pow_get_pv": 0,
+        "pow_out_sum_w": 100,
+    }, alias="Delta 3 Max Plus", capacity_wh=2048)
+    server_state.state.ecoflow_reg.upsert(
+        "R351TEST",
+        device_type="DELTA_3_MAX_PLUS",
+        alias="Delta 3 Max Plus",
+        capacity_wh=2048,
+        siseli_device_sn="siseli:42",
+        roles=["battery", "output"],
+    )
+    server_state.state.ecoflow = {
+        "telemetry_by_sn": {
+            "ecoflow:R351TEST": {"telemetry": ef, "detail": {}, "ts": now},
+        },
+        "state": "connected",
+        "error": None,
+        "last_poll_ts": now,
+    }
+
+    soc, cap = server_state._siseli_forecast_seed("siseli:42")
+    assert soc == 80
+    assert cap == 2048
+
+    # Without EcoFlow, seed still returns Siseli SOC (not Jackery's 50%).
+    server_state.state.ecoflow_reg.delete("ecoflow:R351TEST")
+    soc2, cap2 = server_state._siseli_forecast_seed("siseli:42")
+    assert soc2 == 64
+    assert cap2 is None
