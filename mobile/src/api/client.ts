@@ -222,6 +222,18 @@ export const endpoints = {
     api<{ device_sn: string; days: number; daily: import("./types").DailyRow[] }>("/api/energy/daily", {
       query: { device_sn, days },
     }),
+  correctOutput: (body: {
+    device_sn?: string | null;
+    start_ts: number;
+    end_ts: number;
+    output_w: number;
+  }) =>
+    api<{
+      ok?: boolean;
+      buckets?: number;
+      live_points_patched?: number;
+      device_sn?: string;
+    }>("/api/energy/correct_output", { method: "POST", body }),
 
   forecast: (device_sn?: string | null) =>
     api("/api/forecast", { query: { device_sn } }),
@@ -443,6 +455,24 @@ export const endpoints = {
       error?: string | null;
       devices?: Record<string, unknown>[];
     }>("/api/ecoflow/reconnect", { method: "POST" }),
+  ecoflowReconnectSettings: () =>
+    api<{
+      ok?: boolean;
+      auto_reconnect?: boolean;
+      reconnect_start?: string | null;
+      reconnect_end?: string | null;
+    }>("/api/ecoflow/reconnect_settings"),
+  setEcoflowReconnectSettings: (body: {
+    auto_reconnect?: boolean;
+    reconnect_start?: string | null;
+    reconnect_end?: string | null;
+  }) =>
+    api<{
+      ok?: boolean;
+      auto_reconnect?: boolean;
+      reconnect_start?: string | null;
+      reconnect_end?: string | null;
+    }>("/api/ecoflow/reconnect_settings", { method: "POST", body }),
   ecoflowDevices: () => api<{ devices?: Record<string, unknown>[] }>("/api/ecoflow/devices"),
   saveEcoflowDevice: (body: Record<string, unknown>) =>
     api("/api/ecoflow/devices", { method: "POST", body }),

@@ -391,6 +391,36 @@
         </div>
         <canvas id="chart-live" class="chart"></canvas>
       </section>
+
+      <section class="card collapsible collapsed" id="correct-output-card" data-collapse-key="correct-output">
+        <div class="card-header collapsible-header" role="button" tabindex="0" aria-expanded="false">
+          <h2>Correct output</h2>
+          <span class="hint" id="correct-output-status">Fix EcoFlow dropout gaps</span>
+          <span class="collapsible-chevron" aria-hidden="true">▾</span>
+        </div>
+        <form id="correct-output-form" class="auto-form-grid" style="padding:0 4px 8px">
+          <p class="hint" style="grid-column:1/-1; margin:0 0 4px">
+            Overwrites stored load Wh and the Live chart for the range.
+            Use after EcoFlow MQTT drops recorded 0 W. Max 24 hours.
+          </p>
+          <label class="auto-field">
+            <span class="auto-label">From</span>
+            <input id="correct-output-start" type="datetime-local" required />
+          </label>
+          <label class="auto-field">
+            <span class="auto-label">To</span>
+            <input id="correct-output-end" type="datetime-local" required />
+          </label>
+          <label class="auto-field">
+            <span class="auto-label">Output (W)</span>
+            <input id="correct-output-w" type="number" min="0" step="1" required placeholder="e.g. 1200" />
+          </label>
+          <div style="grid-column:1/-1; display:flex; gap:8px; align-items:center; flex-wrap:wrap">
+            <button class="btn btn-primary" type="submit">Apply correction</button>
+            <span id="correct-output-msg" class="hint" hidden></span>
+          </div>
+        </form>
+      </section>
     </section>
 
     <!-- ============== ENERGY TAB ============== -->
@@ -1152,6 +1182,31 @@
           <div style="margin-top:14px; display:flex; gap:8px">
             <button class="btn btn-primary" type="submit">Save credentials</button>
             <button id="ecoflow-creds-clear" class="btn btn-ghost" type="button">Forget</button>
+          </div>
+        </form>
+        <hr style="margin:18px 0; border:none; border-top:1px solid var(--border, #333)" />
+        <h3 style="margin:0 0 8px; font-size:14px">Auto-reconnect</h3>
+        <p class="hint" style="margin:0 0 12px">
+          When MQTT stays connected but silent, restart the session automatically.
+          Manual Reconnect on the Live EcoFlow card always works. Leave times blank
+          to allow any hour; both start and end are required for a daily window.
+        </p>
+        <form id="ecoflow-reconnect-form" class="auto-form-grid">
+          <label class="auto-field" style="grid-column:1/-1; flex-direction:row; align-items:center; gap:10px">
+            <input id="ecoflow-auto-reconnect" type="checkbox" checked />
+            <span class="auto-label" style="margin:0">Enable auto-reconnect</span>
+          </label>
+          <label class="auto-field">
+            <span class="auto-label">Window start</span>
+            <input id="ecoflow-reconnect-start" type="time" />
+          </label>
+          <label class="auto-field">
+            <span class="auto-label">Window end</span>
+            <input id="ecoflow-reconnect-end" type="time" />
+          </label>
+          <span id="ecoflow-reconnect-msg" class="hint" hidden></span>
+          <div style="grid-column:1/-1; margin-top:4px; display:flex; gap:8px">
+            <button class="btn btn-primary" type="submit">Save reconnect settings</button>
           </div>
         </form>
         <hr style="margin:18px 0; border:none; border-top:1px solid var(--border, #333)" />

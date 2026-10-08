@@ -2915,6 +2915,15 @@ function ecoflowCredsStatusText(j) {
   return `saved${email}`;
 }
 
+function applyEcoflowReconnectForm(cfg) {
+  const auto = $('ecoflow-auto-reconnect');
+  const start = $('ecoflow-reconnect-start');
+  const end = $('ecoflow-reconnect-end');
+  if (auto) auto.checked = cfg?.auto_reconnect !== false;
+  if (start) start.value = cfg?.reconnect_start || '';
+  if (end) end.value = cfg?.reconnect_end || '';
+}
+
 async function loadEcoflowCreds() {
   const status = $('ecoflow-creds-status');
   const emailEl = $('ecoflow-creds-email');
@@ -2927,6 +2936,7 @@ async function loadEcoflowCreds() {
     if (hostEl) {
       hostEl.value = j.api_host || 'api.ecoflow.com';
     }
+    applyEcoflowReconnectForm(j.reconnect || {});
     fillEcoflowSiseliPicker();
     renderEcoflowDeviceList(j.devices || []);
     if (status) status.textContent = ecoflowCredsStatusText(j);
@@ -2935,6 +2945,35 @@ async function loadEcoflowCreds() {
     console.error('loadEcoflowCreds', e);
   }
 }
+
+$('ecoflow-reconnect-form')?.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const msg = $('ecoflow-reconnect-msg');
+  const submitBtn = e.target.querySelector('button[type="submit"]');
+  try {
+    if (msg) { msg.hidden = true; msg.textContent = ''; }
+    if (submitBtn) submitBtn.disabled = true;
+    const start = ($('ecoflow-reconnect-start')?.value || '').trim();
+    const end = ($('ecoflow-reconnect-end')?.value || '').trim();
+    const r = await fetch('/api/ecoflow/reconnect_settings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        auto_reconnect: !!$('ecoflow-auto-reconnect')?.checked,
+        reconnect_start: start || null,
+        reconnect_end: end || null,
+      }),
+    });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(apiDetail(j, r.statusText));
+    applyEcoflowReconnectForm(j);
+    if (msg) { msg.hidden = false; msg.textContent = 'Saved.'; }
+  } catch (err) {
+    if (msg) { msg.hidden = false; msg.textContent = err.message || String(err); }
+  } finally {
+    if (submitBtn) submitBtn.disabled = false;
+  }
+});
 
 $('ecoflow-creds-form')?.addEventListener('submit', async (e) => {
   e.preventDefault();
@@ -2960,6 +2999,66 @@ $('ecoflow-creds-form')?.addEventListener('submit', async (e) => {
     if (status) status.textContent = `saved${j.email ? ` (${j.email})` : ''}`;
     if (msg) { msg.hidden = false; msg.textContent = 'Saved.'; }
     await loadEcoflowCreds();
+  } catch (err) {
+    if (msg) { msg.hidden = false; msg.textContent = err.message || String(err); }
+  } finally {
+    if (submitBtn) submitBtn.disabled = false;
+  }
+});
+
+function localDatetimeToUnix(value) {
+  if (!value) return null;
+  const ms = Date.parse(value);
+  if (!Number.isFinite(ms)) return null;
+  return Math.floor(ms / 1000);
+}
+
+$('correct-output-form')?.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const msg = $('correct-output-msg');
+  const status = $('correct-output-status');
+  const submitBtn = e.target.querySelector('button[type="submit"]');
+  try {
+    if (msg) { msg.hidden = true; msg.textContent = ''; }
+    if (submitBtn) submitBtn.disabled = true;
+    const startTs = localDatetimeToUnix($('correct-output-start')?.value);
+    const endTs = localDatetimeToUnix($('correct-output-end')?.value);
+    const outputW = Number($('correct-output-w')?.value);
+    if (startTs == null || endTs == null) throw new Error('Start and end times are required');
+    if (!Number.isFinite(outputW) || outputW < 0) throw new Error('Output watts must be >= 0');
+    const sn = activeJackeryDevice()?.device_sn
+      || lastStatus?.device?.device_sn
+      || null;
+    const r = await fetch('/api/energy/correct_output', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        device_sn: sn,
+        start_ts: startTs,
+        end_ts: endTs,
+        output_w: outputW,
+      }),
+    });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(apiDetail(j, r.statusText));
+    const note = `Updated ${j.buckets || 0} min · ${j.live_points_patched || 0} live points`;
+    if (msg) { msg.hidden = false; msg.textContent = note; }
+    if (status) status.textContent = note;
+    try {
+      const sr = await fetch('/api/status', { cache: 'no-store' });
+      if (sr.ok) {
+        const sj = await sr.json();
+        if (sj && typeof applyStatus === 'function') applyStatus(sj);
+        else if (sj) {
+          lastStatus = sj;
+          drawLiveChart(sj);
+        }
+      } else if (lastStatus) {
+        drawLiveChart(lastStatus);
+      }
+    } catch (_) {
+      if (lastStatus) drawLiveChart(lastStatus);
+    }
   } catch (err) {
     if (msg) { msg.hidden = false; msg.textContent = err.message || String(err); }
   } finally {

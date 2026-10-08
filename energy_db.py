@@ -575,6 +575,68 @@ class EnergyDB(ForecastTablesMixin, AutomationTablesMixin):
             ).fetchall()
         return [dict(r) for r in rows]
 
+    def correct_output_w(
+        self,
+        device_sn: str,
+        start_ts: float,
+        end_ts: float,
+        output_w: float,
+        *,
+        max_span_s: int = 24 * 3600,
+    ) -> dict:
+        """Overwrite ``last_output_w`` / ``output_wh`` for each minute bucket.
+
+        Used to fix EcoFlow dropout gaps. Leaves solar/input/battery columns
+        untouched. ``output_wh`` for each minute is ``output_w * (BUCKET_S/3600)``.
+
+        Returns ``{buckets, start_bucket, end_bucket, output_w}``.
+        Raises ``ValueError`` on bad arguments.
+        """
+        if not device_sn:
+            raise ValueError("device_sn is required")
+        try:
+            start_ts = float(start_ts)
+            end_ts = float(end_ts)
+            output_w = float(output_w)
+        except (TypeError, ValueError) as e:
+            raise ValueError("start_ts, end_ts, and output_w must be numbers") from e
+        if output_w < 0:
+            raise ValueError("output_w must be >= 0")
+        if end_ts <= start_ts:
+            raise ValueError("end_ts must be after start_ts")
+        if end_ts - start_ts > max_span_s:
+            raise ValueError(f"range exceeds {max_span_s // 3600}h maximum")
+
+        start_bucket = int(start_ts // BUCKET_S) * BUCKET_S
+        out_w_i = int(round(output_w))
+        out_wh = float(output_w) * (BUCKET_S / 3600.0)
+        buckets = 0
+        last_bucket = start_bucket
+        with self._conn() as c:
+            b = start_bucket
+            # Half-open [start_ts, end_ts): touch every minute that starts in range.
+            while b < end_ts:
+                c.execute(
+                    """INSERT INTO samples
+                           (device_sn, bucket, input_wh, output_wh, solar_wh,
+                            ac_input_wh, last_output_w, sample_count)
+                       VALUES (?, ?, 0, ?, 0, 0, ?, 1)
+                       ON CONFLICT(device_sn, bucket) DO UPDATE SET
+                         output_wh = excluded.output_wh,
+                         last_output_w = excluded.last_output_w
+                    """,
+                    (device_sn, b, out_wh, out_w_i),
+                )
+                buckets += 1
+                last_bucket = b
+                b += BUCKET_S
+        return {
+            "buckets": buckets,
+            "start_bucket": start_bucket,
+            "end_bucket": last_bucket,
+            "output_w": out_w_i,
+        }
+
     def get_capacity_override(self, device_sn: str) -> int | None:
         if not device_sn:
             return None

@@ -31,6 +31,7 @@ def isolated_data(tmp_path, monkeypatch):
     monkeypatch.setenv("JACKERY_KASA_CREDS_FILE",      str(data / "kasa-creds.json"))
     monkeypatch.setenv("JACKERY_SISELI_CREDS_FILE",    str(data / "siseli-creds.json"))
     monkeypatch.setenv("JACKERY_ECOFLOW_CREDS_FILE",   str(data / "ecoflow-creds.json"))
+    monkeypatch.setenv("JACKERY_ECOFLOW_RECONNECT_FILE", str(data / "ecoflow_reconnect.json"))
     monkeypatch.setenv("JACKERY_KASA_DEVICES_FILE",    str(data / "kasa_devices.json"))
     monkeypatch.setenv("JACKERY_BMS_DEVICES_FILE",     str(data / "bms_devices.json"))
     monkeypatch.setenv("JACKERY_ECOFLOW_DEVICES_FILE", str(data / "ecoflow_devices.json"))

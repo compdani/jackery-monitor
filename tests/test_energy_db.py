@@ -42,6 +42,38 @@ def test_record_works_without_solar_arg_for_back_compat(db):
     assert all(r["solar_w"] == 0 for r in rows)
 
 
+def test_correct_output_w_overwrites_minute_buckets(db):
+    sn = "TEST-CORR"
+    db.upsert_device(sn, "House", None, None)
+    t0 = int(time.time()) - 3600
+    t0 = (t0 // 60) * 60
+    # Seed two minutes with low load, then correct a 10-minute span.
+    db.record(sn, t0, input_w=0, output_w=50, battery_pct=70)
+    db.record(sn, t0 + 60, input_w=0, output_w=50, battery_pct=70)
+    result = db.correct_output_w(sn, t0, t0 + 600, 1200)
+    assert result["buckets"] == 10
+    assert result["output_w"] == 1200
+    rows = db.history(sn, hours=24, bucket_s=60)
+    touched = [r for r in rows if t0 <= r["ts"] < t0 + 600]
+    assert len(touched) >= 1
+    for r in touched:
+        assert r["output_w"] == 1200
+        # ~20 Wh per minute at 1200 W
+        assert 19 < r["output_wh"] < 21
+
+
+def test_correct_output_w_rejects_bad_range(db):
+    sn = "TEST-CORR-BAD"
+    db.upsert_device(sn, "House", None, None)
+    t0 = time.time()
+    with pytest.raises(ValueError):
+        db.correct_output_w(sn, t0, t0 - 10, 100)
+    with pytest.raises(ValueError):
+        db.correct_output_w(sn, t0, t0 + 48 * 3600, 100)
+    with pytest.raises(ValueError):
+        db.correct_output_w(sn, t0, t0 + 60, -1)
+
+
 def test_capacity_override_round_trip(db):
     sn = "TEST-CAP"
     db.upsert_device(sn, "Test 5000+B5000", 13, "Explorer 5000 Plus")

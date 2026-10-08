@@ -51,6 +51,7 @@ import cost as cost_module
 import ecoflow_client
 import ecoflow_creds
 import ecoflow_devices
+import ecoflow_reconnect
 import energy_db
 import forecast_solar
 import forecaster
@@ -1627,6 +1628,31 @@ async def ecoflow_loop() -> None:
                                     "MQTT up but no telemetry yet "
                                     "(check SN / device online)"
                                 )
+                    # Silent past quota retries → force reconnect inside
+                    # the configured daily window (manual reconnect ignores it).
+                    elif (
+                        stale
+                        and quota_attempts >= 3
+                        and (last_poll is None or (now - float(last_poll)) > 90.0)
+                    ):
+                        tz_off = int(device_location.get_tz_offset() or 0)
+                        if ecoflow_reconnect.auto_reconnect_allowed(
+                            now, tz_offset_s=tz_off,
+                        ):
+                            log.info(
+                                "ecoflow silent >90s after quota retries; "
+                                "auto-reconnect inside daily window",
+                            )
+                            with state.ecoflow_lock:
+                                state.ecoflow["next_retry_ts"] = 0.0
+                                state.ecoflow["quota_attempts"] = 0
+                            await asyncio.to_thread(_ecoflow_stop_client)
+                            state.ecoflow_wake.set()
+                        else:
+                            log.debug(
+                                "ecoflow silent but auto-reconnect outside "
+                                "daily window; skipping force restart",
+                            )
             else:
                 if state.ecoflow_client is not None:
                     await asyncio.to_thread(_ecoflow_stop_client)
@@ -4320,6 +4346,55 @@ def api_energy_totals(device_sn: str | None = None):
     return _decorate_totals_with_savings(state.energy.totals(device_sn), device_sn)
 
 
+def _patch_live_history_output(start_ts: float, end_ts: float, output_w: float) -> int:
+    """Update in-memory Live chart points in [start_ts, end_ts]."""
+    n = 0
+    for pt in state.history:
+        try:
+            ts = float(pt.get("ts") or 0)
+        except (TypeError, ValueError):
+            continue
+        if start_ts <= ts < end_ts:
+            pt["output_power_w"] = float(output_w)
+            n += 1
+    # Drop view-history cache so the next serialize picks up DB corrections.
+    cache = getattr(state, "view_history_cache", None)
+    if isinstance(cache, dict):
+        cache.clear()
+    return n
+
+
+@app.post("/api/energy/correct_output")
+async def api_energy_correct_output(body: dict):
+    """Overwrite stored + Live power-out for a time range (EcoFlow gap fix)."""
+    payload = body or {}
+    device_sn = (payload.get("device_sn") or "").strip() or None
+    if not device_sn:
+        device_sn = (
+            (state.last_status or {}).get("device", {}) or {}
+        ).get("device_sn") or (state.device.device_sn if state.device else None)
+    if not device_sn:
+        raise HTTPException(400, "device_sn is required")
+    try:
+        start_ts = float(payload.get("start_ts"))
+        end_ts = float(payload.get("end_ts"))
+        output_w = float(payload.get("output_w"))
+    except (TypeError, ValueError):
+        raise HTTPException(400, "start_ts, end_ts, and output_w are required numbers") from None
+    try:
+        result = state.energy.correct_output_w(device_sn, start_ts, end_ts, output_w)
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+    patched = _patch_live_history_output(start_ts, end_ts, float(result["output_w"]))
+    await broadcast_status("telemetry")
+    return {
+        "ok": True,
+        "device_sn": device_sn,
+        "live_points_patched": patched,
+        **result,
+    }
+
+
 @app.get("/api/cost/plan")
 def api_cost_get():
     """Return the saved plan plus the list of presets the UI can offer."""
@@ -6463,6 +6538,7 @@ def _ecoflow_creds_status() -> dict[str, Any]:
         "mqtt_update_count": stats.get("mqtt_update_count", 0),
         "last_mqtt_topic": stats.get("last_mqtt_topic"),
         "devices": state.ecoflow_reg.list_devices(),
+        "reconnect": ecoflow_reconnect.get(),
     }
 
 
@@ -6471,12 +6547,27 @@ def api_ecoflow_creds_status():
     return _ecoflow_creds_status()
 
 
+@app.get("/api/ecoflow/reconnect_settings")
+def api_ecoflow_reconnect_settings_get():
+    return {"ok": True, **ecoflow_reconnect.get()}
+
+
+@app.post("/api/ecoflow/reconnect_settings")
+async def api_ecoflow_reconnect_settings_set(body: dict):
+    try:
+        cfg = ecoflow_reconnect.set_config(body or {})
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+    return {"ok": True, **cfg}
+
+
 @app.post("/api/ecoflow/reconnect")
 async def api_ecoflow_reconnect():
     """Force-restart the EcoFlow MQTT session (Live card Reconnect).
 
     Soft wake is not enough when the client still reports connected but
     telemetry is stale — stop first so ecoflow_loop must start again.
+    Ignores the daily auto-reconnect window.
     """
     if not ecoflow_creds.has_credentials():
         raise HTTPException(400, "EcoFlow credentials not configured")
@@ -6484,6 +6575,7 @@ async def api_ecoflow_reconnect():
         raise HTTPException(400, "No EcoFlow devices registered")
     with state.ecoflow_lock:
         state.ecoflow["next_retry_ts"] = 0.0
+        state.ecoflow["quota_attempts"] = 0
     await asyncio.to_thread(_ecoflow_stop_client)
     state.ecoflow_wake.set()
     return {"ok": True, **_ecoflow_creds_status()}

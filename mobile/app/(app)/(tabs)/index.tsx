@@ -9,9 +9,11 @@ import { SiseliLiveControls } from "../../../src/components/SiseliControls";
 import {
   Btn,
   Card,
+  Collapsible,
   EnergyKpi,
   EodForecastPill,
   Eyebrow,
+  Field,
   Hint,
   Pill,
   SavingsRow,
@@ -224,6 +226,11 @@ export default function LiveScreen() {
   const [efPending, setEfPending] = useState<Record<string, PendingToggle>>({});
   const [toggleErr, setToggleErr] = useState<string | null>(null);
   const [efReconnectBusy, setEfReconnectBusy] = useState(false);
+  const [correctStart, setCorrectStart] = useState("");
+  const [correctEnd, setCorrectEnd] = useState("");
+  const [correctW, setCorrectW] = useState("");
+  const [correctBusy, setCorrectBusy] = useState(false);
+  const [correctMsg, setCorrectMsg] = useState<string | null>(null);
   const [kasaBusy, setKasaBusy] = useState<"charge" | "divert" | null>(null);
   const [chargeHost, setChargeHost] = useState<string | null>(null);
   const [divertHost, setDivertHost] = useState<string | null>(null);
@@ -480,6 +487,38 @@ export default function LiveScreen() {
       setToggleErr(e instanceof Error ? e.message : "EcoFlow reconnect failed");
     } finally {
       setTimeout(() => setEfReconnectBusy(false), 800);
+    }
+  }
+
+  async function applyCorrectOutput() {
+    if (correctBusy) return;
+    const startMs = Date.parse(correctStart.replace(" ", "T"));
+    const endMs = Date.parse(correctEnd.replace(" ", "T"));
+    const watts = Number(correctW);
+    if (!Number.isFinite(startMs) || !Number.isFinite(endMs)) {
+      setCorrectMsg("Use times like 2026-10-08 13:00");
+      return;
+    }
+    if (!Number.isFinite(watts) || watts < 0) {
+      setCorrectMsg("Output watts must be >= 0");
+      return;
+    }
+    setCorrectBusy(true);
+    setCorrectMsg(null);
+    try {
+      const j = await endpoints.correctOutput({
+        device_sn: sn || null,
+        start_ts: Math.floor(startMs / 1000),
+        end_ts: Math.floor(endMs / 1000),
+        output_w: watts,
+      });
+      setCorrectMsg(
+        `Updated ${j.buckets ?? 0} min · ${j.live_points_patched ?? 0} live points`,
+      );
+    } catch (e: unknown) {
+      setCorrectMsg(e instanceof Error ? e.message : "Correction failed");
+    } finally {
+      setCorrectBusy(false);
     }
   }
 
@@ -918,6 +957,44 @@ export default function LiveScreen() {
           ]}
         />
       </Card>
+
+      <Collapsible title="Correct output" summary="Fix EcoFlow dropout gaps">
+        <Hint>
+          Overwrites stored load Wh and the Live chart for the range (max 24h). Times
+          are local, e.g. 2026-10-08 13:00.
+        </Hint>
+        <Field
+          label="From"
+          value={correctStart}
+          onChangeText={setCorrectStart}
+          placeholder="2026-10-08 13:00"
+          autoCapitalize="none"
+        />
+        <Field
+          label="To"
+          value={correctEnd}
+          onChangeText={setCorrectEnd}
+          placeholder="2026-10-08 13:40"
+          autoCapitalize="none"
+        />
+        <Field
+          label="Output (W)"
+          value={correctW}
+          onChangeText={setCorrectW}
+          placeholder="1200"
+          keyboardType="numeric"
+        />
+        <Btn
+          title="Apply correction"
+          kind="primary"
+          loading={correctBusy}
+          disabled={correctBusy}
+          onPress={() => void applyCorrectOutput()}
+        />
+        {correctMsg ? (
+          <Text style={{ color: colors.textDim, fontSize: 12 }}>{correctMsg}</Text>
+        ) : null}
+      </Collapsible>
     </Screen>
   );
 }

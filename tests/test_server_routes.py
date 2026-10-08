@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import importlib
 import os
+import time
 
 import pytest
 from fastapi.testclient import TestClient
@@ -443,6 +444,38 @@ def test_energy_daily_requires_auth(unauth_client):
 
 
 # ---------- energy history bucket size ----------
+
+def test_energy_correct_output(app, client):
+    sn = "TEST-CORR-API"
+    app.state.energy.upsert_device(sn, "House", None, None)
+    t0 = (int(time.time()) - 1800) // 60 * 60
+    app.state.history.clear()
+    app.state.history.append({
+        "ts": t0 + 30, "battery_percent": 50,
+        "input_power_w": 0, "output_power_w": 0,
+    })
+    r = client.post("/api/energy/correct_output", json={
+        "device_sn": sn,
+        "start_ts": t0,
+        "end_ts": t0 + 300,
+        "output_w": 800,
+    })
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["ok"] is True
+    assert body["buckets"] == 5
+    assert body["live_points_patched"] == 1
+    assert list(app.state.history)[0]["output_power_w"] == 800
+    rows = app.state.energy.history(sn, hours=24, bucket_s=60)
+    touched = [p for p in rows if t0 <= p["ts"] < t0 + 300]
+    assert touched
+    assert all(p["output_w"] == 800 for p in touched)
+
+    bad = client.post("/api/energy/correct_output", json={
+        "device_sn": sn, "start_ts": t0, "end_ts": t0 + 10, "output_w": -5,
+    })
+    assert bad.status_code == 400
+
 
 def test_energy_history_bucket_s_allow_list_and_coarsen(app, client):
     """/api/energy/history honors 15m/30m/1h, falls back on junk, and
@@ -1310,6 +1343,23 @@ def test_ecoflow_reconnect_requires_setup(client):
     r = client.post("/api/ecoflow/reconnect")
     assert r.status_code == 400
     assert "credentials" in r.json()["detail"].lower()
+
+
+def test_ecoflow_reconnect_settings_round_trip(client):
+    st = client.get("/api/ecoflow/reconnect_settings")
+    assert st.status_code == 200
+    assert st.json()["auto_reconnect"] is True
+    saved = client.post("/api/ecoflow/reconnect_settings", json={
+        "auto_reconnect": True,
+        "reconnect_start": "06:00",
+        "reconnect_end": "22:00",
+    })
+    assert saved.status_code == 200, saved.text
+    body = saved.json()
+    assert body["reconnect_start"] == "06:00"
+    assert body["reconnect_end"] == "22:00"
+    creds = client.get("/api/ecoflow/credentials").json()
+    assert creds["reconnect"]["reconnect_start"] == "06:00"
 
 
 def test_ecoflow_reconnect_stops_and_wakes(app, client, monkeypatch):
