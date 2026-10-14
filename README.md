@@ -618,3 +618,7 @@ Reverse-engineered protocol references:
   original auth-flow analysis.
 
 This app is unaffiliated with Jackery Inc. or TP-Link / Kasa.
+
+### BLE Inspector
+
+The **BLE Inspector** dashboard tab and standalone read-only CLI collect BLE advertisements and GATT data for Sileli/JJN protocol investigation. See [BLE setup, commands, captures, and limits](docs/BLE_INSPECTOR.md).

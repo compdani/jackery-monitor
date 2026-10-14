@@ -458,7 +458,7 @@ $('forget-creds')?.addEventListener('click', async () => {
 // URL on explicit navigations (clearing the hash from the address bar
 // would be over-ridden by the saved value, snapping back).
 const VALID_TABS = new Set([
-  'live', 'energy', 'forecast', 'device', 'automation', 'logs', 'settings',
+  'live', 'energy', 'forecast', 'device', 'automation', 'logs', 'settings', 'ble',
 ]);
 
 document.querySelectorAll('.tab').forEach((tab) => {

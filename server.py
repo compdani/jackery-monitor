@@ -46,6 +46,7 @@ import backup
 import backup_creds
 import backup_discover
 import bms_ble
+import ble_routes
 import bms_devices
 import cost as cost_module
 import ecoflow_client
@@ -4056,6 +4057,7 @@ async def lifespan(app: FastAPI):
         ),
     )
     yield
+    await ble_routes.sessions.stop()
     try:
         import siseli_local.runner as sl_runner
         sl_runner.stop()
@@ -4090,6 +4092,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Solar Pow Monitor", lifespan=lifespan)
+app.include_router(ble_routes.router)
 
 
 @app.middleware("http")

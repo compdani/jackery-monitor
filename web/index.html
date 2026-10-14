@@ -20,7 +20,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/style.css?v=18" />
+  <link rel="stylesheet" href="/static/style.css?v=19" />
 </head>
 <body>
   <!-- =============== LOGIN MODAL =============== -->
@@ -98,9 +98,40 @@
       <button class="tab" data-tab="forecast">Forecast</button>
       <button class="tab" data-tab="device">Device</button>
       <button class="tab" data-tab="automation">Automation<span id="tab-automation-dot" class="tab-dot" hidden title="New AI insights pending"></span></button>
+      <button class="tab" data-tab="ble">BLE Inspector</button>
       <button class="tab" data-tab="logs">Logs</button>
       <button class="tab" data-tab="settings">Settings</button>
     </nav>
+
+    <section id="tab-ble" class="tab-panel" hidden>
+      <section class="card">
+        <h2>BLE Inspector</h2>
+        <p>Inspect advertisements and GATT using the server’s Bluetooth adapter. No controller commands or characteristic value writes. Connecting may prevent the vendor app from connecting.</p>
+        <p class="hint">This is not a passive radio packet sniffer. Text interpretations are guesses; hex preserves received bytes. Notification subscriptions explicitly let BlueZ configure the subscription descriptor.</p>
+        <div class="form-row">
+          <label>Name filter <input id="ble-name" placeholder="Sileli (optional)"></label>
+          <label>Address filter / target <input id="ble-address" placeholder="AA:BB:CC:DD:EE:FF"></label>
+          <label>Scan seconds <input id="ble-seconds" type="number" min="1" max="120" value="10"></label>
+          <button class="btn" id="ble-scan" type="button">Scan devices</button>
+          <button class="btn" id="ble-inspect" type="button">Inspect GATT</button>
+        </div>
+        <div id="ble-devices"></div>
+        <div class="form-row">
+          <label><input id="ble-read" type="checkbox"> Read readable characteristics</label>
+          <label>Notification seconds <input id="ble-duration" type="number" min="1" max="3600" value="30"></label>
+          <button class="btn btn-primary" id="ble-start" type="button">Start selected capture</button>
+          <button class="btn" id="ble-stop" type="button">Stop</button>
+        </div>
+        <p class="hint">Inspect GATT first, then explicitly select notification characteristics below. Start reconnects and verifies the current GATT structure.</p>
+        <p id="ble-status" role="status"></p>
+        <div id="ble-gatt"></div>
+        <h3>Recent events (latest 200)</h3>
+        <pre id="ble-events" style="max-height:400px;overflow:auto;white-space:pre-wrap"></pre>
+        <h3>Saved captures</h3>
+        <button id="ble-refresh" class="btn" type="button">Refresh captures</button>
+        <div id="ble-captures"></div>
+      </section>
+    </section>
 
     <!-- ============== LIVE TAB ============== -->
     <section id="tab-live" class="tab-panel">
@@ -2530,6 +2561,7 @@
   </footer>
 
   <script src="/static/sortable.min.js"></script>
-  <script src="/static/app.js?v=21"></script>
+  <script src="/static/app.js?v=22"></script>
+  <script src="/static/ble.js" defer></script>
 </body>
 </html>

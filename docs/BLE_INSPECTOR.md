@@ -1,0 +1,86 @@
+# BLE Inspector for Raspberry Pi
+
+Use the **BLE Inspector** dashboard tab (`/#ble`) or `ble_inspector.py` to investigate a nearby Sileli Bluetooth module attached to a JJN MPPT controller. The dashboard server must run on the Pi: a browser on your laptop uses the **server's** adapter, not the laptop's Bluetooth.
+
+This tool performs BLE advertisement scanning and GATT-client inspection. It is **not a passive over-the-air packet sniffer**. BlueZ/Bleak exposes parsed advertisement fields; these are not complete radio packets. Scanning is active and may request scan responses. Connecting and reading generate BLE traffic.
+
+There are no characteristic-value writes, descriptor-write calls, controller commands, setting changes, protocol replay, or automatic pairing. Structure discovery is the default; reads require `--read-all` or the dashboard checkbox. Notifications require explicit characteristic selection. Starting notifications lets BlueZ configure the client subscription descriptor (CCCD); this is the sole intentional subscription configuration, not a controller command.
+
+## Raspberry Pi OS setup
+
+Use Python 3.11 or newer for this repository and current Raspberry Pi OS with BlueZ 5.55 or newer. From the repository directory:
+
+```bash
+sudo apt update
+sudo apt install bluez dbus rfkill python3-venv python3-pip
+sudo systemctl enable --now bluetooth
+systemctl status bluetooth --no-pager
+rfkill list bluetooth
+sudo rfkill unblock bluetooth
+bluetoothctl list
+bluetoothctl show
+bluetoothctl power on
+
+python3 -m venv .venv
+source .venv/bin/activate
+# CLI alone:
+python -m pip install 'bleak>=0.22'
+# Full dashboard instead:
+python -m pip install -r requirements.txt
+```
+
+Run the CLI as your ordinary user. Bleak talks to the system `bluetoothd` over D-Bus; it does not require raw HCI socket privileges. Access depends on the OS D-Bus/BlueZ policy and the user running the process. If access is denied, check `journalctl -u bluetooth`, system D-Bus policy, and the service user's group membership. If your distribution's policy uses a `bluetooth` group, add that user with `sudo usermod -aG bluetooth USERNAME` and log out/in or restart its service. Group membership alone is not a universal fix. Do not run pip with sudo or grant broad capabilities to Python.
+
+Missing adapter/power, permission, dependency, discovery, and connection errors appear in the event capture and dashboard. An installed Bleak package alone does not prove the adapter is usable. Keep the module powered and nearby; disconnect the vendor app before testing. **Connecting here may prevent the vendor phone app from connecting simultaneously.**
+
+For Docker, the existing Compose configuration mounts `/var/run/dbus:/var/run/dbus:ro`; host `bluetoothd` and its adapter must be available, and its D-Bus policy must permit the container process. The container does not run its own Bluetooth service. Native Pi execution is simplest for diagnosis. Run one dashboard server worker per adapter: the shared BMS/inspector lock coordinates only operations within that process. Stop competing CLI tools, dashboard instances, or other Bluetooth clients while using the standalone CLI.
+
+## CLI examples
+
+```bash
+python ble_inspector.py --help
+python ble_inspector.py scan --help
+python ble_inspector.py inspect --help
+python ble_inspector.py scan --seconds 15
+python ble_inspector.py scan --name Sileli --output scan.json
+python ble_inspector.py scan --address AA:BB:CC:DD:EE:FF --output scan.jsonl
+python ble_inspector.py inspect --address AA:BB:CC:DD:EE:FF
+python ble_inspector.py inspect --name Sileli --read-all --output reads.json
+python ble_inspector.py inspect --address AA:BB:CC:DD:EE:FF \
+  --notify CHARACTERISTIC_UUID --duration 60 --output capture.jsonl
+# Select multiple characteristics, or use a decimal / 0x-prefixed handle:
+python ble_inspector.py inspect --address AA:BB:CC:DD:EE:FF \
+  --notify 0x12 --notify 23 --duration 30 --output notifications.jsonl
+```
+
+Replace example addresses, UUIDs, and handles with values from your own scan/inspection. Names match case-insensitive substrings; addresses match exactly, ignoring case. Inspection always performs a fresh scan and requires exactly one match; ambiguous names produce candidate addresses. Unknown names remain null, and addresses can rotate. Rescan and select the current observation; the tool does not claim that two addresses belong to the same module. UUIDs repeated within a GATT database require handle selectors.
+
+Scans default to 10 seconds (1–120). Notification duration defaults to 30 seconds (1–3600). `--timeout` bounds connection and individual GATT operations, defaulting to 15 seconds (1–120). Only readable characteristics are read, and individual read failures remain in the capture. Write-only characteristics are listed without accessing their values. Reads finish before notifications start. Ctrl+C cancels the operation and closes the scanner/client; there is no automatic reconnect. A silent notification stream is valid: some modules only report after a proprietary request, which this tool deliberately will not send. Read access can also require authentication or be denied despite advertised properties.
+
+Events print as JSON lines, including device fields and raw payloads. Without `--output`, a timestamp-named JSONL file is created in the current directory. Existing files are never overwritten. JSON outputs retain an append-only `OUTPUT.json.jsonl` recovery journal as well as the final JSON document. If interrupted before JSON export, use that journal. An incomplete operation returns a nonzero exit code; per-characteristic read errors can coexist with successful completion.
+
+## Dashboard workflow
+
+1. Open **BLE Inspector**, optionally enter scan filters, and click **Scan devices**.
+2. Select a device row (including unnamed devices) or enter its address. Click **Inspect GATT** to list structure without reads or subscriptions.
+3. Optionally enable **Read readable characteristics** and explicitly check notification characteristics. Set the capture duration, then click **Start selected capture**. With no selections, it only discovers structure and optionally reads.
+4. Click **Stop** to end early. Changing tabs does not stop a capture. Reopening the page can recover the active session.
+5. Use saved capture **View**, **JSON**, **JSONL**, or **Delete** controls. Stop an active capture before downloading or deleting it.
+
+The inspector shares the adapter lock with existing BMS scanning/polling. A busy adapter returns a clear conflict; retry after the current operation finishes. Long captures postpone BMS polling. The live event viewer and device list are bounded to 200 entries; the complete journal remains on disk. Handles selected in the page are checked against their previously discovered UUID before subscribing; inspect again if the structure changes.
+
+Dashboard captures live under `$JACKERY_DATA_DIR/ble-captures` (default `/data/ble-captures`), persist across restart, and remain until explicitly deleted. Each capture stops at 100 MB. Storage errors mark the live operation incomplete where a final record can be written. If the disk cannot accept that record, or the process loses power, a missing completion record denotes an incomplete capture. The saved-capture list labels such files incomplete. Free disk space and retain the journal for analysis.
+
+## Identifying the module and sharing evidence
+
+Do not assume a particular name, manufacturer ID, or service UUID identifies Sileli. Start with an unfiltered scan. Compare repeated scans close to the controller and, when appropriate for your installation, compare observations before and after powering just the Bluetooth module off/on. RSSI is a proximity clue, not proof. Record the module/controller model, firmware if known, and whether the phone app was disconnected. Similar names or rotating addresses are reasons to verify manually.
+
+Capture a structure-only inspection, readable values, and a short explicit notification session. Note the actual start/end time and controller conditions (for example displayed battery voltage and solar watts). Preserve each original file and share the JSONL journal or JSON export plus those notes for protocol analysis. Captures contain nearby device identifiers and potentially private payloads; review before sharing. If redaction is needed, share a clearly labeled copy and retain the original locally.
+
+Schema version 1 uses sequenced UTC-timestamped metadata, advertisement, scan summary, target, service, read/read-error, notification, error, and completion events. Characteristic records include UUID and handle. Manufacturer data keys are decimal company IDs and service data keys are UUIDs. Each binary value contains reversible `hex`, `length`, and a **UTF-8 interpretation guess** with invalid bytes escaped. JSON also escapes control characters. Empty payloads are preserved. No unknown bytes are discarded, frames merged, register map assumed, or guessed text used to replace raw bytes. BlueZ/Bleak may aggregate or suppress radio observations before callbacks reach this tool; callback records do not establish packet-level completeness.
+
+## Optional phone-app traffic investigation
+
+A separate BLE hardware sniffer with Wireshark can investigate over-the-air exchanges between the vendor app and module. It is not a dependency of this tool. Capture success depends on following the connection, radio support, starting capture at the right time, and encryption/key availability; a sniffer does not guarantee readable application payloads. The inspector's Pi connection cannot passively observe another central's private GATT exchange.
+
+API reference: [Bleak scanner](https://bleak.readthedocs.io/en/latest/api/scanner.html) and [Bleak client](https://bleak.readthedocs.io/en/latest/api/client.html).

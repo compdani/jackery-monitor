@@ -3284,3 +3284,11 @@ body.device-switching .tab-panel { opacity: .45; pointer-events: none;
   .siseli-setting-row, .siseli-setting-row.is-known { grid-template-columns: 1fr 1fr; }
   .siseli-setting-label { grid-column: 1 / -1; }
 }
+
+/* BLE inspection controls and raw capture data. */
+#tab-ble .form-row { display: flex; flex-wrap: wrap; align-items: end; gap: 12px; margin: 16px 0; }
+#tab-ble .form-row label { display: flex; flex-direction: column; gap: 6px; }
+#tab-ble input:not([type="checkbox"]) { padding: 9px; border: 1px solid var(--border-soft); border-radius: 8px; background: var(--bg-elev-2); color: var(--text); max-width: 100%; }
+#tab-ble pre { overflow-wrap: anywhere; font-size: 12px; }
+#ble-captures p, #ble-gatt label { overflow-wrap: anywhere; }
+#ble-captures .btn { margin: 4px; }
