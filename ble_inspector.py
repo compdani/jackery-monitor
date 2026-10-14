@@ -49,7 +49,9 @@ class Capture:
         }
         line = json.dumps(event, ensure_ascii=True) + "\n"
         try:
-            if self.size + len(line.encode()) > MAX_BYTES - (4096 if kind != "completion" else 0):
+            # Reserve room for bounded cleanup records and a final summary at the size limit.
+            terminal = kind in {"completion", "listening_ended", "unsubscribe_result"}
+            if self.size + len(line.encode()) > MAX_BYTES - (0 if terminal else 131072):
                 raise OSError("100 MB capture limit reached")
             self.file.write(line)
             self.file.flush()
@@ -218,6 +220,41 @@ async def inspect(capture, options):
                 and expected[str(char.handle)].casefold() != char.uuid.casefold()
             ):
                 raise ValueError("GATT structure changed; inspect again before subscribing")
+        await inspect_values(capture, client, chars, selected, disconnected, options)
+
+
+async def inspect_values(capture, client, chars, selected, disconnected, options):
+    """Track requested subscriptions independently, including silent successful streams."""
+    timeout = options.get("timeout", 15)
+    duration = options.get("duration", 30)
+    loop = asyncio.get_running_loop()
+    channels = {
+        char.handle: {
+            **characteristic_info(char),
+            "subscription_properties": [p for p in char.properties if p in ("notify", "indicate")],
+            "status": "not_attempted",
+            "event_count": 0,
+        }
+        for char in selected
+    }
+    subscribed = []
+    listening_at = None
+    reason = "no_subscriptions_selected" if not selected else "error"
+    failures = 0
+    cleanup_failures = 0
+
+    def received(sender, data):
+        channel = channels[sender.handle]
+        channel["event_count"] += 1
+        try:
+            capture.emit("notification", **characteristic_info(sender), **payload(data))
+        except OSError:
+            pass  # capture.failed wakes the listener; preserve already flushed records.
+
+    try:
+        for char in selected:
+            channels[char.handle]["status"] = "requested"
+            capture.emit("subscription_requested", **channels[char.handle])
         if options.get("read_all"):
             for char in chars:
                 if disconnected.is_set():
@@ -228,45 +265,116 @@ async def inspect(capture, options):
                 try:
                     data = await asyncio.wait_for(client.read_gatt_char(char), timeout)
                 except Exception as exc:
-                    capture.emit("read_error", **info, error=str(exc))
+                    capture.emit("read_error", **info, error=str(exc) or type(exc).__name__)
                 else:
                     capture.emit("read", **info, **payload(data))
-        subscribed = []
-        try:
-            for char in selected:
-                if disconnected.is_set():
-                    raise ConnectionError("Device disconnected")
-
-                def received(sender, data):
-                    try:
-                        capture.emit("notification", **characteristic_info(sender), **payload(data))
-                    except OSError:
-                        pass
-
-                await asyncio.wait_for(client.start_notify(char, received), timeout)
-                subscribed.append(char)
-            if selected:
-                waits = [asyncio.create_task(e.wait()) for e in (disconnected, capture.failed)]
-                try:
-                    await asyncio.wait(
-                        waits,
-                        timeout=options.get("duration", 30),
-                        return_when=asyncio.FIRST_COMPLETED,
-                    )
-                finally:
-                    for task in waits:
-                        task.cancel()
-                    await asyncio.gather(*waits, return_exceptions=True)
+        for char in selected:
             if capture.failure:
                 raise OSError(capture.failure)
             if disconnected.is_set():
                 raise ConnectionError("Device disconnected")
-        finally:
+            channel = channels[char.handle]
+            channel["status"] = "starting"
+            try:
+                await asyncio.wait_for(client.start_notify(char, received), timeout)
+            except Exception as exc:
+                failures += 1
+                channel.update(status="failed", error=str(exc) or type(exc).__name__)
+                capture.emit("subscription_error", **channel)
+                continue
+            subscribed.append(char)
+            channel["status"] = "active"
+            capture.emit("subscription_active", **channel)
+        if subscribed:
+            listening_at = loop.time()
+            capture.emit(
+                "listening_started",
+                duration_s=duration,
+                channels=[dict(channels[c.handle]) for c in subscribed],
+            )
+            waits = [asyncio.create_task(e.wait()) for e in (disconnected, capture.failed)]
+            try:
+                await asyncio.wait(waits, timeout=duration, return_when=asyncio.FIRST_COMPLETED)
+            finally:
+                for task in waits:
+                    task.cancel()
+                await asyncio.gather(*waits, return_exceptions=True)
+        if capture.failure:
+            raise OSError(capture.failure)
+        if disconnected.is_set():
+            raise ConnectionError("Device disconnected")
+        reason = (
+            "duration_elapsed"
+            if subscribed
+            else ("all_subscriptions_failed" if selected else "no_subscriptions_selected")
+        )
+    except asyncio.CancelledError:
+        reason = "cancelled"
+        raise
+    except Exception:
+        reason = (
+            "storage_failure"
+            if capture.failure
+            else ("disconnected" if disconnected.is_set() else "error")
+        )
+        raise
+    finally:
+        # Measure the listening window separately from scanning, reads and cleanup.
+        elapsed = loop.time() - listening_at if listening_at is not None else 0.0
+
+        async def finalize():
+            nonlocal cleanup_failures, reason
             for char in subscribed:
+                channel = channels[char.handle]
                 try:
                     await asyncio.wait_for(client.stop_notify(char), timeout)
-                except Exception:
-                    pass
+                except Exception as exc:
+                    cleanup_failures += 1
+                    channel.update(
+                        unsubscribe_status="failed",
+                        unsubscribe_error=str(exc) or type(exc).__name__,
+                    )
+                else:
+                    channel["unsubscribe_status"] = "stopped"
+                try:
+                    capture.emit("unsubscribe_result", **channel)
+                except OSError:
+                    reason = "storage_failure"
+            for channel in channels.values():
+                if channel["status"] == "requested":
+                    channel["status"] = "not_attempted"
+                elif channel["status"] == "starting":
+                    channel.update(
+                        status="interrupted", error="Subscription activation was not confirmed"
+                    )
+            try:
+                capture.emit(
+                    "listening_ended",
+                    reason=reason,
+                    duration_s=duration,
+                    elapsed_s=elapsed,
+                    subscribed_count=len(subscribed),
+                    failed_count=failures,
+                    event_count=sum(c["event_count"] for c in channels.values()),
+                    channels=list(channels.values()),
+                )
+            except OSError:
+                pass
+
+        # Stop can arrive during unsubscribe as well as during the listening window.
+        cleanup = asyncio.create_task(finalize())
+        try:
+            await asyncio.shield(cleanup)
+        except asyncio.CancelledError:
+            reason = "cancelled"
+            await asyncio.shield(cleanup)
+            raise
+    if capture.failure:
+        raise OSError(capture.failure)
+    if failures or cleanup_failures:
+        raise RuntimeError(
+            f"{failures} subscription(s) failed; {cleanup_failures} unsubscribe(s) failed"
+        )
 
 
 async def run(capture, options):

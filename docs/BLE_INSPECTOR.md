@@ -55,7 +55,7 @@ python ble_inspector.py inspect --address AA:BB:CC:DD:EE:FF \
 
 Replace example addresses, UUIDs, and handles with values from your own scan/inspection. Names match case-insensitive substrings; addresses match exactly, ignoring case. Inspection always performs a fresh scan and requires exactly one match; ambiguous names produce candidate addresses. Unknown names remain null, and addresses can rotate. Rescan and select the current observation; the tool does not claim that two addresses belong to the same module. UUIDs repeated within a GATT database require handle selectors.
 
-Scans default to 10 seconds (1–120). Notification duration defaults to 30 seconds (1–3600). `--timeout` bounds connection and individual GATT operations, defaulting to 15 seconds (1–120). Only readable characteristics are read, and individual read failures remain in the capture. Write-only characteristics are listed without accessing their values. Reads finish before notifications start. Ctrl+C cancels the operation and closes the scanner/client; there is no automatic reconnect. A silent notification stream is valid: some modules only report after a proprietary request, which this tool deliberately will not send. Read access can also require authentication or be denied despite advertised properties.
+Scans default to 10 seconds (1–120). Notification duration defaults to 30 seconds (1–3600). `--timeout` bounds connection and individual GATT operations, defaulting to 15 seconds (1–120). Only readable characteristics are read, and individual read failures remain in the capture. Read rejection (including `READ_NOT_PERMITTED`) does not prevent subscriptions; uncheck reads or omit `--read-all` for a subscription-only capture. Write-only characteristics are listed without accessing their values. Reads finish before notifications start. Ctrl+C cancels the operation and closes the scanner/client; there is no automatic reconnect. A silent notification stream is valid: some modules only report after a proprietary request, which this tool deliberately will not send. Read access can also require authentication or be denied despite advertised properties.
 
 Events print as JSON lines, including device fields and raw payloads. Without `--output`, a timestamp-named JSONL file is created in the current directory. Existing files are never overwritten. JSON outputs retain an append-only `OUTPUT.json.jsonl` recovery journal as well as the final JSON document. If interrupted before JSON export, use that journal. An incomplete operation returns a nonzero exit code; per-characteristic read errors can coexist with successful completion.
 
@@ -63,13 +63,52 @@ Events print as JSON lines, including device fields and raw payloads. Without `-
 
 1. Open **BLE Inspector**, optionally enter scan filters, and click **Scan devices**.
 2. Select a device row (including unnamed devices) or enter its address. Click **Inspect GATT** to list structure without reads or subscriptions.
-3. Optionally enable **Read readable characteristics** and explicitly check notification characteristics. Set the capture duration, then click **Start selected capture**. With no selections, it only discovers structure and optionally reads.
-4. Click **Stop** to end early. Changing tabs does not stop a capture. Reopening the page can recover the active session.
-5. Use saved capture **View**, **JSON**, **JSONL**, or **Delete** controls. Stop an active capture before downloading or deleting it.
+3. Optionally enable the independent **Read readable characteristics** checkbox. Explicitly check **Subscribe to events** on each notify/indicate characteristic, or click **Select all subscribable**. **Clear selections** unchecks every channel. Inspecting a device never checks channels automatically. Review the selected UUIDs/handles and listening duration, then click **Start selected capture**. With no selections, it only discovers structure and optionally reads.
+4. The capture retains its requested channels and duration while showing each subscription as requested, active, or failed, with a received-event count. A rejected subscription does not prevent attempts on the remaining selected channels. Successful channels continue listening, but any subscription failure makes the final capture incomplete.
+5. Click **Stop** to end early. Changing tabs does not stop a capture. Reopening the page can recover the active session.
+6. Use saved capture **View**, **JSON**, **JSONL**, or **Delete** controls. Stop an active capture before downloading or deleting it.
 
 The inspector shares the adapter lock with existing BMS scanning/polling. A busy adapter returns a clear conflict; retry after the current operation finishes. Long captures postpone BMS polling. The live event viewer and device list are bounded to 200 entries; the complete journal remains on disk. Handles selected in the page are checked against their previously discovered UUID before subscribing; inspect again if the structure changes.
 
 Dashboard captures live under `$JACKERY_DATA_DIR/ble-captures` (default `/data/ble-captures`), persist across restart, and remain until explicitly deleted. Each capture stops at 100 MB. Storage errors mark the live operation incomplete where a final record can be written. If the disk cannot accept that record, or the process loses power, a missing completion record denotes an incomplete capture. The saved-capture list labels such files incomplete. Free disk space and retain the journal for analysis.
+
+## Verifying event subscriptions
+
+For the module observed at `74:E9:D8:A9:5B:25`, this is a **subscription-only** example for the three candidate channels. Verify the current address and these full UUIDs against a fresh GATT inspection; neither the address nor this characteristic map is assumed for other devices:
+
+```bash
+python ble_inspector.py inspect --address 74:E9:D8:A9:5B:25 \
+  --notify 0000fec8-0000-1000-8000-00805f9b34fb \
+  --notify 0000fed4-0000-1000-8000-00805f9b34fb \
+  --notify 0000fed6-0000-1000-8000-00805f9b34fb \
+  --duration 60 --output sileli-events.jsonl
+```
+
+`--notify` supports both notify and indicate characteristics. The tool records the advertised supported properties; Bleak's callback does not identify the actual delivery mode for a channel supporting both. The existing raw `notification` event format is used for either callback, without guessing the mode. No application initialization or request commands are sent. Subscribing lets BlueZ configure the BLE subscription descriptor and receives data only on the Pi's connection.
+
+New additive events in schema version 1 make the subscription outcome auditable:
+
+| Event | Evidence recorded |
+| --- | --- |
+| `subscription_requested` | Explicitly selected UUID, handle, supported subscription properties, and requested state |
+| `subscription_active` | Bleak successfully returned from enabling the subscription; received-event count so far |
+| `subscription_error` | Failed subscription, error/timeout text, and received-event count; other channels are still attempted |
+| `listening_started` | Confirmed active channels and requested listening duration |
+| `unsubscribe_result` | Per-channel stop result, error if any, and received-event count |
+| `listening_ended` | Actual listening seconds, termination reason, successful/failed channel totals, total received-event count, and final per-channel results |
+
+Each event has its own UTC timestamp and sequence number. A requested channel is not evidence of an active subscription; look for `subscription_active`. If cancellation interrupts activation, its final state is `interrupted` because success was not confirmed. Channels whose attempts never started are `not_attempted`.
+
+The listening timer begins after all selected subscription attempts finish, excluding discovery, reads, subscription setup, and unsubscribe cleanup. Event counts include every callback received during subscription setup, listening, and cleanup, with empty payloads counted as events. Raw payload records remain unchanged. Storage failure can prevent new payload/summary records from being saved; retain the flushed partial journal and treat an absent final summary as unconfirmed, rather than assuming zero events.
+
+The dashboard distinguishes these outcomes:
+
+- **No subscriptions selected:** no channel was requested and listening time is zero.
+- **All subscriptions failed:** each failure is recorded, listening never starts, and the capture is incomplete.
+- **Subscriptions succeeded, zero events:** activation was confirmed and the actual listening window ended without events. This is a valid successful result when no subscription or cleanup failed; it does not supply controller telemetry.
+- **Some subscriptions failed:** successful channels continue listening; the capture still finishes incomplete, even if they receive data.
+
+Termination reasons include duration expiry, Stop/Ctrl+C/server shutdown, disconnect, storage failure, and operation failure. The summary and unsubscribe results are flushed whenever storage permits, including early Stop. A cleanup failure also makes a normally completed session incomplete. The dashboard keeps the result and per-channel counts visible after the session ends. The tool cannot guarantee that a proprietary module will stream spontaneously; it deliberately does not write controller characteristic values to provoke data.
 
 ## Identifying the module and sharing evidence
 
@@ -77,7 +116,7 @@ Do not assume a particular name, manufacturer ID, or service UUID identifies Sil
 
 Capture a structure-only inspection, readable values, and a short explicit notification session. Note the actual start/end time and controller conditions (for example displayed battery voltage and solar watts). Preserve each original file and share the JSONL journal or JSON export plus those notes for protocol analysis. Captures contain nearby device identifiers and potentially private payloads; review before sharing. If redaction is needed, share a clearly labeled copy and retain the original locally.
 
-Schema version 1 uses sequenced UTC-timestamped metadata, advertisement, scan summary, target, service, read/read-error, notification, error, and completion events. Characteristic records include UUID and handle. Manufacturer data keys are decimal company IDs and service data keys are UUIDs. Each binary value contains reversible `hex`, `length`, and a **UTF-8 interpretation guess** with invalid bytes escaped. JSON also escapes control characters. Empty payloads are preserved. No unknown bytes are discarded, frames merged, register map assumed, or guessed text used to replace raw bytes. BlueZ/Bleak may aggregate or suppress radio observations before callbacks reach this tool; callback records do not establish packet-level completeness.
+Schema version 1 uses sequenced UTC-timestamped metadata, advertisement, scan summary, target, service, read/read-error, raw notification, subscription/listening/unsubscribe lifecycle, error, and completion events. Characteristic records include UUID and handle. Manufacturer data keys are decimal company IDs and service data keys are UUIDs. Each binary value contains reversible `hex`, `length`, and a **UTF-8 interpretation guess** with invalid bytes escaped. JSON also escapes control characters. Empty payloads are preserved. No unknown bytes are discarded, frames merged, register map assumed, or guessed text used to replace raw bytes. BlueZ/Bleak may aggregate or suppress radio observations before callbacks reach this tool; callback records do not establish packet-level completeness.
 
 ## Optional phone-app traffic investigation
 

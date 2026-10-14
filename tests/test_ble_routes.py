@@ -41,6 +41,24 @@ def test_exports_pagination_and_delete(client):
     capture_id = str(uuid.uuid4())
     capture = ble.Capture(session.root / (capture_id + ".jsonl"), {})
     capture.emit("read", **ble.payload(b"\x00\xff"))
+    capture.emit(
+        "subscription_active",
+        uuid="notify",
+        handle=2,
+        subscription_properties=["notify"],
+        status="active",
+        event_count=0,
+    )
+    capture.emit(
+        "listening_ended",
+        reason="duration_elapsed",
+        duration_s=30,
+        elapsed_s=30.01,
+        subscribed_count=1,
+        failed_count=0,
+        event_count=0,
+        channels=[{"uuid": "notify", "handle": 2, "status": "active", "event_count": 0}],
+    )
     capture.finish("complete")
     rows = client.get(f"/api/ble/captures/{capture_id}/events?after=1&limit=1").json()
     assert rows["next"] == 2 and rows["events"][0]["hex"] == "00ff"
@@ -53,6 +71,9 @@ def test_exports_pagination_and_delete(client):
             else [json.loads(s) for s in response.text.splitlines()]
         )
         assert data[-1]["status"] == "complete"
+        summary = next(e for e in data if e["type"] == "listening_ended")
+        assert summary["subscribed_count"] == 1 and summary["event_count"] == 0
+        assert summary["elapsed_s"] == 30.01
     assert client.get("/api/ble/status").json()["captures"][0]["bytes"] > 0
     assert client.delete(f"/api/ble/captures/{capture_id}").status_code == 200
     assert client.get(f"/api/ble/captures/{capture_id}/events").status_code == 404

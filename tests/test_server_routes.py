@@ -533,7 +533,7 @@ def test_shell_sends_no_cache_and_forecast_load_markup(client):
     sw = client.get("/sw.js")
     assert sw.status_code == 200
     assert "no-cache" in (sw.headers.get("cache-control") or "").lower()
-    assert "jackery-shell-v22" in sw.text
+    assert "jackery-shell-v23" in sw.text
     assert 'data-tab="ble"' in html
     assert 'id="tab-ble"' in html
     assert '/static/ble.js' in html and '/static/ble.js' in sw.text
