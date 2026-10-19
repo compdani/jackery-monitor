@@ -2540,8 +2540,41 @@ def _flag_unknown_models(cloud_meta: dict | None) -> None:
 
 # Cache the freshly-fit values on a short timer so the resolver can be
 # hit on every API call without re-doing the math each time.
-_param_fit_cache: dict[tuple[str, str], tuple[float, dict]] = {}
+# History keys are (device_sn, "_history", lookback_hours).
+_param_fit_cache: dict[tuple, tuple[float, Any]] = {}
 _PARAM_FIT_CACHE_TTL_S = 60.0
+
+_FIT_LOOKBACK_DEFAULT_H = 14 * 24
+_FIT_LOOKBACK_MIN_H = 6
+_FIT_LOOKBACK_MAX_H = 45 * 24
+
+
+def _clamp_fit_lookback_hours(lookback_hours: int | float | None) -> int:
+    """Clamp custom fit windows to [6h, 45d]; default 14d."""
+    if lookback_hours is None:
+        return _FIT_LOOKBACK_DEFAULT_H
+    try:
+        h = int(lookback_hours)
+    except (TypeError, ValueError):
+        return _FIT_LOOKBACK_DEFAULT_H
+    return max(_FIT_LOOKBACK_MIN_H, min(_FIT_LOOKBACK_MAX_H, h))
+
+
+def _clear_history_fit_cache(device_sn: str,
+                             lookback_hours: int | None = None) -> None:
+    """Drop memoized history for one device (one window or all)."""
+    if lookback_hours is not None:
+        hours = _clamp_fit_lookback_hours(lookback_hours)
+        _param_fit_cache.pop((device_sn, "_history", hours), None)
+        # Legacy 2-tuple key from before lookback-aware cache.
+        if hours == _FIT_LOOKBACK_DEFAULT_H:
+            _param_fit_cache.pop((device_sn, "_history"), None)
+        return
+    drop = [k for k in _param_fit_cache
+            if isinstance(k, tuple) and k and k[0] == device_sn
+            and len(k) >= 2 and k[1] == "_history"]
+    for k in drop:
+        _param_fit_cache.pop(k, None)
 
 
 def _resolved_capacity_wh(device_sn: str | None) -> int:
@@ -2564,10 +2597,9 @@ def _resolved_capacity_wh(device_sn: str | None) -> int:
     return _total_capacity_wh(device_sn, mc)
 
 
-def _cached_history(device_sn: str) -> list[dict]:
-    """One-shot 14d history pull, used by the resolver's live-fit
-    branch. Memoized via _param_fit_cache so multiple param lookups
-    in the same request don't re-query the DB.
+def _history_for_fit(device_sn: str,
+                     lookback_hours: int | None = None) -> list[dict]:
+    """Energy history for parameter fits. Default 14d; clamp 6h…45d.
 
     Passes capacity hints so `db.history()` populates `system_soc` on
     multi-pack rigs. Without them, the forecaster fits silently fall
@@ -2576,24 +2608,33 @@ def _cached_history(device_sn: str) -> list[dict]:
     parasitic to ~400W via quantization rounding — a 2026-05-12
     regression bisected to this missing hint. Mirrors the canonical
     `state.energy.history` call in `build_forecast`."""
-    key = (device_sn, "_history")
+    hours = _clamp_fit_lookback_hours(lookback_hours)
+    key = (device_sn, "_history", hours)
     now = time.time()
     cached = _param_fit_cache.get(key)
     if cached and now - cached[0] < _PARAM_FIT_CACHE_TTL_S:
         return cached[1]  # type: ignore[return-value]
     main_wh, pack_wh = _capacity_hints(device_sn)
     h = state.energy.history(
-        device_sn, hours=14 * 24, bucket_s=3600,
+        device_sn, hours=hours, bucket_s=3600,
         main_capacity_wh=main_wh, pack_capacity_wh=pack_wh,
     )
     _param_fit_cache[key] = (now, h)
     return h
 
 
-def _past_hours_from_weather_payload(fetched: dict | None) -> list[dict]:
-    """Keep Open-Meteo hours that fall in the last 14d (exclude forecast)."""
+def _cached_history(device_sn: str) -> list[dict]:
+    """Backward-compatible alias: default 14d fit history."""
+    return _history_for_fit(device_sn, None)
+
+
+def _past_hours_from_weather_payload(
+        fetched: dict | None,
+        lookback_hours: int | None = None) -> list[dict]:
+    """Keep Open-Meteo hours in the lookback window (exclude forecast)."""
+    hours = _clamp_fit_lookback_hours(lookback_hours)
     now = int(time.time())
-    since = now - 14 * 86400
+    since = now - hours * 3600
     rows: list[dict] = []
     for w in (fetched or {}).get("hourly") or []:
         try:
@@ -2605,7 +2646,8 @@ def _past_hours_from_weather_payload(fetched: dict | None) -> list[dict]:
     return rows
 
 
-async def _ensure_weather_hourly() -> list[dict]:
+async def _ensure_weather_hourly(
+        lookback_hours: int | None = None) -> list[dict]:
     """Weather series for solar / max-charge fits.
 
     Prefer the live (or 1h-cached) Open-Meteo payload — the same series
@@ -2613,6 +2655,7 @@ async def _ensure_weather_hourly() -> list[dict]:
     INSERT OR IGNORE. A first write of GHI=0 would otherwise stick
     forever and Refit would keep returning k=0.
     """
+    hours = _clamp_fit_lookback_hours(lookback_hours)
     loc = device_location.get() or {}
     fetched = None
     lat, lon = loc.get("latitude"), loc.get("longitude")
@@ -2622,17 +2665,18 @@ async def _ensure_weather_hourly() -> list[dict]:
                 float(lat), float(lon))
         except Exception as e:
             log.warning("weather fetch for fit failed: %s", e)
-    rows = _past_hours_from_weather_payload(fetched)
+    rows = _past_hours_from_weather_payload(fetched, lookback_hours=hours)
     if len(rows) >= 12:
         return rows
     db_rows = state.energy.list_weather_observations(
-        since_ts=int(time.time()) - 14 * 86400, limit=14 * 24 + 48,
+        since_ts=int(time.time()) - hours * 3600, limit=hours + 48,
     )
     return db_rows or rows
 
 
 def resolve_device_param(device_sn: str, key: str,
-                         weather_hourly: list[dict] | None = None) -> dict[str, Any]:
+                         weather_hourly: list[dict] | None = None,
+                         lookback_hours: int | None = None) -> dict[str, Any]:
     """Walk the resolution ladder for `key` on `device_sn`. Returns a
     dict with at least {value, source}; may also include n_samples,
     confidence, note, updated_at when those make sense.
@@ -2647,9 +2691,17 @@ def resolve_device_param(device_sn: str, key: str,
 
     The resolver writes back fresh fits to DB (source='fit') so a
     subsequent call returns the cached value without recomputing.
+
+    `lookback_hours` (optional) selects the energy/weather window for
+    fit-backed keys. Ignored for `battery_capacity_wh`. Clamped to
+    [6h, 45d]; default 14d.
     """
     if not device_sn or not key:
         return {"value": None, "source": "unknown"}
+
+    fit_hours = None if key == "battery_capacity_wh" else (
+        _clamp_fit_lookback_hours(lookback_hours)
+        if lookback_hours is not None else None)
 
     # Step 1: anything stored in DB wins (user overrides + cached fits).
     stored = state.energy.get_device_param(device_sn, key)
@@ -2657,8 +2709,8 @@ def resolve_device_param(device_sn: str, key: str,
         if stored.get("source") == "user":
             return {**stored, "source": "user"}
         # Source-of-truth is always the live re-resolution: fits are
-        # sub-millisecond once `_cached_history` memoizes the 14d
-        # window for the request, and probes are bounded. The DB row
+        # sub-millisecond once `_history_for_fit` memoizes the window
+        # for the request, and probes are bounded. The DB row
         # is a record of the latest result for UI staleness display
         # and historical analysis, NOT a cache that shadows the
         # current fit. Earlier we cached 'fit'/'probe' results for
@@ -2720,13 +2772,15 @@ def resolve_device_param(device_sn: str, key: str,
 
         try:
             tz_off = int(device_location.get_tz_offset() or 0)
+            win_h = fit_hours or _FIT_LOOKBACK_DEFAULT_H
             wx = weather_hourly if weather_hourly is not None else (
                 state.energy.list_weather_observations(
-                    since_ts=int(time.time()) - 14 * 86400, limit=14 * 24 + 48,
+                    since_ts=int(time.time()) - win_h * 3600,
+                    limit=win_h + 48,
                 )
             )
             w, n = forecaster.fit_max_charge_w(
-                _cached_history(device_sn),
+                _history_for_fit(device_sn, fit_hours),
                 tz_offset_seconds=tz_off, weather_hourly=wx,
             )
             if w is not None:
@@ -2759,7 +2813,7 @@ def resolve_device_param(device_sn: str, key: str,
             # standalone percentage fit systematically overestimates
             # overhead on devices with significant constant draw.
             _parasitic_w, pct, n = forecaster.fit_drain_model(
-                _cached_history(device_sn), cap,
+                _history_for_fit(device_sn, fit_hours), cap,
                 pack_count=_pack_count_for(device_sn),
             )
             source = "fit" if n >= 5 else "default"
@@ -2776,7 +2830,7 @@ def resolve_device_param(device_sn: str, key: str,
         try:
             cap = _resolved_capacity_wh(device_sn)
             parasitic, _pct, n = forecaster.fit_drain_model(
-                _cached_history(device_sn), cap,
+                _history_for_fit(device_sn, fit_hours), cap,
                 pack_count=_pack_count_for(device_sn),
             )
             source = "fit" if n >= 5 else "default"
@@ -2792,7 +2846,8 @@ def resolve_device_param(device_sn: str, key: str,
     elif key == "charge_efficiency":
         try:
             cap = _resolved_capacity_wh(device_sn)
-            v, n = forecaster.fit_charge_efficiency(_cached_history(device_sn), cap)
+            v, n = forecaster.fit_charge_efficiency(
+                _history_for_fit(device_sn, fit_hours), cap)
             source = "fit" if n >= 5 else "default"
             state.energy.set_device_param(
                 device_sn, key, v, source=source, n_samples=n,
@@ -2805,10 +2860,12 @@ def resolve_device_param(device_sn: str, key: str,
 
     elif key == "solar_coefficient":
         try:
-            ehist = _cached_history(device_sn)
+            ehist = _history_for_fit(device_sn, fit_hours)
+            win_h = fit_hours or _FIT_LOOKBACK_DEFAULT_H
             wx = weather_hourly if weather_hourly is not None else (
                 state.energy.list_weather_observations(
-                    since_ts=int(time.time()) - 14 * 86400, limit=14 * 24 + 48,
+                    since_ts=int(time.time()) - win_h * 3600,
+                    limit=win_h + 48,
                 )
             )
             k_val, n = forecaster.fit_solar_coefficient(ehist, wx)
@@ -2831,6 +2888,118 @@ def resolve_device_param(device_sn: str, key: str,
 
     # Nothing available — caller surfaces "ask user" UI.
     return {"value": None, "source": "unknown"}
+
+
+def _compute_live_param_fit(
+        device_sn: str,
+        key: str,
+        *,
+        weather_hourly: list[dict] | None = None,
+        lookback_hours: int | None = None) -> dict[str, Any]:
+    """Force-fit a device param over a lookback window without consulting
+    or writing user overrides. Used by `/api/devices/params/fit` preview
+    and apply (apply then persists source='user')."""
+    if key == "battery_capacity_wh":
+        return {
+            "value": None, "source": "unknown", "n_samples": 0,
+            "error": "battery_capacity_wh is not fit from history",
+            "lookback_hours": _clamp_fit_lookback_hours(lookback_hours),
+        }
+    if key not in energy_db.DEVICE_PARAM_KEYS:
+        return {
+            "value": None, "source": "unknown", "n_samples": 0,
+            "error": f"unknown param key: {key!r}",
+            "lookback_hours": _clamp_fit_lookback_hours(lookback_hours),
+        }
+    hours = _clamp_fit_lookback_hours(lookback_hours)
+    ehist = _history_for_fit(device_sn, hours)
+    win_since = int(time.time()) - hours * 3600
+    wx = weather_hourly
+    if wx is None and key in ("solar_coefficient", "max_charge_w"):
+        wx = state.energy.list_weather_observations(
+            since_ts=win_since, limit=hours + 48,
+        )
+
+    try:
+        if key == "max_charge_w":
+            tz_off = int(device_location.get_tz_offset() or 0)
+            w, n = forecaster.fit_max_charge_w(
+                ehist, tz_offset_seconds=tz_off, weather_hourly=wx or [],
+            )
+            if w is None:
+                default_w = float(
+                    smart_charge.DEFAULT_CONFIG.get("max_charge_w") or 800)
+                return {
+                    "value": default_w, "source": "default", "n_samples": n,
+                    "lookback_hours": hours,
+                    "note": "fit found no qualifying samples",
+                }
+            return {
+                "value": w, "source": "fit", "n_samples": n,
+                "lookback_hours": hours,
+                "confidence": (
+                    "high" if n >= 30 else "medium" if n >= 12 else "low"),
+            }
+
+        if key == "inverter_overhead_pct":
+            cap = _resolved_capacity_wh(device_sn)
+            _p, pct, n = forecaster.fit_drain_model(
+                ehist, cap, pack_count=_pack_count_for(device_sn),
+            )
+            source = "fit" if n >= 5 else "default"
+            return {
+                "value": pct, "source": source, "n_samples": n,
+                "lookback_hours": hours,
+                "confidence": (
+                    "high" if n >= 20 else "medium" if n >= 10 else "low"),
+            }
+
+        if key == "parasitic_w":
+            cap = _resolved_capacity_wh(device_sn)
+            parasitic, _pct, n = forecaster.fit_drain_model(
+                ehist, cap, pack_count=_pack_count_for(device_sn),
+            )
+            source = "fit" if n >= 5 else "default"
+            return {
+                "value": parasitic, "source": source, "n_samples": n,
+                "lookback_hours": hours,
+                "confidence": (
+                    "high" if n >= 20 else "medium" if n >= 10 else "low"),
+            }
+
+        if key == "charge_efficiency":
+            cap = _resolved_capacity_wh(device_sn)
+            v, n = forecaster.fit_charge_efficiency(ehist, cap)
+            source = "fit" if n >= 5 else "default"
+            return {
+                "value": v, "source": source, "n_samples": n,
+                "lookback_hours": hours,
+                "confidence": (
+                    "high" if n >= 20 else "medium" if n >= 10 else "low"),
+            }
+
+        if key == "solar_coefficient":
+            k_val, n = forecaster.fit_solar_coefficient(ehist, wx or [])
+            k_val = round(float(k_val), 4)
+            source = "fit" if n >= forecaster.MIN_FIT_SAMPLES else "default"
+            return {
+                "value": k_val, "source": source, "n_samples": n,
+                "lookback_hours": hours,
+                "confidence": (
+                    "high" if n >= 20 else "medium" if n >= 5 else "low"),
+            }
+    except Exception as e:
+        log.debug("live fit %s/%s failed: %s", device_sn, key, e)
+        return {
+            "value": None, "source": "unknown", "n_samples": 0,
+            "lookback_hours": hours, "error": str(e),
+        }
+
+    return {
+        "value": None, "source": "unknown", "n_samples": 0,
+        "lookback_hours": hours,
+        "error": f"no live fit path for {key!r}",
+    }
 
 
 def _smart_charge_floor_pct(device_sn: str | None) -> float | None:
@@ -4318,6 +4487,231 @@ async def _assistant_set_output(device_sn: str | None, port: str, on: bool) -> d
     return await api_set_output(body)
 
 
+def _assistant_run_query(device_sn: str | None, name: str, args: dict) -> dict:
+    sn = device_sn or (state.device.device_sn if state.device else None)
+    if not sn:
+        return {"error": "no device"}
+    fn = advisor_routes._make_advisor_query_fn(state, _advisor_helpers, sn)
+    return fn(name, args)
+
+
+async def _assistant_get_device_params(device_sn: str | None) -> dict:
+    sn = device_sn or (state.device.device_sn if state.device else None)
+    if not sn:
+        return {"error": "no device", "params": []}
+    wx = await _ensure_weather_hourly()
+    out = []
+    for key, meta in energy_db.DEVICE_PARAM_KEYS.items():
+        resolved = resolve_device_param(sn, key, weather_hourly=wx)
+        out.append({"key": key, **meta, **resolved})
+    return {
+        "device_sn": sn,
+        "params": out,
+        "tz_offset_seconds": int(device_location.get_tz_offset() or 0),
+    }
+
+
+async def _assistant_fit_device_param(
+        device_sn: str | None, *, key: str,
+        lookback_hours: int | None = None,
+        apply: bool = False) -> dict:
+    """Same behavior as POST /api/devices/params/fit for the chat tool."""
+    sn = device_sn or (state.device.device_sn if state.device else None)
+    if not sn:
+        return {"error": "no device"}
+    if key not in energy_db.DEVICE_PARAM_KEYS:
+        return {"error": f"unknown param key: {key!r}"}
+    if key == "battery_capacity_wh":
+        return {"error": "battery_capacity_wh is not fit from history"}
+    hours = _clamp_fit_lookback_hours(lookback_hours)
+    previous = state.energy.get_device_param(sn, key)
+    _clear_history_fit_cache(sn, hours)
+    wx = None
+    if key in ("solar_coefficient", "max_charge_w"):
+        wx = await _ensure_weather_hourly(lookback_hours=hours)
+    computed = _compute_live_param_fit(
+        sn, key, weather_hourly=wx, lookback_hours=hours)
+    if computed.get("error") and computed.get("value") is None:
+        return {"error": computed["error"], "lookback_hours": hours}
+    result: dict[str, Any] = {
+        "device_sn": sn,
+        "key": key,
+        "lookback_hours": hours,
+        "applied": False,
+        "previous": previous,
+        "value": computed.get("value"),
+        "n_samples": computed.get("n_samples"),
+        "fit_source": computed.get("source"),
+        "confidence": computed.get("confidence"),
+        "note": computed.get("note"),
+    }
+    if apply and computed.get("value") is not None:
+        note = f"fit over last {hours}h"
+        state.energy.set_device_param(
+            sn, key, float(computed["value"]),
+            source="user",
+            n_samples=computed.get("n_samples"),
+            confidence=computed.get("confidence"),
+            note=note,
+        )
+        stored = state.energy.get_device_param(sn, key)
+        result["applied"] = True
+        result["source"] = "user"
+        result["note"] = note
+        if stored:
+            result["updated_at"] = stored.get("updated_at")
+    return result
+
+
+def _assistant_get_energy_daily(device_sn: str | None, days: int = 90) -> dict:
+    sn = device_sn or (state.device.device_sn if state.device else None)
+    if not sn:
+        return {"device_sn": None, "days": 0, "tz_offset_s": 0, "daily": []}
+    days = max(1, min(int(days), 365))
+    tz_offset_s = int(device_location.get_tz_offset() or 0)
+    return {
+        "device_sn": sn,
+        "days": days,
+        "tz_offset_s": tz_offset_s,
+        "daily": state.energy.daily_rollup(
+            sn, days=days, tz_offset_s=tz_offset_s),
+    }
+
+
+def _assistant_get_daily_summary(device_sn: str | None, days: int = 7) -> dict:
+    sn = device_sn or (state.device.device_sn if state.device else None)
+    if not sn:
+        return {"device_sn": None, "rows": [],
+                "cutoff_ts": FORECASTER_BREAKING_CHANGE_TS}
+    days = max(1, min(int(days), 90))
+    return {
+        "device_sn": sn, "days": days,
+        "cutoff_ts": FORECASTER_BREAKING_CHANGE_TS,
+        "rows": state.energy.list_daily_summary(sn, days=days),
+    }
+
+
+def _assistant_get_charge_status_full(device_sn: str | None) -> dict:
+    sn = device_sn or (state.device.device_sn if state.device else None)
+    smart_hist: list[dict] = []
+    observed_w: float | None = None
+    observed_n = 0
+    if sn:
+        smart_hist = state.energy.list_smart_charge_decisions(sn, limit=20)
+        try:
+            main_wh, pack_wh = _capacity_hints(sn)
+            ehist = state.energy.history(
+                sn, hours=14 * 24, bucket_s=3600,
+                main_capacity_wh=main_wh, pack_capacity_wh=pack_wh,
+            )
+            tz_off = device_location.get_tz_offset() or 0
+            wx = state.energy.list_weather_observations(
+                since_ts=int(time.time()) - 14 * 86400, limit=14 * 24,
+            )
+            observed_w, observed_n = forecaster.fit_max_charge_w(
+                ehist, tz_offset_seconds=int(tz_off), weather_hourly=wx,
+            )
+        except Exception:
+            pass
+    solar_status: dict[str, Any] = {
+        "config": solar_charge.get_config(sn),
+        "runtime": None,
+        "diverted_wh_today": 0,
+        "recent_decisions": [],
+    }
+    if sn:
+        rs = solar_charge.get_runtime(sn)
+        tz_off = device_location.get_tz_offset() or 0
+        now = int(time.time())
+        local_now = now + tz_off
+        local_midnight = local_now - (local_now % 86400)
+        sod_ts = local_midnight - tz_off
+        solar_status = {
+            "config": solar_charge.get_config(sn),
+            "runtime": {
+                "plug_is_on": rs.plug_is_on,
+                "last_toggle_ts": rs.last_toggle_ts,
+            },
+            "diverted_wh_today": state.energy.solar_charge_diverted_wh_today(
+                sn, sod_ts),
+            "recent_decisions": state.energy.list_solar_charge_decisions(
+                device_sn=sn, limit=20),
+        }
+    return {
+        "device_sn": sn,
+        "smart_charge": {
+            "config": smart_charge.get_config(sn),
+            "observed_max_charge_w": (
+                round(observed_w) if observed_w is not None else None),
+            "observed_max_charge_n": observed_n,
+            "history": smart_hist,
+        },
+        "solar_charge": solar_status,
+    }
+
+
+def _assistant_get_load_schedule_full(device_sn: str | None) -> dict:
+    sn = device_sn or (state.device.device_sn if state.device else None)
+    if not sn:
+        return {"error": "device_sn required"}
+    sched = load_schedule.get(sn)
+    learned: list[dict] = []
+    try:
+        main_wh, pack_wh = _capacity_hints(sn)
+        hist = state.energy.history(
+            sn, hours=14 * 24, bucket_s=3600,
+            main_capacity_wh=main_wh, pack_capacity_wh=pack_wh,
+        )
+        profile = forecaster.fit_load_profile(
+            hist, car_load_w=_car_load_w(sn))
+        learned = load_schedule.serialize_learned_profile(profile)
+    except Exception as e:
+        log.debug("assistant learned load profile failed for %s: %s", sn, e)
+    return {"device_sn": sn, **sched, "learned_profile": learned}
+
+
+def _assistant_get_location() -> dict:
+    loc = device_location.get() or {}
+    return {
+        "latitude": loc.get("latitude"),
+        "longitude": loc.get("longitude"),
+        "label": loc.get("label"),
+        "timezone": loc.get("timezone"),
+        "tz_offset_seconds": int(device_location.get_tz_offset() or 0),
+    }
+
+
+def _assistant_get_solar_array(device_sn: str | None) -> dict:
+    sn = device_sn or (state.device.device_sn if state.device else None)
+    return {"device_sn": sn, "array": solar_array.get(sn)}
+
+
+def _assistant_list_automation_rules() -> list:
+    try:
+        return list(state.automation.list_rules())
+    except Exception:
+        return []
+
+
+async def _assistant_get_events(limit: int = 100, since: float = 0.0) -> dict:
+    limit = max(1, min(int(limit), 500))
+    events: list[dict] = []
+    fetcher = getattr(state.client, "get_events", None)
+    if fetcher:
+        try:
+            events = list(await fetcher(limit=limit, since=since) or [])
+        except Exception:
+            pass
+    try:
+        events.extend(f7_ac_reset.list_events(since=since, limit=limit))
+    except Exception:
+        pass
+    events.sort(key=lambda e: float(e.get("ts") or 0))
+    if limit and len(events) > limit:
+        events = events[-limit:]
+    return {"events": events}
+
+
 assistant_routes.install(
     app,
     assistant_routes.AssistantHelpers(
@@ -4334,6 +4728,18 @@ assistant_routes.install(
         ),
         apply_suggestion=_assistant_apply_suggestion,
         set_output=_assistant_set_output,
+        run_query=_assistant_run_query,
+        get_device_params=_assistant_get_device_params,
+        fit_device_param=_assistant_fit_device_param,
+        get_energy_daily=_assistant_get_energy_daily,
+        get_daily_summary=_assistant_get_daily_summary,
+        get_charge_status_full=_assistant_get_charge_status_full,
+        get_load_schedule_full=_assistant_get_load_schedule_full,
+        get_cost_plan=lambda: cost_module.get_plan(),
+        get_location=_assistant_get_location,
+        get_solar_array=_assistant_get_solar_array,
+        list_automation_rules=_assistant_list_automation_rules,
+        get_events=_assistant_get_events,
     ),
 )
 
@@ -4446,7 +4852,51 @@ async def api_devices_params_set(req: Request):
 async def api_devices_params_refit(req: Request):
     """Force-clear any cached fit/probe/catalog row and re-resolve.
     Useful when you've just deployed a fit improvement and want to see
-    the new value immediately instead of waiting for next call."""
+    the new value immediately instead of waiting for next call.
+
+    Optional `lookback_hours` selects the fit window (clamped 6h…45d;
+    default 14d)."""
+    try:
+        body = await req.json()
+    except Exception:
+        raise HTTPException(400, "invalid JSON body") from None
+    device_sn = body.get("device_sn")
+    key = body.get("key")
+    lookback_hours = body.get("lookback_hours")
+    if not device_sn:
+        device_sn = state.device.device_sn if state.device else None
+    if not device_sn or not key:
+        raise HTTPException(400, "device_sn and key required")
+    if key not in energy_db.DEVICE_PARAM_KEYS:
+        raise HTTPException(400, f"unknown param key: {key!r}")
+    # Drop the stored row (if any) and clear the in-process history
+    # memo so the live fit picks up the latest data.
+    state.energy.clear_device_param(device_sn, key)
+    hours = (_clamp_fit_lookback_hours(lookback_hours)
+             if lookback_hours is not None else None)
+    _clear_history_fit_cache(device_sn, hours)
+    wx = None
+    if key in ("solar_coefficient", "max_charge_w"):
+        wx = await _ensure_weather_hourly(lookback_hours=hours)
+    resolved = resolve_device_param(
+        device_sn, key, weather_hourly=wx, lookback_hours=hours)
+    out = {"device_sn": device_sn, "key": key, **resolved}
+    if hours is not None:
+        out["lookback_hours"] = hours
+    return out
+
+
+@app.post("/api/devices/params/fit")
+async def api_devices_params_fit(req: Request):
+    """Fit a learned parameter over a custom lookback window.
+
+    Body: {device_sn, key, lookback_hours?, apply?}
+      - lookback_hours: default 14*24; clamped to [6, 45*24]
+      - apply false (default): preview only — no DB write
+      - apply true: persist as source='user' with note so resolve
+        won't overwrite until the user resets
+
+    `battery_capacity_wh` is rejected (not history-fit)."""
     try:
         body = await req.json()
     except Exception:
@@ -4459,15 +4909,48 @@ async def api_devices_params_refit(req: Request):
         raise HTTPException(400, "device_sn and key required")
     if key not in energy_db.DEVICE_PARAM_KEYS:
         raise HTTPException(400, f"unknown param key: {key!r}")
-    # Drop the stored row (if any) and clear the in-process history
-    # memo so the live fit picks up the latest data.
-    state.energy.clear_device_param(device_sn, key)
-    _param_fit_cache.pop((device_sn, "_history"), None)
+    if key == "battery_capacity_wh":
+        raise HTTPException(
+            400, "battery_capacity_wh is not fit from history")
+    hours = _clamp_fit_lookback_hours(body.get("lookback_hours"))
+    apply = bool(body.get("apply"))
+    previous = state.energy.get_device_param(device_sn, key)
+    _clear_history_fit_cache(device_sn, hours)
     wx = None
     if key in ("solar_coefficient", "max_charge_w"):
-        wx = await _ensure_weather_hourly()
-    return {"device_sn": device_sn, "key": key,
-            **resolve_device_param(device_sn, key, weather_hourly=wx)}
+        wx = await _ensure_weather_hourly(lookback_hours=hours)
+    computed = _compute_live_param_fit(
+        device_sn, key, weather_hourly=wx, lookback_hours=hours)
+    if computed.get("error") and computed.get("value") is None:
+        raise HTTPException(400, computed["error"])
+    result: dict[str, Any] = {
+        "device_sn": device_sn,
+        "key": key,
+        "lookback_hours": hours,
+        "applied": False,
+        "previous": previous,
+        "value": computed.get("value"),
+        "n_samples": computed.get("n_samples"),
+        "fit_source": computed.get("source"),
+        "confidence": computed.get("confidence"),
+        "note": computed.get("note"),
+    }
+    if apply and computed.get("value") is not None:
+        note = f"fit over last {hours}h"
+        state.energy.set_device_param(
+            device_sn, key, float(computed["value"]),
+            source="user",
+            n_samples=computed.get("n_samples"),
+            confidence=computed.get("confidence"),
+            note=note,
+        )
+        stored = state.energy.get_device_param(device_sn, key)
+        result["applied"] = True
+        result["source"] = "user"
+        result["note"] = note
+        if stored:
+            result["updated_at"] = stored.get("updated_at")
+    return result
 
 
 @app.get("/api/devices/probe_results")

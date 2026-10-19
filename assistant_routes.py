@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from collections.abc import Awaitable, Callable
 from typing import Any
 
@@ -17,6 +18,35 @@ import solar_charge
 
 log = logging.getLogger("assistant_routes")
 
+# Keys / substrings that must never leave assistant tool results.
+_SECRET_KEY_RE = re.compile(
+    r"(password|passwd|secret|token|api[_-]?key|credential|authorization|"
+    r"cookie|session|smb|ssh)",
+    re.IGNORECASE,
+)
+
+
+def _redact_secrets(obj: Any, *, depth: int = 0) -> Any:
+    """Drop or mask credential-like fields recursively."""
+    if depth > 8:
+        return None
+    if isinstance(obj, dict):
+        out: dict[str, Any] = {}
+        for k, v in obj.items():
+            ks = str(k)
+            if _SECRET_KEY_RE.search(ks):
+                # Booleans like has_credentials / has_key are safe.
+                if isinstance(v, bool) or ks.lower().startswith("has_"):
+                    out[ks] = v
+                else:
+                    out[ks] = "[redacted]"
+                continue
+            out[ks] = _redact_secrets(v, depth=depth + 1)
+        return out
+    if isinstance(obj, list):
+        return [_redact_secrets(x, depth=depth + 1) for x in obj[:500]]
+    return obj
+
 
 class AssistantHelpers:
     def __init__(
@@ -29,6 +59,18 @@ class AssistantHelpers:
         list_suggestions: Callable[[str | None], list],
         apply_suggestion: Callable[[int], Awaitable[dict]],
         set_output: Callable[[str | None, str, bool], Awaitable[Any]],
+        run_query: Callable[[str | None, str, dict], Any] | None = None,
+        get_device_params: Callable[[str | None], Awaitable[dict]] | None = None,
+        fit_device_param: Callable[..., Awaitable[dict]] | None = None,
+        get_energy_daily: Callable[[str | None, int], dict] | None = None,
+        get_daily_summary: Callable[[str | None, int], dict] | None = None,
+        get_charge_status_full: Callable[[str | None], dict] | None = None,
+        get_load_schedule_full: Callable[[str | None], dict] | None = None,
+        get_cost_plan: Callable[[], dict] | None = None,
+        get_location: Callable[[], dict] | None = None,
+        get_solar_array: Callable[[str | None], dict] | None = None,
+        list_automation_rules: Callable[[], list] | None = None,
+        get_events: Callable[[int, float], Awaitable[dict]] | None = None,
     ):
         self.get_device_sn = get_device_sn
         self.get_status = get_status
@@ -37,6 +79,18 @@ class AssistantHelpers:
         self.list_suggestions = list_suggestions
         self.apply_suggestion = apply_suggestion
         self.set_output = set_output
+        self.run_query = run_query
+        self.get_device_params = get_device_params
+        self.fit_device_param = fit_device_param
+        self.get_energy_daily = get_energy_daily
+        self.get_daily_summary = get_daily_summary
+        self.get_charge_status_full = get_charge_status_full
+        self.get_load_schedule_full = get_load_schedule_full
+        self.get_cost_plan = get_cost_plan
+        self.get_location = get_location
+        self.get_solar_array = get_solar_array
+        self.list_automation_rules = list_automation_rules
+        self.get_events = get_events
 
 
 _helpers: AssistantHelpers | None = None
@@ -161,7 +215,13 @@ async def _handle_tool(name: str, args: dict[str, Any]) -> dict[str, Any]:
         raise RuntimeError("assistant not installed")
     h = _helpers
     sn = args.get("device_sn") or h.get_device_sn()
+    result = await _dispatch_tool(name, args, h, sn)
+    return _redact_secrets(result) if isinstance(result, (dict, list)) else result
 
+
+async def _dispatch_tool(
+        name: str, args: dict[str, Any], h: AssistantHelpers,
+        sn: str | None) -> dict[str, Any]:
     if name == "get_tab_snapshot" or name == "get_telemetry":
         st = h.get_status() or {}
         return {
@@ -222,6 +282,8 @@ async def _handle_tool(name: str, args: dict[str, Any]) -> dict[str, Any]:
     if name == "get_load_schedule":
         if not sn:
             return {"error": "device_sn required"}
+        if h.get_load_schedule_full:
+            return h.get_load_schedule_full(sn)
         return load_schedule.get(sn)
 
     if name == "get_energy_totals":
@@ -233,10 +295,77 @@ async def _handle_tool(name: str, args: dict[str, Any]) -> dict[str, Any]:
     if name == "get_charge_status":
         if not sn:
             return {"error": "device_sn required"}
+        if h.get_charge_status_full:
+            return h.get_charge_status_full(sn)
         return {
             "smart_charge": smart_charge.get_config(sn),
             "solar_charge": solar_charge.get_config(sn),
         }
+
+    if name in (
+        "query_samples", "query_weather", "query_predictions",
+        "query_decisions", "query_battery_packs",
+    ):
+        if not h.run_query:
+            return {"error": "query tools not available"}
+        return h.run_query(sn, name, args) or {"error": "query failed"}
+
+    if name == "get_device_params":
+        if not h.get_device_params:
+            return {"error": "get_device_params not available"}
+        return await h.get_device_params(sn)
+
+    if name == "get_energy_daily":
+        if not h.get_energy_daily:
+            return {"error": "get_energy_daily not available"}
+        days = int(args.get("days") or 90)
+        return h.get_energy_daily(sn, days)
+
+    if name == "get_daily_summary":
+        if not h.get_daily_summary:
+            return {"error": "get_daily_summary not available"}
+        days = int(args.get("days") or 7)
+        return h.get_daily_summary(sn, days)
+
+    if name == "get_cost_plan":
+        if not h.get_cost_plan:
+            return {"error": "get_cost_plan not available"}
+        return h.get_cost_plan()
+
+    if name == "get_location":
+        if not h.get_location:
+            return {"error": "get_location not available"}
+        return h.get_location()
+
+    if name == "get_solar_array":
+        if not h.get_solar_array:
+            return {"error": "get_solar_array not available"}
+        return h.get_solar_array(sn)
+
+    if name == "list_automation_rules":
+        if not h.list_automation_rules:
+            return {"error": "list_automation_rules not available"}
+        return {"rules": h.list_automation_rules()}
+
+    if name == "get_events":
+        if not h.get_events:
+            return {"error": "get_events not available"}
+        limit = int(args.get("limit") or 100)
+        since = float(args.get("since") or 0.0)
+        return await h.get_events(limit, since)
+
+    if name == "fit_device_param":
+        if not h.fit_device_param:
+            return {"error": "fit_device_param not available"}
+        key = args.get("key")
+        if not key:
+            return {"error": "key required"}
+        return await h.fit_device_param(
+            sn,
+            key=str(key),
+            lookback_hours=args.get("lookback_hours"),
+            apply=bool(args.get("apply")),
+        )
 
     if name == "schedule_upsert":
         if not sn:

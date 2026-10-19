@@ -3004,6 +3004,23 @@ footer {
 .acc-table tbody tr.acc-row-stale td.acc-err-good,
 .acc-table tbody tr.acc-row-stale td.acc-err-warn,
 .acc-table tbody tr.acc-row-stale td.acc-err-bad { color: var(--text-mute); }
+/* Visual group separator when Target changes in the accuracy sample table. */
+.acc-table tbody tr.acc-group-start td {
+  border-top: 2px solid var(--border, rgba(255,255,255,.16));
+}
+.acc-table tbody tr:first-child.acc-group-start td {
+  border-top: none;
+}
+/* Compact ≤6h / ≤24h / ≤72h / >72h MAE+bias strip on Forecast accuracy. */
+.acc-bucket-strip {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+  margin: 0 0 12px 0;
+}
+@media (max-width: 720px) {
+  .acc-bucket-strip { grid-template-columns: 1fr 1fr; }
+}
 .acc-stale-badge {
   display: inline-block;
   font-size: 9px;

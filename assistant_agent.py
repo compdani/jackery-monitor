@@ -25,12 +25,20 @@ ALLOWED_MIME = {
 WRITE_TOOLS = {
     "schedule_upsert", "schedule_delete",
     "smart_charge_set", "solar_charge_set", "set_output",
-    "apply_suggestion",
+    "apply_suggestion", "fit_device_param",
 }
 READ_TOOLS = {
     "get_tab_snapshot", "get_forecast", "get_load_schedule",
     "get_energy_totals", "list_suggestions", "get_telemetry",
     "get_charge_status",
+    # Advisor-parity history / weather / accuracy / packs
+    "query_samples", "query_weather", "query_predictions",
+    "query_decisions", "query_battery_packs",
+    # High-value GET surfaces
+    "get_device_params", "get_energy_daily", "get_daily_summary",
+    # Secondary (cheap, non-secret)
+    "get_cost_plan", "get_location", "get_solar_array",
+    "list_automation_rules", "get_events",
 }
 
 ToolHandler = Callable[[str, dict[str, Any]], Awaitable[dict[str, Any]]]
@@ -88,7 +96,10 @@ def tool_definitions() -> list[dict[str, Any]]:
         },
         {
             "name": "get_load_schedule",
-            "description": "Read the calendar/historical load schedule for a device.",
+            "description": (
+                "Calendar/historical load schedule plus learned_profile "
+                "(14d hourly fit) when available."
+            ),
             "input_schema": {"type": "object", "properties": {
                 "device_sn": {"type": "string"},
             }},
@@ -114,10 +125,194 @@ def tool_definitions() -> list[dict[str, Any]]:
         },
         {
             "name": "get_charge_status",
-            "description": "Smart-charge and solar-charge config/status.",
+            "description": (
+                "Smart-charge and solar-charge config plus live status "
+                "(recent decisions, diverted Wh, observed max charge)."
+            ),
             "input_schema": {"type": "object", "properties": {
                 "device_sn": {"type": "string"},
             }},
+        },
+        {
+            "name": "query_samples",
+            "description": (
+                "Time-bucketed power flow + SOC samples. Returns rows with "
+                "soc and average/instant watts (in/out/solar/ac)."
+            ),
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "device_sn": {"type": "string"},
+                    "start_iso": {"type": "string",
+                                  "description": "ISO 8601 UTC start"},
+                    "end_iso": {"type": "string"},
+                    "bucket_s": {
+                        "type": "integer",
+                        "enum": [60, 300, 900, 3600, 86400],
+                    },
+                },
+                "required": ["start_iso", "end_iso", "bucket_s"],
+            },
+        },
+        {
+            "name": "query_weather",
+            "description": (
+                "Hourly weather observations: ghi_w_m2 and cloud_cover_pct."
+            ),
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "device_sn": {"type": "string"},
+                    "start_iso": {"type": "string"},
+                    "end_iso": {"type": "string"},
+                },
+                "required": ["start_iso", "end_iso"],
+            },
+        },
+        {
+            "name": "query_predictions",
+            "description": (
+                "Predicted-vs-actual SOC pairs from forecast accuracy log."
+            ),
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "device_sn": {"type": "string"},
+                    "start_iso": {"type": "string"},
+                    "end_iso": {"type": "string"},
+                    "max_lead_h": {"type": "integer"},
+                },
+                "required": ["start_iso", "end_iso"],
+            },
+        },
+        {
+            "name": "query_decisions",
+            "description": (
+                "Smart-charge decision history with predicted/actual sunrise SOC."
+            ),
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "device_sn": {"type": "string"},
+                    "start_iso": {"type": "string"},
+                    "end_iso": {"type": "string"},
+                },
+                "required": ["start_iso", "end_iso"],
+            },
+        },
+        {
+            "name": "query_battery_packs",
+            "description": "Latest per-expansion-battery SOC / power / errors.",
+            "input_schema": {"type": "object", "properties": {
+                "device_sn": {"type": "string"},
+            }},
+        },
+        {
+            "name": "get_device_params",
+            "description": (
+                "Resolved learned parameters (solar_coefficient, parasitic_w, "
+                "capacity, etc.) with source and confidence."
+            ),
+            "input_schema": {"type": "object", "properties": {
+                "device_sn": {"type": "string"},
+            }},
+        },
+        {
+            "name": "get_energy_daily",
+            "description": "Per-local-day energy rollups (input/output/solar Wh).",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "device_sn": {"type": "string"},
+                    "days": {"type": "integer", "description": "1–365, default 90"},
+                },
+            },
+        },
+        {
+            "name": "get_daily_summary",
+            "description": (
+                "Daily sunset/sunrise predicted vs actual SOC accuracy rows."
+            ),
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "device_sn": {"type": "string"},
+                    "days": {"type": "integer", "description": "1–90, default 7"},
+                },
+            },
+        },
+        {
+            "name": "get_cost_plan",
+            "description": "Electricity cost plan (rates / TOU) — no secrets.",
+            "input_schema": {"type": "object", "properties": {}},
+        },
+        {
+            "name": "get_location",
+            "description": (
+                "Device location: latitude, longitude, label, timezone offset. "
+                "No credentials."
+            ),
+            "input_schema": {"type": "object", "properties": {}},
+        },
+        {
+            "name": "get_solar_array",
+            "description": "Configured solar array plane (tilt/azimuth/size).",
+            "input_schema": {"type": "object", "properties": {
+                "device_sn": {"type": "string"},
+            }},
+        },
+        {
+            "name": "list_automation_rules",
+            "description": "Automation rules (conditions/actions) without secrets.",
+            "input_schema": {"type": "object", "properties": {}},
+        },
+        {
+            "name": "get_events",
+            "description": (
+                "Recent bridge/poll/server log events (secrets redacted)."
+            ),
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "limit": {"type": "integer"},
+                    "since": {"type": "number"},
+                },
+            },
+        },
+        {
+            "name": "fit_device_param",
+            "description": (
+                "Fit a learned parameter over a custom lookback and optionally "
+                "save it as a sticky user override. Use lookback_hours=24 for "
+                "'last day', 168 for a week, etc. (clamped 6…1080). "
+                "apply=true persists until the user Resets the param; "
+                "apply=false is preview only. Keys: solar_coefficient, "
+                "parasitic_w, inverter_overhead_pct, charge_efficiency, "
+                "max_charge_w. Not for battery_capacity_wh."
+            ),
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "device_sn": {"type": "string"},
+                    "key": {
+                        "type": "string",
+                        "enum": [
+                            "solar_coefficient", "parasitic_w",
+                            "inverter_overhead_pct", "charge_efficiency",
+                            "max_charge_w",
+                        ],
+                    },
+                    "lookback_hours": {
+                        "type": "integer",
+                        "description": "e.g. 24 for last day; default 336 (14d)",
+                    },
+                    "apply": {
+                        "type": "boolean",
+                        "description": "true = save as user override",
+                    },
+                },
+                "required": ["key"],
+            },
         },
         {
             "name": "schedule_upsert",

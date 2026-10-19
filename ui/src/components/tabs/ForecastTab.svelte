@@ -92,7 +92,21 @@
     predicted_soc?: number;
     actual_soc?: number | null;
     made_at?: number;
+    error?: number;
   };
+
+  /** Per-lead-time bucket from `/forecast/accuracy` (`_bucket_accuracy`). */
+  type AccuracyBucket = {
+    n?: number;
+    mae?: number;
+    bias_pp?: number;
+  };
+
+  type AccuracySummary = Record<string, AccuracyBucket>;
+
+  type AccuracyDisplayRow = AccuracySample & { groupStart: boolean };
+
+  const ACC_BUCKETS = ['≤6h', '≤24h', '≤72h', '>72h'] as const;
 
   let forecast = $state.raw<ForecastPayload | null>(null);
   let loc = $state.raw<{
@@ -131,9 +145,35 @@
   let draftWeekdays = $state<number[]>([0, 1, 2, 3, 4]);
 
   let accuracySamples = $state.raw<AccuracySample[]>([]);
+  let accuracySummary = $state.raw<AccuracySummary>({});
+  let accuracyShowLongLeads = $state(false);
   let accuracyMsg = $state('');
 
   const needsConfig = $derived(!loc?.latitude || !loc?.longitude);
+
+  const accuracyDisplayRows = $derived.by((): AccuracyDisplayRow[] => {
+    let rows = accuracySamples;
+    if (!accuracyShowLongLeads) {
+      rows = rows.filter((s) => (s.lead_time_h ?? Infinity) <= 24);
+    }
+    const sliced = rows.slice(0, 40);
+    return sliced.map((s, i) => ({
+      ...s,
+      groupStart: i === 0 || s.target !== sliced[i - 1]?.target,
+    }));
+  });
+
+  const accuracyBucketTiles = $derived.by(() =>
+    ACC_BUCKETS.map((key) => {
+      const b = accuracySummary[key];
+      return {
+        key,
+        mae: b?.mae,
+        bias_pp: b?.bias_pp,
+        n: b?.n ?? 0,
+      };
+    }),
+  );
 
   const coeffDisplay = $derived(
     forecast?.solar_coefficient != null && Number.isFinite(forecast.solar_coefficient)
@@ -555,17 +595,35 @@
     }
   }
 
+  function accuracySummaryHasData(summary: AccuracySummary | undefined): boolean {
+    if (!summary) return false;
+    return Object.values(summary).some((b) => (b?.n ?? 0) > 0);
+  }
+
   async function loadAccuracy() {
     try {
-      const j = await api<{ samples?: AccuracySample[] }>(
-        `/forecast/accuracy${deviceQ()}`,
-      );
+      const j = await api<{
+        samples?: AccuracySample[];
+        summary?: AccuracySummary;
+        summary_post_fix?: AccuracySummary;
+        cutoff_ts?: number;
+      }>(`/forecast/accuracy${deviceQ()}`);
+      // Prefer post-fix buckets when they have samples; else full summary.
+      // Response also includes cutoff_ts (FORECASTER_BREAKING_CHANGE_TS).
+      const postFix = j.summary_post_fix || {};
+      accuracySummary = accuracySummaryHasData(postFix) ? postFix : j.summary || {};
       accuracySamples = (j.samples || [])
         .filter((s) => s.actual_soc != null)
-        .slice(0, 40);
+        .sort((a, b) => {
+          const td = (b.target ?? 0) - (a.target ?? 0);
+          if (td !== 0) return td;
+          return (a.lead_time_h ?? 0) - (b.lead_time_h ?? 0);
+        })
+        .slice(0, 200);
       accuracyMsg = '';
     } catch (err) {
       accuracySamples = [];
+      accuracySummary = {};
       accuracyMsg = err instanceof Error ? err.message : 'Accuracy load failed';
     }
   }
@@ -828,6 +886,21 @@
 
   function padHour(h: number) {
     return String(h).padStart(2, '0') + ':00';
+  }
+
+  function fmtAccTs(ts: number | undefined | null): string {
+    if (ts == null) return '—';
+    return new Date(ts * 1000).toLocaleString([], {
+      month: 'short',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+  }
+
+  function fmtBias(bias: number | undefined): string {
+    if (bias == null || !Number.isFinite(bias)) return '—';
+    return (bias > 0 ? '+' : '') + bias.toFixed(1);
   }
 </script>
 
@@ -1438,11 +1511,40 @@
     {#if !accuracySamples.length}
       <p class="hint">No predicted-vs-actual rows yet.</p>
     {:else}
+      <p class="hint" style="margin:0 0 10px">
+        Same target can appear many times — each row is a forecast made earlier (Lead h). Short
+        leads should track Actual; large +errors on long leads mean the model expected more
+        charging than happened.
+      </p>
+      {#if accuracyBucketTiles.some((t) => t.n > 0)}
+        <div class="acc-bucket-strip" aria-label="Accuracy by lead-time bucket">
+          {#each accuracyBucketTiles as t (t.key)}
+            <div class="acc-summary-tile">
+              <div class="acc-summary-label">{t.key}</div>
+              <div class="acc-summary-value">
+                {#if t.mae != null}
+                  {t.mae.toFixed(1)}<small>MAE</small>
+                {:else}
+                  —
+                {/if}
+              </div>
+              <div class="acc-summary-sub">
+                bias {fmtBias(t.bias_pp)} · n={t.n}
+              </div>
+            </div>
+          {/each}
+        </div>
+      {/if}
+      <label class="hint" style="display:flex; gap:6px; align-items:center; margin:0 0 10px">
+        <input type="checkbox" bind:checked={accuracyShowLongLeads} />
+        Show longer leads (&gt;24h)
+      </label>
       <div class="table-scroll" style="max-height:320px">
         <table class="acc-table">
           <thead>
             <tr>
               <th>Target</th>
+              <th>Made</th>
               <th class="num">Lead h</th>
               <th class="num">Predicted</th>
               <th class="num">Actual</th>
@@ -1450,22 +1552,14 @@
             </tr>
           </thead>
           <tbody>
-            {#each accuracySamples as s, i (`${s.target ?? i}-${s.made_at ?? 0}`)}
+            {#each accuracyDisplayRows as s, i (`${s.target ?? i}-${s.made_at ?? 0}-${s.lead_time_h ?? 0}`)}
               {@const err =
                 s.predicted_soc != null && s.actual_soc != null
                   ? s.predicted_soc - s.actual_soc
                   : null}
-              <tr>
-                <td>
-                  {s.target != null
-                    ? new Date(s.target * 1000).toLocaleString([], {
-                        month: 'short',
-                        day: 'numeric',
-                        hour: '2-digit',
-                        minute: '2-digit',
-                      })
-                    : '—'}
-                </td>
+              <tr class:acc-group-start={s.groupStart}>
+                <td>{fmtAccTs(s.target)}</td>
+                <td>{fmtAccTs(s.made_at)}</td>
                 <td class="num">{s.lead_time_h != null ? fmt(s.lead_time_h, 1) : '—'}</td>
                 <td class="num">{s.predicted_soc != null ? `${Math.round(s.predicted_soc)}%` : '—'}</td>
                 <td class="num">{s.actual_soc != null ? `${Math.round(s.actual_soc)}%` : '—'}</td>
@@ -1475,6 +1569,12 @@
                   {:else}
                     —
                   {/if}
+                </td>
+              </tr>
+            {:else}
+              <tr>
+                <td colspan="6">
+                  No rows at ≤24h — enable “Show longer leads” to see farther forecasts.
                 </td>
               </tr>
             {/each}
