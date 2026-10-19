@@ -2075,31 +2075,63 @@ def serialize_status(view_device_id: str | None = None) -> dict[str, Any]:
         if parent:
             view_device_id = str(parent)
 
+    def _meta_is_siseli(d: dict | None) -> bool:
+        if not d:
+            return False
+        if d.get("source") == "siseli":
+            return True
+        return (
+            siseli_client.is_siseli_sn(d.get("device_id"))
+            or siseli_client.is_siseli_sn(d.get("device_sn"))
+        )
+
+    def _meta_is_ecoflow(d: dict | None) -> bool:
+        if not d:
+            return False
+        if d.get("source") == "ecoflow":
+            return True
+        return (
+            ecoflow_devices.is_ecoflow_sn(d.get("device_id"))
+            or ecoflow_devices.is_ecoflow_sn(d.get("device_sn"))
+        )
+
+    # Look up the requested device even when it matches bridge_active_id so
+    # Siseli/EcoFlow views always take the synthesized + overlay path (fleet
+    # already does). Unknown / empty cookies still fall through to bridge.
     view_meta: dict | None = None
-    if view_device_id and str(view_device_id) != str(bridge_active_id or ""):
+    if view_device_id:
         for d in (cloud_src.get("devices") or []):
             if str(d.get("device_id")) == str(view_device_id):
                 view_meta = d
                 break
 
-    viewing_siseli = bool(
-        view_meta and siseli_client.is_siseli_sn(view_meta.get("device_id"))
-    )
-    viewing_ecoflow = bool(
-        view_meta and ecoflow_devices.is_ecoflow_sn(view_meta.get("device_id"))
-    )
+    use_synth = False
+    if view_meta is not None:
+        if _meta_is_siseli(view_meta) or _meta_is_ecoflow(view_meta):
+            use_synth = True
+        elif str(view_meta.get("device_id")) != str(bridge_active_id or ""):
+            use_synth = True
 
-    if view_meta is None:
+    viewing_siseli = bool(use_synth and _meta_is_siseli(view_meta))
+    viewing_ecoflow = bool(use_synth and _meta_is_ecoflow(view_meta))
+
+    if not use_synth:
         device_info = state.device.to_dict() if state.device else None
         view_sn = bridge_active_sn
         view_id = bridge_active_id
         telemetry = state.last_status
+        # Prefer per-SN cache when bridge telemetry is briefly empty so the
+        # hero panels match the fleet strip (same source as overview).
+        if telemetry is None and view_sn:
+            entry = (cloud_src.get("devices_telemetry") or {}).get(view_sn) or {}
+            telemetry = entry.get("telemetry")
         view_packs = state.battery_packs_by_sn.get(view_sn or "", [])
         history = list(state.history)
         model_code = getattr(state.device, "model_code", None)
         last_update_ts = state.last_update_ts
         source = state.last_source
     else:
+        assert view_meta is not None
         view_sn = str(view_meta.get("device_sn") or "") or None
         view_id = str(view_meta["device_id"])
         if viewing_siseli:
@@ -2121,7 +2153,7 @@ def serialize_status(view_device_id: str | None = None) -> dict[str, Any]:
             "source": src_name,
         }
         devs_t = (cloud_src.get("devices_telemetry") or {})
-        entry = devs_t.get(view_sn) or {}
+        entry = (devs_t.get(view_sn) or {}) if view_sn else {}
         telemetry = entry.get("telemetry")
         view_packs = (
             [] if (viewing_siseli or viewing_ecoflow)

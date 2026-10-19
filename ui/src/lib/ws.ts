@@ -1,4 +1,5 @@
 import type { StatusSnapshot } from './types';
+import { live } from './stores/live.svelte';
 
 // Re-export for callers that need the snapshot type alongside the socket helper.
 export type { StatusSnapshot };
@@ -19,6 +20,8 @@ export type WsHandlers = {
 
 /**
  * Live WebSocket with 2s reconnect, matching the legacy connectWs behavior.
+ * Pins `view_device_id` from the live store so reconnects don't silently
+ * fall back to the bridge-active device when the cookie isn't on the upgrade.
  */
 export function connectWs(handlers: WsHandlers): () => void {
   let stopped = false;
@@ -28,7 +31,12 @@ export function connectWs(handlers: WsHandlers): () => void {
   function connect() {
     if (stopped) return;
     const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const ws = new WebSocket(`${proto}//${location.host}/ws`);
+    const viewId = live.selectedDeviceId;
+    const q =
+      viewId != null && String(viewId)
+        ? `?view_device_id=${encodeURIComponent(String(viewId))}`
+        : '';
+    const ws = new WebSocket(`${proto}//${location.host}/ws${q}`);
     socket = ws;
     ws.onmessage = (ev) => {
       let msg: WsMessage;

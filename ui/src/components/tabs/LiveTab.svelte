@@ -324,7 +324,15 @@
   const pauseRemaining = $derived(live.status?.cloud?.pause_remaining_s ?? null);
   const wd = $derived(live.status?.inverter_watchdog);
 
-  const chartInput = $derived(live.status ? { ...live.status, history } : null);
+  const chartInput = $derived(
+    live.status
+      ? {
+          ...live.status,
+          history,
+          deviceKey: live.selectedDeviceId ?? live.activeDeviceSn() ?? '',
+        }
+      : null,
+  );
 
   function attachLiveChart(data: typeof chartInput) {
     return (_canvas: HTMLCanvasElement) => {
@@ -378,6 +386,8 @@
     const unsub = live.onDeviceChange(() => {
       unifiedSolarOverride = null;
       siseliStatusText = '';
+      eod = { kind: 'hidden' };
+      efOverride = {};
       void fetchEod();
       void acCharge.refresh();
       void solarCharge.refresh();

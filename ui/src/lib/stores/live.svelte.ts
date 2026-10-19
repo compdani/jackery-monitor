@@ -1,5 +1,5 @@
 import { api, apiPost } from '../api';
-import type { CloudDevice, FleetDevice, StatusSnapshot, TabName } from '../types';
+import type { CloudDevice, FleetDevice, StatusSnapshot, TabName, Telemetry } from '../types';
 
 export type PendingToggle = { expected: boolean; until: number };
 
@@ -44,8 +44,8 @@ class LiveStore {
   }
 
   activeDeviceSn(): string | undefined {
-    const id = this.status?.cloud?.selected_device_id;
-    const devices = this.status?.cloud?.devices || [];
+    const id = this.status?.cloud?.selected_device_id ?? this.selectedDeviceId;
+    const devices = this.status?.cloud?.devices || this.devices || [];
     const d = devices.find((x) => String(x.device_id) === String(id));
     return d?.device_sn || this.status?.device?.device_sn;
   }
@@ -62,12 +62,12 @@ class LiveStore {
           s.cloud?.selected_device_id != null
             ? String(s.cloud.selected_device_id)
             : null;
-        if (frameId && frameId !== String(this.#pendingViewSwitch.id)) {
+        // Drop stale previous-view frames and device-less frames while switching.
+        if (!frameId || frameId !== String(this.#pendingViewSwitch.id)) {
           return;
         }
-        if (frameId === String(this.#pendingViewSwitch.id)) {
-          this.setDeviceSwitching(false);
-        }
+        this.setDeviceSwitching(false);
+        // Keep the latch until the window expires so late stragglers stay blocked.
       }
     }
 
@@ -80,7 +80,7 @@ class LiveStore {
     // Clear optimistic output toggles once telemetry catches up (or expires).
     const t = s.telemetry || {};
     for (const port of ['ac', 'dc', 'usb', 'car']) {
-      const v = t[`${port}_on`];
+      const v = t[`${port}_on` as keyof typeof t];
       const actual = v === true ? true : v === false ? false : null;
       this.clearPendingIfCaughtUp(port, actual);
     }
@@ -106,10 +106,71 @@ class LiveStore {
     }
   }
 
+  /** Clear hero telemetry while keeping connection chrome; optional fleet snapshot. */
+  #shellStatusForSwitch(deviceId: string): StatusSnapshot {
+    const prev = this.status;
+    const fleetRow = this.fleet.find((d) => String(d.device_id) === String(deviceId));
+    const cloudDev = this.devices.find((d) => String(d.device_id) === String(deviceId));
+    let telemetry: Telemetry | null = null;
+    if (fleetRow && (fleetRow.soc_pct != null || fleetRow.solar_w != null)) {
+      telemetry = {
+        battery_percent: fleetRow.soc_pct ?? null,
+        solar_input_w: fleetRow.solar_w ?? null,
+        ac_input_w: fleetRow.ac_input_w ?? null,
+        output_power_w: fleetRow.output_w ?? null,
+        input_power_w:
+          (Number(fleetRow.solar_w) || 0) + (Number(fleetRow.ac_input_w) || 0) || null,
+        battery_status: fleetRow.battery_status,
+        source: fleetRow.source,
+      };
+    }
+    return {
+      connection_status: prev?.connection_status,
+      connection_error: prev?.connection_error,
+      mock_mode: prev?.mock_mode,
+      source: fleetRow?.source || cloudDev?.source || prev?.source,
+      device: cloudDev
+        ? {
+            name: cloudDev.name || cloudDev.model_name,
+            device_id: cloudDev.device_id,
+            device_sn: cloudDev.device_sn,
+            source: cloudDev.source,
+            model_code: cloudDev.model_code,
+          }
+        : null,
+      telemetry,
+      battery_packs: [],
+      history: [],
+      energy: undefined,
+      siseli_controls: undefined,
+      inverter_watchdog: undefined,
+      cloud: {
+        ...(prev?.cloud || {}),
+        devices: this.devices.length ? this.devices : prev?.cloud?.devices,
+        devices_overview: this.fleet.length ? this.fleet : prev?.cloud?.devices_overview,
+        selected_device_id: deviceId,
+      },
+    };
+  }
+
   async selectViewDevice(deviceId: string) {
     if (!deviceId) return;
+    if (String(this.selectedDeviceId) === String(deviceId)) return;
+
+    const prevSn = this.activeDeviceSn();
     this.#pendingViewSwitch = { id: String(deviceId), until: Date.now() + 8000 };
     this.setDeviceSwitching(true);
+    this.selectedDeviceId = String(deviceId);
+    this.pendingToggles = {};
+    this.status = this.#shellStatusForSwitch(String(deviceId));
+
+    const nextSn =
+      this.devices.find((d) => String(d.device_id) === String(deviceId))?.device_sn ||
+      this.fleet.find((d) => String(d.device_id) === String(deviceId))?.device_sn;
+    if (prevSn !== nextSn) {
+      for (const fn of this.#deviceChangeListeners) fn(prevSn, nextSn);
+    }
+
     try {
       await apiPost('/view/select_device', { device_id: deviceId });
     } catch (err) {
@@ -176,7 +237,7 @@ class LiveStore {
     if (!t) return null;
     const pending = this.pendingToggles[port];
     if (pending && pending.until > Date.now()) return pending.expected;
-    const v = t[`${port}_on`];
+    const v = t[`${port}_on` as keyof Telemetry];
     if (v === true) return true;
     if (v === false) return false;
     return null;

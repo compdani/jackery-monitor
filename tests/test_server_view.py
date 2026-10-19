@@ -158,6 +158,17 @@ def test_cookie_matching_bridge_active_returns_bridge_active(server_state):
     assert isinstance(out["history"], list)
 
 
+def test_bridge_active_falls_back_to_devices_telemetry(server_state):
+    """When last_status is briefly empty, hero panels should still match
+    the fleet strip via devices_telemetry."""
+    server_state.state.last_status = None
+    out = server_state.serialize_status(view_device_id="id-A")
+    assert out["telemetry"] is not None
+    assert out["telemetry"]["battery_percent"] == 80
+    assert out["telemetry"]["solar_input_w"] == 100
+    assert out["cloud"]["selected_device_id"] == "id-A"
+
+
 def test_cookie_picks_secondary_device(server_state):
     out = server_state.serialize_status(view_device_id="id-B")
     assert out["device"]["device_sn"] == "SN-B"
@@ -442,6 +453,25 @@ def test_siseli_view_synthesizes_status(server_state):
     assert out["device_prefs"]["live_controls"] == ["batteryChargeLimit"]
     assert out["device_prefs"]["ignore_inverter_soc"] is False
     assert out["device_prefs"]["calc_grid"] is False
+
+
+def test_siseli_detail_matches_overview_when_last_status_empty(server_state):
+    """JJN/Siseli hero panels must match the fleet card even when Jackery
+    last_status is empty — both read devices_telemetry + overlays."""
+    _seed_siseli(server_state, soc=64)
+    server_state.state.last_status = None
+    out = server_state.serialize_status(view_device_id="siseli:42")
+    assert out["source"] == "siseli"
+    assert out["telemetry"] is not None
+    assert out["telemetry"]["battery_percent"] == 64
+    assert out["telemetry"]["solar_input_w"] == 1500
+    row = next(
+        r for r in out["cloud"]["devices_overview"]
+        if r["device_id"] == "siseli:42"
+    )
+    assert row["soc_pct"] == 64.0
+    assert row["solar_w"] == 1500
+    assert out["cloud"]["selected_device_id"] == "siseli:42"
 
 
 def test_device_alias_overlays_status_and_overview(server_state):
