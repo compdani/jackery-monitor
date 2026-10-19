@@ -10,3 +10,13 @@ run.sh
 run-bridge.sh
 com.jackery.bridge.plist
 README.md
+# UI deps / sources are built in the Node stage; don't send host node_modules.
+ui/node_modules
+ui/.svelte-kit
+web/next
+mobile
+tests
+.pytest_cache
+.ruff_cache
+.cursor
+docs

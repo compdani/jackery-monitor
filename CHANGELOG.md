@@ -9,6 +9,50 @@ Pre-1.0 means breaking changes can land in any minor.
 ## [Unreleased]
 
 ### Added
+- **Calendar expected load** on the Forecast tab: one-off dated events and
+  weekly-recurring windows (Mon–Sun chips), with Historical mode retained.
+  Calendar (`scheduled`) is the default for new devices; uncovered hours
+  stay 0 W. Old `days: all|weekday|weekend` windows migrate to `weekdays`.
+- **AI Assistant** right-side panel (Directus-shaped): server-persisted
+  chats in SQLite, model picker, history, file/vision attachments (images +
+  PDF/text under `/data/assistant_uploads`), tab-aware context, pending
+  tool cards (Approve / Deny / Always allow), and Autopilot for write tools
+  (calendar load CRUD, smart/solar charge, Live port toggles, apply
+  suggestion). Pending algorithm suggestions surface in the empty state.
+- **OpenAI-compatible endpoints** in Settings: preset selector (OpenAI,
+  OpenRouter, Groq, Ollama, Custom) + Base URL; used by advisor, narrator,
+  Assistant, and model list.
+
+### Changed
+- **SvelteKit file routing** for the dashboard (`ui/`): `adapter-static` SPA
+  mode (`ssr=false`, `fallback: index.html`) with routes at `/`, `/energy`,
+  `/forecast`, `/device`, `/automation`, `/ble`, `/logs`, `/settings`,
+  `/login`, and `/setup` instead of hash tabs (`#energy`). FastAPI serves
+  the SPA shell for those paths; hashed client bundles mount at `/_app/`.
+  One-shot redirect maps old `#tab` bookmarks to `/tab`.
+- Dashboard chrome uses **shadcn-svelte** + Tailwind v4, with **Light / Dark /
+  System** theming (`mode-watcher`). Theme control is in the Topbar and under
+  Settings → Display; domain widgets (power-flow, packs, charts) follow CSS
+  theme tokens.
+- Energy tab **Last 7 days / Last 30 days** KPI cards show the same
+  solar / grid / net dollar rows as Today and Lifetime
+  (`last_7d_savings` / `last_30d_savings` from the API).
+- Energy history chart supports **hover crosshair + tooltip**, and a
+  **Bars / Lines** style toggle (persisted in localStorage).
+
+### Added
+- **Svelte 5 dashboard** (`ui/`) replaces the vanilla JS PWA as the primary
+  web UI. SvelteKit builds into `web/next/`; FastAPI serves the SPA at `/`
+  and the tab paths above. The previous shell remains at `/legacy` for
+  one-release rollback. Dashboard login/setup now run inside the SPA
+  (`/api/auth/*` cookie auth unchanged). Feature calls stay on `/api/*` +
+  `/ws` behind `api.ts` / `auth.ts` seams so a later Go/PocketBase cutover
+  can swap the contract. Tab parity now covers Live (EOD, power-flow,
+  packs, charge toggles), Forecast (canvas chart, day strip, budget, load
+  schedule, accuracy), Automation (smart/solar forms, Kasa, rules, AI
+  apply/dismiss), Device (Siseli/EcoFlow/F7/params/BMS/LAN), Settings (AI
+  keys, cost TOU, backup run/restore), Energy compare/records, and Logs
+  debug panel.
 - Energy history chart **compare chips** when two or more Jackerys are
   on the account: tick extra units to overlay consumed / charged / battery
   as colored lines (solid / dashed / thin). One device still uses the
@@ -32,6 +76,11 @@ Pre-1.0 means breaking changes can land in any minor.
 - `pyproject.toml` with pytest + ruff config; `requirements-dev.txt`.
 
 ### Changed
+- Primary web UI is now the SvelteKit SPA at `/` and file routes such as
+  `/energy` (was vanilla `web/index.html` + `web/app.js`, then a Vite
+  hash-tab SPA). Open `/legacy` for the previous dashboard during the
+  cutover window. CI builds `ui/` on every push; the Docker image has a
+  Node 22 stage that runs `npm ci && npm run build`.
 - Packs UI uses server `main_capacity_wh` / `pack_capacity_wh` instead of a
   hardcoded 5040 Wh default, so a 2000 Plus + Battery Pack 2000 Plus
   weights SOC correctly.

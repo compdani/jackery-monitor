@@ -87,13 +87,16 @@ async def _validate_anthropic(api_key: str) -> tuple[bool, str]:
 
 
 async def _validate_openai(api_key: str) -> tuple[bool, str]:
-    if not api_key or not api_key.startswith("sk-"):
+    import openai_compat
+    if not api_key or not api_key.strip():
+        return False, "API key required."
+    # Official OpenAI keys are sk-…; OpenRouter/Groq/etc. use other prefixes.
+    if openai_compat.is_official_openai() and not api_key.startswith("sk-"):
         return False, "OpenAI API keys start with `sk-`. Check the value you pasted."
     try:
-        from openai import AsyncOpenAI
+        client = openai_compat.make_async_client(api_key)
     except ImportError:
         return False, "OpenAI SDK not installed in this image — rebuild required."
-    client = AsyncOpenAI(api_key=api_key)
     try:
         # Cheapest confirm of auth + model access. max_completion_tokens is
         # the modern param accepted across current chat models.
@@ -140,8 +143,8 @@ async def _narrate_anthropic(api_key: str, facts: str) -> str:
 
 
 async def _narrate_openai(api_key: str, facts: str) -> str:
-    from openai import AsyncOpenAI
-    client = AsyncOpenAI(api_key=api_key)
+    import openai_compat
+    client = openai_compat.make_async_client(api_key)
     resp = await client.chat.completions.create(
         model=_get_model(),
         max_completion_tokens=MAX_TOKENS,

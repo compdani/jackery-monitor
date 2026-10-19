@@ -2039,10 +2039,14 @@ def build_forecast(
             solar_w = solar_cap
             capped = True
 
-        hour, weekend, minute = _load_sched.hour_parts(ts, utc_offset_seconds)
+        hour, weekday, weekend, minute, local_date = _load_sched.clock_parts(
+            ts, utc_offset_seconds)
         asleep = _load_sched.in_sleep_window(minute, sleep_start, sleep_end)
         if mode == "scheduled":
-            base = _load_sched.scheduled_load_w(load_windows or [], hour, weekend)
+            base = _load_sched.scheduled_load_w(
+                load_windows or [], hour, weekend,
+                weekday=weekday, date=local_date,
+            )
             # 0 W (uncovered or explicit) = inverter off: no parasitic.
             # Sleep zeros idle but scheduled window watts still apply.
             if base <= 0:

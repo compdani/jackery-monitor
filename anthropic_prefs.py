@@ -46,12 +46,16 @@ DEFAULTS: dict[str, Any] = {
     "advisor_1m_context": True,
     "advisor_thinking_effort": "high",
     "narrator_model": "claude-haiku-4-5",
-    # --- OpenAI (mirror of the Anthropic knobs) ---
+    # --- OpenAI-compatible (mirror of the Anthropic knobs) ---
     "openai_advisor_model": "o4-mini",
     "openai_narrator_model": "gpt-4o-mini",
     # Reasoning effort for o-series advisor models; ignored by non-
     # reasoning models (e.g. gpt-4o). Mirrors advisor_thinking_effort.
     "openai_advisor_effort": "high",
+    # Endpoint: openai | openrouter | groq | ollama | custom.
+    # Empty openai_base_url → use the preset's default URL.
+    "openai_compat_preset": "openai",
+    "openai_base_url": "",
 }
 
 # Roles the UI surfaces. Keep small; new roles need a corresponding
@@ -59,7 +63,12 @@ DEFAULTS: dict[str, Any] = {
 ROLES: tuple[str, ...] = ("advisor", "narrator")
 
 # The AI backends the UI can switch between. Exactly one active.
+# "openai" means any OpenAI-compatible HTTP API (see openai_compat presets).
 VALID_PROVIDERS: tuple[str, ...] = ("anthropic", "openai")
+
+VALID_OPENAI_COMPAT_PRESETS: tuple[str, ...] = (
+    "openai", "openrouter", "groq", "ollama", "custom",
+)
 
 # Adaptive-thinking effort levels per the Anthropic API spec. Higher
 # = the model self-allocates a larger thinking budget. Reject other
@@ -93,15 +102,37 @@ def _save(data: dict) -> None:
 
 
 def get_provider() -> str:
-    """Active AI backend: 'anthropic' | 'openai'. Falls back to the
-    default (anthropic) on missing/invalid values so existing deploys
-    are unaffected until the user opts into OpenAI."""
+    """Active AI backend: 'anthropic' | 'openai' (OpenAI-compatible).
+    Falls back to the default (anthropic) on missing/invalid values so
+    existing deploys are unaffected until the user opts in."""
     with _lock:
         data = _load()
     val = data.get("provider")
     if isinstance(val, str) and val.strip().lower() in VALID_PROVIDERS:
         return val.strip().lower()
     return DEFAULTS["provider"]
+
+
+def get_openai_compat_preset() -> str:
+    """Which OpenAI-compatible gateway preset is selected."""
+    with _lock:
+        data = _load()
+    val = data.get("openai_compat_preset")
+    if isinstance(val, str) and val.strip().lower() in VALID_OPENAI_COMPAT_PRESETS:
+        return val.strip().lower()
+    return DEFAULTS["openai_compat_preset"]
+
+
+def get_openai_base_url() -> str:
+    """Custom / override base URL for the OpenAI-compatible client.
+    Empty string means 'use the preset default' (or SDK default for
+    official OpenAI)."""
+    with _lock:
+        data = _load()
+    val = data.get("openai_base_url")
+    if isinstance(val, str):
+        return val.strip().rstrip("/")
+    return ""
 
 
 def get_model(role: str, provider: str | None = None) -> str:
@@ -171,6 +202,8 @@ def get_all() -> dict[str, Any]:
         "openai_advisor_model": get_model("advisor", provider="openai"),
         "openai_narrator_model": get_model("narrator", provider="openai"),
         "openai_advisor_effort": get_openai_effort(),
+        "openai_compat_preset": get_openai_compat_preset(),
+        "openai_base_url": get_openai_base_url(),
     }
 
 
@@ -182,11 +215,17 @@ def set_models(*,
                narrator_model: str | None = None,
                openai_advisor_model: str | None = None,
                openai_narrator_model: str | None = None,
-               openai_advisor_effort: str | None = None) -> dict[str, Any]:
+               openai_advisor_effort: str | None = None,
+               openai_compat_preset: str | None = None,
+               openai_base_url: str | None = None) -> dict[str, Any]:
     """Persist any non-None field; leave the rest untouched. Returns
     the resulting full snapshot. Invalid provider / effort values are
     silently dropped (no half-saves) so the file never holds a value a
-    caller would reject at API call time."""
+    caller would reject at API call time.
+
+    `openai_base_url` accepts "" to clear a custom override (unlike
+    model fields, where empty means 'leave unchanged').
+    """
     with _lock:
         data = _load()
         if provider:
@@ -211,5 +250,17 @@ def set_models(*,
             v = str(openai_advisor_effort).strip().lower()
             if v in VALID_THINKING_EFFORTS:
                 data["openai_advisor_effort"] = v
+        if openai_compat_preset is not None:
+            p = str(openai_compat_preset).strip().lower()
+            if p in VALID_OPENAI_COMPAT_PRESETS:
+                data["openai_compat_preset"] = p
+                # Cloud presets: drop stale overrides when switching,
+                # unless the caller also sent openai_base_url.
+                # ollama/custom keep (or accept) a typed URL.
+                if p not in ("custom", "ollama") and openai_base_url is None:
+                    data["openai_base_url"] = ""
+        if openai_base_url is not None:
+            # Allow clearing with "".
+            data["openai_base_url"] = str(openai_base_url).strip().rstrip("/")
         _save(data)
     return get_all()

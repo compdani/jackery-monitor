@@ -39,6 +39,7 @@ from fastapi.staticfiles import StaticFiles
 
 import advisor_routes
 import api_auth
+import assistant_routes
 import auth
 import automation
 import backoff as _backoff
@@ -1856,6 +1857,11 @@ def _decorate_totals_with_savings(totals: dict, device_sn: str) -> dict:
             life_hist.append(in_progress)
         totals["today_savings"] = cost_module.today_savings(today_hist, plan, tz_offset)
         totals["lifetime_savings"] = cost_module.lifetime_savings(life_hist, plan, tz_offset)
+        now_ts = int(time.time())
+        hist_7d = [r for r in life_hist if (r.get("ts") or 0) >= now_ts - 7 * 86400]
+        hist_30d = [r for r in life_hist if (r.get("ts") or 0) >= now_ts - 30 * 86400]
+        totals["last_7d_savings"] = cost_module.compute_savings(hist_7d, plan, tz_offset)
+        totals["last_30d_savings"] = cost_module.compute_savings(hist_30d, plan, tz_offset)
         totals["cost_plan"] = {"type": plan["type"],
                                "currency": plan.get("currency", "USD")}
     except Exception as e:
@@ -4114,7 +4120,9 @@ api_auth.install(
     # Pre-auth restore: lets a fresh install pull data from backup
     # before creating an admin account. The endpoint itself verifies
     # auth.has_user() == False — see _require_no_user().
-    extra_public_prefixes=("/api/backup/setup_restore/",),
+    # /next is the Svelte SPA strangler path — the SPA owns its own
+    # login/setup screens; every /api/* call remains gated.
+    extra_public_prefixes=("/api/backup/setup_restore/", "/next"),
 )
 
 # Advisor routes + daily loop. The helpers tuple injects the three
@@ -4126,6 +4134,69 @@ _advisor_helpers = advisor_routes.AdvisorHelpers(
     system_soc_pct=_system_soc_pct,
 )
 advisor_routes.install(app, state, _advisor_helpers)
+
+
+async def _assistant_apply_suggestion(suggestion_id: int) -> dict:
+    """Reuse the same whitelist/apply path as /api/algorithm/suggestions/.../apply."""
+    import claude_advisor
+    s = state.energy.get_suggestion(suggestion_id)
+    if not s:
+        raise ValueError("suggestion not found")
+    if s["status"] != "pending":
+        raise ValueError(f"suggestion is {s['status']}, not pending")
+    if s["kind"] != "config":
+        raise ValueError("anomalies are not directly applicable")
+    target = s["target"]
+    rules = claude_advisor.ALLOWED_TARGETS.get(target)
+    if not rules:
+        raise ValueError(f"target {target!r} no longer in whitelist")
+    try:
+        proposed_n = float(s["proposed_value"])
+    except Exception as e:
+        raise ValueError("proposed_value not numeric") from e
+    if proposed_n < rules["min"] or proposed_n > rules["max"]:
+        raise ValueError(f"proposed value out of safe range [{rules['min']}, {rules['max']}]")
+    if not target.startswith("smart_charge."):
+        raise ValueError(f"applying {target!r} is not yet supported")
+    if rules.get("scope") == "device" and not s.get("device_sn"):
+        raise ValueError("device-scoped suggestion missing device_sn")
+    field = target.split(".", 1)[1]
+    cfg = smart_charge.get_config(s["device_sn"])
+    old = cfg.get(field)
+    cfg[field] = int(proposed_n) if isinstance(old, int) else proposed_n
+    smart_charge.set_config(cfg, device_sn=s["device_sn"])
+    state.energy.record_change(
+        suggestion_id=suggestion_id, device_sn=s["device_sn"],
+        target=target, old_value=old, new_value=cfg[field],
+        reasoning=s.get("reasoning"),
+    )
+    state.energy.update_suggestion_status(suggestion_id, "applied")
+    return {"ok": True, "applied": {target: cfg[field]}, "previous": old}
+
+
+async def _assistant_set_output(device_sn: str | None, port: str, on: bool) -> dict:
+    body = {"port": port, "on": on, "device_sn": device_sn}
+    return await api_set_output(body)
+
+
+assistant_routes.install(
+    app,
+    assistant_routes.AssistantHelpers(
+        get_device_sn=lambda: state.device.device_sn if state.device else None,
+        get_status=lambda: serialize_status(),
+        # Late-bound: _build_and_record_forecast is defined further below.
+        get_forecast=lambda sn: _build_and_record_forecast(sn),
+        get_energy_totals=lambda sn: (
+            _decorate_totals_with_savings(state.energy.totals(sn), sn)
+            if sn else {"device_sn": None}
+        ),
+        list_suggestions=lambda sn: state.energy.list_suggestions(
+            device_sn=sn, status="pending",
+        ),
+        apply_suggestion=_assistant_apply_suggestion,
+        set_output=_assistant_set_output,
+    ),
+)
 
 
 @app.get("/api/status")
@@ -6914,11 +6985,15 @@ async def api_anthropic_prefs_save(body: dict):
     openai_advisor_model = body.get("openai_advisor_model")
     openai_narrator_model = body.get("openai_narrator_model")
     openai_advisor_effort = body.get("openai_advisor_effort")
+    openai_compat_preset = body.get("openai_compat_preset")
+    # Distinguish "field omitted" from "clear the override" ("").
+    openai_base_url = body["openai_base_url"] if "openai_base_url" in body else None
     if all(v is None for v in (advisor_model, narrator_model, advisor_1m,
                                advisor_effort, provider, openai_advisor_model,
-                               openai_narrator_model, openai_advisor_effort)):
+                               openai_narrator_model, openai_advisor_effort,
+                               openai_compat_preset, openai_base_url)):
         raise HTTPException(400, "at least one preference field required")
-    return anthropic_prefs.set_models(
+    snap = anthropic_prefs.set_models(
         provider=provider,
         advisor_model=advisor_model,
         advisor_1m_context=advisor_1m,
@@ -6927,7 +7002,13 @@ async def api_anthropic_prefs_save(body: dict):
         openai_advisor_model=openai_advisor_model,
         openai_narrator_model=openai_narrator_model,
         openai_advisor_effort=openai_advisor_effort,
+        openai_compat_preset=openai_compat_preset,
+        openai_base_url=openai_base_url,
     )
+    # Endpoint change invalidates the cached model list.
+    if openai_compat_preset is not None or openai_base_url is not None:
+        state.openai_models_cache = {"ts": 0.0, "models": []}
+    return snap
 
 
 # ---------------------------------------------------------------------------
@@ -6985,41 +7066,77 @@ def api_openai_key_clear():
 
 @app.get("/api/openai/models")
 async def api_openai_models(refresh: bool = False):
-    """List OpenAI chat models the user can pick from. Live list (cached
-    5 min) when a key is configured; static fallback otherwise. Always
-    succeeds so the dropdown always renders."""
+    """List chat models from the configured OpenAI-compatible endpoint.
+    Live list (cached 5 min) when a key is configured; static fallback
+    otherwise. Always succeeds so the dropdown always renders."""
+    import anthropic_prefs
+    import openai_compat
     import openai_creds as oc
+
+    def _meta(extra: dict | None = None) -> dict:
+        out = {
+            "base_url": openai_compat.resolve_base_url() or "",
+            "preset": anthropic_prefs.get_openai_compat_preset(),
+        }
+        if extra:
+            out.update(extra)
+        return out
+
     now = time.time()
     if not refresh and (now - state.openai_models_cache["ts"]) < OPENAI_MODELS_CACHE_TTL_S:
         cached = state.openai_models_cache["models"]
         if cached:
-            return {"models": cached, "source": "cache"}
+            return _meta({"models": cached, "source": "cache"})
     api_key = oc.load() or os.environ.get("OPENAI_API_KEY")
     if not api_key:
-        return {"models": OPENAI_MODELS_FALLBACK, "source": "fallback_no_key"}
+        return _meta({"models": OPENAI_MODELS_FALLBACK, "source": "fallback_no_key"})
     try:
-        from openai import AsyncOpenAI
+        client = openai_compat.make_async_client(api_key)
     except ImportError:
-        return {"models": OPENAI_MODELS_FALLBACK, "source": "fallback_no_sdk"}
+        return _meta({"models": OPENAI_MODELS_FALLBACK, "source": "fallback_no_sdk"})
     try:
-        client = AsyncOpenAI(api_key=api_key)
         page = await client.models.list()
-        # Only chat-capable families are useful here; filter to gpt-*/o*.
-        models = [
-            {"id": m.id, "display_name": m.id}
-            for m in (page.data or [])
-            if m.id.startswith(("gpt-", "o1", "o3", "o4", "chatgpt-"))
-        ]
+        raw = list(page.data or [])
+        # Official OpenAI: keep chat-ish families. Compat gateways
+        # (OpenRouter etc.) use many naming schemes — return all, capped.
+        if openai_compat.is_official_openai():
+            models = [
+                {"id": m.id, "display_name": m.id}
+                for m in raw
+                if m.id.startswith(("gpt-", "o1", "o3", "o4", "chatgpt-"))
+            ]
+        else:
+            models = [
+                {"id": m.id, "display_name": m.id}
+                for m in raw
+                if getattr(m, "id", None)
+            ][:400]
         models.sort(key=lambda m: m["id"])
     except Exception as e:
         log.info("openai models list failed (%s); using fallback", e)
-        return {"models": OPENAI_MODELS_FALLBACK,
-                "source": "fallback_fetch_failed", "error": str(e)[:200]}
+        return _meta({
+            "models": OPENAI_MODELS_FALLBACK,
+            "source": "fallback_fetch_failed",
+            "error": str(e)[:200],
+        })
     if not models:
-        return {"models": OPENAI_MODELS_FALLBACK, "source": "fallback_empty"}
+        return _meta({"models": OPENAI_MODELS_FALLBACK, "source": "fallback_empty"})
     state.openai_models_cache["ts"] = now
     state.openai_models_cache["models"] = models
-    return {"models": models, "source": "live"}
+    return _meta({"models": models, "source": "live"})
+
+
+@app.get("/api/openai/compat")
+def api_openai_compat_presets():
+    """Known OpenAI-compatible gateway presets for the Settings UI."""
+    import openai_compat
+    import anthropic_prefs
+    return {
+        "presets": openai_compat.list_presets(),
+        "preset": anthropic_prefs.get_openai_compat_preset(),
+        "base_url": anthropic_prefs.get_openai_base_url(),
+        "resolved_base_url": openai_compat.resolve_base_url() or "",
+    }
 
 
 @app.get("/api/ai/provider")
@@ -7027,11 +7144,15 @@ def api_ai_provider_get():
     """Active AI provider + per-provider key status, for the Settings UI."""
     import anthropic_creds as ac
     import anthropic_prefs
+    import openai_compat
     import openai_creds as oc
     return {
         "provider": anthropic_prefs.get_provider(),
         "anthropic_has_key": ac.has_key() or bool(os.environ.get("ANTHROPIC_API_KEY")),
         "openai_has_key": oc.has_key() or bool(os.environ.get("OPENAI_API_KEY")),
+        "openai_compat_preset": anthropic_prefs.get_openai_compat_preset(),
+        "openai_base_url": anthropic_prefs.get_openai_base_url(),
+        "openai_resolved_base_url": openai_compat.resolve_base_url() or "",
     }
 
 
@@ -7801,14 +7922,67 @@ async def api_backup_setup_restore_run(body: dict):
     return result
 
 
-# Static UI. no-cache so Cloudflare / the PWA SW revalidate the shell
-# instead of serving a stale Forecast tab after a deploy.
+# SvelteKit SPA (primary UI). adapter-static writes to web/next/; hashed
+# client bundles are mounted at /_app (see below). Client routes fall
+# back to index.html.
+_NEXT_INDEX = WEB_DIR / "next" / "index.html"
+
+# First path segment → SPA shell (file routes under ui/src/routes/).
+_SPA_SEGMENTS = frozenset({
+    "energy",
+    "forecast",
+    "device",
+    "automation",
+    "ble",
+    "logs",
+    "settings",
+    "login",
+    "setup",
+})
+
+
+def _spa_index():
+    if not _NEXT_INDEX.is_file():
+        raise HTTPException(
+            503,
+            "Svelte UI not built. Run: npm ci --prefix ui && npm run build --prefix ui",
+        )
+    return FileResponse(
+        _NEXT_INDEX,
+        headers={"Cache-Control": "no-cache"},
+    )
+
+
 @app.get("/")
 def index():
+    return _spa_index()
+
+
+# Legacy vanilla dashboard — one-release rollback. Absolute /static and
+# /api paths keep working from this route.
+@app.get("/legacy")
+def legacy_index():
     return FileResponse(
         WEB_DIR / "index.html",
         headers={"Cache-Control": "no-cache"},
     )
+
+
+# Strangler alias kept during the cutover window.
+@app.get("/next")
+@app.get("/next/{path:path}")
+def next_spa(path: str = ""):
+    return _spa_index()
+
+
+# SvelteKit file routes — return the SPA shell so authenticated refreshes
+# (session cookie) get HTML, not 404. /login and /setup are also registered
+# in api_auth (same FileResponse); FastAPI uses the first matching route.
+@app.get("/{segment}")
+def spa_client_route(segment: str):
+    if segment in _SPA_SEGMENTS:
+        return _spa_index()
+    raise HTTPException(404, "Not Found")
 
 
 # PWA manifest + service worker MUST live at the site root for the browser
@@ -7846,6 +8020,16 @@ class _NoCacheStaticFiles(StaticFiles):
 
 
 app.mount("/static", _NoCacheStaticFiles(directory=WEB_DIR), name="static")
+
+# SvelteKit client bundles (adapter-static → web/next/_app). Public via
+# api_auth `/_app` prefix so /login and /setup can load before a session.
+_NEXT_APP = WEB_DIR / "next" / "_app"
+_NEXT_APP.mkdir(parents=True, exist_ok=True)
+app.mount(
+    "/_app",
+    _NoCacheStaticFiles(directory=_NEXT_APP),
+    name="sveltekit_app",
+)
 
 
 if __name__ == "__main__":

@@ -669,14 +669,14 @@ async def _review_openai(bundle: dict, *, query_fn: QueryFn) -> dict:
         return {"summary": "", "config_suggestions": [], "anomalies": [],
                 "skipped_reason": "no_api_key"}
     try:
-        from openai import AsyncOpenAI
+        import openai_compat
+        client = openai_compat.make_async_client(api_key)
     except ImportError as e:
         log.warning("advisor: openai SDK not installed: %s", e)
         return {"summary": "", "config_suggestions": [], "anomalies": [],
                 "skipped_reason": "sdk_missing"}
 
     model = anthropic_prefs.get_model("advisor", provider="openai")
-    client = AsyncOpenAI(api_key=api_key)
     tools = _to_openai_tools()
     # Reasoning effort maps 1:1 onto the prefs value. Non-reasoning
     # models reject the `reasoning` param outright — rather than

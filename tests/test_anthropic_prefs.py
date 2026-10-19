@@ -190,3 +190,35 @@ def test_switching_provider_preserves_both_providers_models(prefs):
     snap = prefs.get_all()
     assert snap["advisor_model"] == "claude-sonnet-4-7"      # anthropic kept
     assert snap["openai_advisor_model"] == "o3"              # openai kept
+
+
+# ---- OpenAI-compatible endpoint presets ----
+
+def test_default_openai_compat_is_official(prefs):
+    assert prefs.get_openai_compat_preset() == "openai"
+    assert prefs.get_openai_base_url() == ""
+    snap = prefs.get_all()
+    assert snap["openai_compat_preset"] == "openai"
+    assert snap["openai_base_url"] == ""
+
+
+def test_openai_compat_preset_and_base_url_round_trip(prefs):
+    prefs.set_models(openai_compat_preset="openrouter")
+    assert prefs.get_openai_compat_preset() == "openrouter"
+    # Cloud preset clears override when not explicitly set.
+    assert prefs.get_openai_base_url() == ""
+
+    prefs.set_models(openai_compat_preset="custom",
+                     openai_base_url="https://llm.example/v1/")
+    assert prefs.get_openai_compat_preset() == "custom"
+    assert prefs.get_openai_base_url() == "https://llm.example/v1"
+
+    # Empty string clears the override.
+    prefs.set_models(openai_base_url="")
+    assert prefs.get_openai_base_url() == ""
+
+
+def test_openai_compat_rejects_unknown_preset(prefs):
+    prefs.set_models(openai_compat_preset="openrouter")
+    prefs.set_models(openai_compat_preset="not-a-gateway")
+    assert prefs.get_openai_compat_preset() == "openrouter"

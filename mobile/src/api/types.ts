@@ -94,6 +94,8 @@ export type EnergyTotals = {
   last_30d?: EnergyWindow;
   lifetime?: EnergyWindow;
   today_savings?: EnergySavings;
+  last_7d_savings?: EnergySavings;
+  last_30d_savings?: EnergySavings;
   lifetime_savings?: EnergySavings;
   cost_plan?: { type?: string; currency?: string };
 };

@@ -1,6 +1,6 @@
 """
-OpenAI API key for the optional AI advisor / narrator, when the user
-selects OpenAI as the active AI provider (see anthropic_prefs.get_provider).
+API key for the OpenAI-compatible provider (OpenAI, OpenRouter, Groq,
+Ollama, or custom base URL — see openai_compat + anthropic_prefs).
 
 Same encrypted-on-disk pattern as anthropic_creds — AES-256-GCM via
 crypto_util, saved to /data/openai-creds.json. The key is read fresh on

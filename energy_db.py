@@ -48,8 +48,9 @@ class EnergyWindowSince(EnergyWindow):
 class DeviceTotals(TypedDict):
     """Shape returned by EnergyDB.totals(device_sn). Lifetime + three
     rolling windows. The server may decorate this with `today_savings`,
-    `lifetime_savings`, and `cost_plan` before sending it to the UI —
-    those are added in server._decorate_totals_with_savings."""
+    `last_7d_savings`, `last_30d_savings`, `lifetime_savings`, and
+    `cost_plan` before sending it to the UI — those are added in
+    server._decorate_totals_with_savings."""
     device_sn: str
     lifetime: EnergyWindow
     today: EnergyWindowSince

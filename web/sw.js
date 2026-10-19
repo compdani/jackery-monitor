@@ -3,22 +3,18 @@
  *
  * Goal: make the app installable as a PWA and keep the UI shell loading
  * fast even when the NAS is briefly unreachable. We cache the static
- * shell (HTML + CSS + JS + icon) on install, and use a network-first
- * strategy for everything else (live API calls always go to the bridge).
+ * shell (HTML + hashed Svelte assets + icon) on install, and use a
+ * network-first strategy for everything else (live API calls always go
+ * to the bridge).
  */
 
 // Bump this whenever the static-shell semantics change (or whenever a
 // stuck cache is suspected). The activate handler drops every cache that
 // isn't the current name, so installed clients get fresh files on the
-// next navigation. Don't include CSS in the shell — the browser's
-// standard cache + FastAPI's Last-Modified header handle revalidation
-// fine, and a stale CSS in the SW cache once cost us a "phantom Confirm
-// password field on the login page" debugging spiral.
-const CACHE = 'jackery-shell-v23';
+// next navigation.
+const CACHE = 'jackery-shell-v25';
 const SHELL = [
   '/',
-  '/static/app.js',
-  '/static/ble.js',
   '/static/icon.svg',
   '/manifest.webmanifest',
 ];
@@ -49,12 +45,18 @@ self.addEventListener('fetch', (event) => {
   // Network-first for everything else — falls back to cached shell when
   // offline so the dashboard still loads its frame and shows the last
   // telemetry the WS pushed before the connection dropped.
+  // Hashed SvelteKit assets under /_app/ are immutable; cache them on
+  // success so repeat visits stay fast.
   event.respondWith(
     fetch(req)
       .then((resp) => {
-        if (resp && resp.ok && SHELL.includes(url.pathname)) {
-          const copy = resp.clone();
-          caches.open(CACHE).then((c) => c.put(req, copy));
+        if (resp && resp.ok) {
+          const isShell = SHELL.includes(url.pathname);
+          const isHashedAsset = url.pathname.startsWith('/_app/');
+          if (isShell || isHashedAsset) {
+            const copy = resp.clone();
+            caches.open(CACHE).then((c) => c.put(req, copy));
+          }
         }
         return resp;
       })

@@ -56,9 +56,10 @@ It connects through the **Jackery cloud account** (the same one the official app
   "Pause polling" with duration picker so you can hand the cloud session to
   the phone app without the bridge stealing it back.
 - **Forecast tab** — 5-day hourly SOC simulation. Solar regression fitted
-  from your own observed solar-vs-GHI pairs (Open-Meteo); load model uses
-  per-hour-of-day medians with a runaway-bucket cap so a single high-output
-  event doesn't dominate. Predicted-vs-actual chart accumulates over time.
+  from your own observed solar-vs-GHI pairs (Open-Meteo). Expected load
+  defaults to a **calendar** of one-off and weekly-recurring watt windows
+  (Historical hour-of-day medians remain available). Predicted-vs-actual
+  chart accumulates over time.
 - **Battery packs card** (5000 Plus / 2000 Plus + expansions) — per-pack SOC,
   input W, temp. Real-time updates over MQTT (no polling).
   Auto-detected total capacity = main + N × expansion (per-model pack
@@ -81,6 +82,11 @@ It connects through the **Jackery cloud account** (the same one the official app
   tweaks bounded to a safe whitelist, surfaces anomalies. Human approves
   each suggestion via one-click Apply / Dismiss. Audit log of every
   applied change. See [AI features](#ai-features-optional).
+- **AI Assistant** (optional side panel) — conversational chat with the
+  same API keys as Settings → AI. Server-side history, screenshot/PDF
+  attachments, tab context, and gated write tools (calendar loads, charge
+  configs, output ports). Autopilot or per-tool Always allow skips the
+  Approve step.
 - **Decision narration** (optional, Haiku per fired decision) —
   1-2 sentence plain-English explanation of each smart-charge decision,
   attached to the persisted history row.
@@ -112,9 +118,9 @@ It connects through the **Jackery cloud account** (the same one the official app
 ## Architecture
 
 ```
-   Browser
+   Browser (SvelteKit SPA — ui/, built to web/next/)
      │
-     ├──HTTPS── /, /api/*, /static, /login    (FastAPI server)
+     ├──HTTPS── /, /energy, /_app/*, /api/*, /login    (FastAPI server)
      └──WS──── /ws  (telemetry broadcast)
                                               ▲
                                               │ JSON over TCP (localhost:8766)
@@ -138,6 +144,16 @@ It connects through the **Jackery cloud account** (the same one the official app
 Both server and bridge run as the same image (`ghcr.io/yaniverel-code/jackery-monitor`),
 just different `command:`s in compose. The shared `/data` volume holds energy
 history, credentials (encrypted), automation rules, and settings.
+
+The web UI is a **SvelteKit** SPA (Svelte 5, `adapter-static`, `ssr=false`) in
+[`ui/`](ui/) with file routes (`/`, `/energy`, `/forecast`, …). Chrome uses
+**shadcn-svelte** + Tailwind v4; theme is **Light / Dark / System** via
+`mode-watcher` (Topbar menu and Settings → Display). Production builds land in
+`web/next/` (gitignored); FastAPI serves the shell at those paths and hashed
+bundles at `/_app/*`. During local/macOS launch, [`run.sh`](run.sh) runs
+`npm ci && npm run build` in `ui/` before starting the server. The previous
+vanilla dashboard remains at **`/legacy`** for one-release rollback. Old
+`#energy`-style hash bookmarks redirect once to `/energy`.
 
 ---
 
@@ -194,6 +210,43 @@ Or in fully-mock mode (no Jackery cloud, synthetic telemetry):
 ```bash
 docker compose -f docker-compose.dev.yml --profile mock up
 ```
+
+Host-native (no Docker) — builds the Svelte UI then starts FastAPI:
+
+```bash
+./run.sh
+```
+
+### UI development (SvelteKit)
+
+```bash
+# Terminal 1: FastAPI (mock or bridge)
+BACKEND=mock ./run.sh   # or python server.py with BACKEND=mock
+
+# Terminal 2: Kit vite dev with /api + /ws proxy to :8000
+npm ci --prefix ui
+npm run dev --prefix ui
+# open http://localhost:5173/energy  (file routes — not hash tabs)
+```
+
+To hit a **real deployed server** (NAS / tunnel) instead of localhost:
+
+```bash
+# one-shot
+JACKERY_DEV_API=https://your-host.example.com npm run dev --prefix ui
+
+# or persist in ui/.env.local (see ui/.env.example)
+cp ui/.env.example ui/.env.local
+# edit JACKERY_DEV_API=…
+npm run dev --prefix ui
+```
+
+The Kit dev server proxies `/api`, `/ws`, `/static`, and the PWA shell to
+that origin (`changeOrigin`, TLS verification off for LAN/self-signed).
+The SPA still runs on `http://localhost:5173` with hot reload.
+
+Production build output is `web/next/` (shell at `/`, `/energy`, …; assets at
+`/_app/`). The previous vanilla shell is still available at `/legacy`.
 
 ---
 
@@ -320,9 +373,22 @@ viewing the 5000 Plus.
 
 ## AI features (optional)
 
-Two Claude-powered features. Both are opt-in, gated by an Anthropic API key
-saved encrypted in the data volume. Without a key, the rest of the app is
-unaffected.
+Claude- and OpenAI-compatible features. Opt-in via an API key saved encrypted
+in the data volume (Settings → AI). The OpenAI-compatible path supports
+official OpenAI, OpenRouter, Groq, Ollama, or a custom Base URL. Without a
+key, the rest of the app is unaffected.
+
+**0. AI Assistant (side panel)**
+
+Topbar → **AI Assistant** opens a right-side chat that persists across
+tabs. Conversations and messages live in `/data/assistant_chat.db`;
+uploads (JPEG/PNG/GIF/WebP, PDF, plain text; 10 MB / file, 5 per message)
+under `/data/assistant_uploads/`. The model sees the current tab context
+and can propose calendar load changes, smart/solar-charge tweaks, Live
+port toggles, and applying pending algorithm suggestions. Writes pause
+for Approve / Deny / Always allow unless **Autopilot** is on (gear menu).
+On the Forecast tab the prompt emphasizes shifting heavy calendar loads
+into high-GHI hours.
 
 **1. Algorithm advisor (Opus + extended thinking, daily)**
 
@@ -455,11 +521,15 @@ jackery-monitor/
 ├── crypto_util.py            Shared AES-256-GCM helper
 │
 ├── forecaster.py             Solar regression + load profile + SOC simulation
+├── load_schedule.py          Calendar / historical expected-load schedule
 ├── weather_client.py         Open-Meteo client (free, keyless)
 ├── smart_charge.py           Per-device smart-charge planner + config
 ├── cost.py                   TOU electricity rate plans + savings math
 ├── claude_advisor.py         Daily Opus + extended-thinking algorithm review
 ├── claude_narrator.py        Per-decision Haiku narration
+├── assistant_store.py        AI Assistant chat SQLite + attachments
+├── assistant_agent.py        Conversational tools + multimodal provider calls
+├── assistant_routes.py       /api/assistant/* FastAPI routes
 ├── anthropic_creds.py        Encrypted Anthropic API key (/data/anthropic-creds.json)
 │
 ├── web/
@@ -487,6 +557,9 @@ Persistent state on the NAS (Docker volume `jackery-data`, mounted at
 ```
 /data/
 ├── energy.db                 SQLite — telemetry, forecast trace, AI suggestions
+├── assistant_chat.db         AI Assistant conversations / messages / tool runs
+├── assistant_uploads/        AI Assistant file attachments (auth-gated)
+├── load_schedule.json        Per-device calendar / historical expected load
 ├── settings.json             Runtime settings overrides
 ├── automation.json           Saved automation rules
 ├── kasa_devices.json         Saved Kasa-device registry (per-Jackery assigned)

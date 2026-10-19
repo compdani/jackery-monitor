@@ -62,3 +62,40 @@ jobs:
         run: python tests/smoke_cloud.py
       - name: Smoke (bridge)
         run: python tests/smoke_bridge.py
+
+      # Legacy BLE UI controller (web/ble.js) + Svelte-era pure helpers.
+      - name: BLE UI (legacy)
+        run: node tests/test_ble_ui.cjs
+      - name: BLE UI (Svelte helpers)
+        run: node --experimental-strip-types tests/test_ble_svelte.mjs
+
+  # SvelteKit SPA: typecheck + production build. Separate job so a Node
+  # toolchain problem doesn't block the Python matrix, and so the
+  # built web/next artifact is verified on every push.
+  ui:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set up Node 22
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+
+      - name: Install UI dependencies
+        run: npm ci
+        working-directory: ui
+
+      - name: Typecheck (svelte-check)
+        run: npm run check
+        working-directory: ui
+
+      - name: Production build
+        run: npm run build
+        working-directory: ui
+

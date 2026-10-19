@@ -1,0 +1,3900 @@
+/* ========================================================================
+   Solar Pow Monitor — domain styles (theme tokens from src/app.css).
+   Use --pow-green / --accent-2 / --accent-3 for brand colors (shadcn owns --accent).
+   ======================================================================== */
+
+:root {
+  --radius: 14px;
+}
+
+* { box-sizing: border-box; }
+
+/* The browser-default [hidden] rule (display: none) loses to any author
+   stylesheet rule that sets display, e.g. `.field { display: flex }`. Make
+   sure `hidden` works everywhere we use it without per-class fixups. */
+[hidden] { display: none !important; }
+
+html, body {
+  margin: 0;
+  /* background/color from app.css @layer base */
+  font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 1.45;
+  -webkit-font-smoothing: antialiased;
+  min-height: 100vh;
+  /* When installed as a home-screen PWA on iOS the page renders edge-to-edge,
+     so respect the notch / dynamic island / home indicator. */
+  padding-top:    env(safe-area-inset-top);
+  padding-bottom: env(safe-area-inset-bottom);
+  padding-left:   env(safe-area-inset-left);
+  padding-right:  env(safe-area-inset-right);
+}
+
+/* Subtle ambient glow — stronger in dark mode only. */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(ellipse 1200px 600px at 20% -10%, rgba(22, 163, 74, 0.05), transparent 60%),
+    radial-gradient(ellipse 800px 500px at 90% 0%, rgba(2, 132, 199, 0.04), transparent 60%);
+  z-index: 0;
+}
+.dark body::before {
+  background:
+    radial-gradient(ellipse 1200px 600px at 20% -10%, rgba(74,222,128,.08), transparent 60%),
+    radial-gradient(ellipse 800px 500px at 90% 0%,  rgba(56,189,248,.06), transparent 60%);
+}
+.topbar, main { position: relative; z-index: 1; }
+
+h1, h2, h3 { margin: 0; font-weight: 600; letter-spacing: -0.01em; }
+h1 { font-size: 17px; }
+h2 { font-size: 15px; }
+small { color: var(--text-dim); font-weight: 400; font-size: 12px; margin-left: 4px; }
+
+button { font-family: inherit; cursor: pointer; }
+a { color: var(--accent-2); }
+
+/* Breakpoints
+   Phone:  max-width 720px — all portrait phones and small-phone landscape
+           (e.g. iPhone SE landscape 667px). Stacks grids, wraps chrome.
+   Tablet: max-width 900px — 2-col hero/energy, 3-col forecast strip.
+   Wide:   min-width 2000px / 3000px — main max-width tiers.
+   Do not set overflow-x: hidden on body (it breaks the sticky topbar);
+   contain overflow on chrome and dense rows instead. */
+
+/* ============== Top bar ============== */
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 14px 22px;
+  border-bottom: 1px solid var(--border-soft);
+  background: linear-gradient(180deg, var(--bg-elev) 0%, var(--bg) 100%);
+  position: sticky; top: 0; z-index: 10;
+}
+.brand { display: flex; align-items: center; gap: 10px; }
+/* The brand is an <a href="/"> so middle/cmd-click opens Live in a new
+   tab, but should look the same as the original div header — no blue,
+   no underline. A subtle hover hint signals it's clickable. */
+a.brand { color: inherit; text-decoration: none; cursor: pointer; }
+a.brand:hover .logo-dot { transform: scale(1.15); transition: transform .15s; }
+.logo-dot {
+  width: 10px; height: 10px; border-radius: 50%;
+  background: var(--pow-green);
+  box-shadow: 0 0 12px rgba(74,222,128,.6);
+}
+.topbar-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+/* ============== Pills ============== */
+.pill {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: var(--bg-elev-2);
+  border: 1px solid var(--border);
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: .04em;
+}
+.pill-mock {
+  background: rgba(251,191,36,.12);
+  color: var(--accent-3);
+  border-color: rgba(251,191,36,.3);
+}
+.pill-source { font-family: var(--font-mono); }
+.pill-conn {
+  text-transform: none; letter-spacing: 0;
+  font-weight: 500; color: var(--text);
+}
+.conn-dot {
+  display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+  background: var(--text-mute);
+  transition: background .2s;
+}
+.pill-conn.is-connected   .conn-dot { background: var(--pow-green); }
+.dark .pill-conn.is-connected   .conn-dot { box-shadow: 0 0 8px rgba(74,222,128,.6); }
+.pill-conn.is-connecting  .conn-dot { background: var(--accent-3); animation: pulse 1.2s infinite; }
+.pill-conn.is-error       .conn-dot { background: var(--danger); }
+@keyframes pulse { 50% { opacity: .35; } }
+
+/* ============== Buttons ============== */
+.btn {
+  border: 1px solid var(--border);
+  background: var(--bg-elev-2);
+  color: var(--text);
+  padding: 7px 14px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 500;
+  transition: border-color .15s, background .15s;
+}
+.btn:hover {
+  border-color: var(--border);
+  background: color-mix(in srgb, var(--foreground) 6%, var(--bg-elev-2));
+}
+.dark .btn:hover { border-color: #2f3744; background: #1f252d; }
+.btn-ghost { background: transparent; }
+.btn-primary {
+  background: var(--pow-green);
+  color: #032012;
+  border-color: var(--pow-green);
+  font-weight: 600;
+}
+.btn-primary:hover { background: #6ee69a; border-color: #6ee69a; }
+.dark .btn-primary:hover { background: #6ee69a; border-color: #6ee69a; }
+.btn-primary:disabled { opacity: .5; cursor: not-allowed; }
+.btn-warn {
+  background: color-mix(in srgb, var(--pow-amber) 18%, var(--card));
+  color: var(--pow-amber);
+  border-color: color-mix(in srgb, var(--pow-amber) 45%, var(--border));
+  font-weight: 600;
+}
+.dark .btn-warn {
+  background: #5a3a08;
+  color: #ffd483;
+  border-color: #8a5a10;
+}
+.btn-warn:hover {
+  background: color-mix(in srgb, var(--pow-amber) 28%, var(--card));
+  border-color: color-mix(in srgb, var(--pow-amber) 55%, var(--border));
+}
+.dark .btn-warn:hover { background: #6e4a10; border-color: #b07820; }
+.btn-warn:disabled { opacity: .5; cursor: not-allowed; }
+
+/* Conflict banner — surfaces battery rules that fight smart-charge
+   when mode flips to active. Amber tone (warn, not error) since the
+   rules still work; we just don't want them on the same plug. */
+.conflict-banner {
+  display: flex;
+  gap: 14px;
+  align-items: flex-start;
+  padding: 12px 14px;
+  margin: 0 0 12px;
+  border: 1px solid #8a5a10;
+  border-radius: 10px;
+  background: #2a1d08;
+  color: #ffd483;
+}
+.conflict-banner-body { flex: 1; min-width: 0; }
+.conflict-banner-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex-shrink: 0;
+}
+.conflict-list {
+  margin: 6px 0 0;
+  padding-left: 18px;
+  font-size: 12px;
+  color: #e8c98a;
+}
+.conflict-list li { margin: 2px 0; }
+
+/* ============== Device picker ============== */
+.device-picker {
+  display: flex; align-items: center; gap: 8px;
+  background: var(--bg-elev-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 4px 4px 4px 12px;
+  min-width: 0;
+  max-width: 100%;
+}
+.dp-label { font-size: 11px; color: var(--text-dim); text-transform: uppercase; letter-spacing: .05em; flex-shrink: 0; }
+.device-select {
+  background: transparent;
+  border: none;
+  color: var(--text);
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  padding: 5px 8px;
+  outline: none;
+  cursor: pointer;
+  min-width: 0;
+  max-width: 100%;
+}
+.device-select option { background: var(--bg-elev); color: var(--text); }
+
+@media (max-width: 720px) {
+  .topbar {
+    flex-wrap: wrap;
+    padding: 10px 12px;
+  }
+  .brand { flex-shrink: 0; }
+  .brand h1 { display: none; }
+  .topbar-right {
+    flex: 1 1 auto;
+    flex-wrap: wrap;
+    justify-content: flex-start;
+  }
+  .dp-label { display: none; }
+  .device-picker { flex: 1 1 auto; overflow: hidden; }
+  main { padding: 12px; }
+}
+
+/* ============== Live fleet strip (multi-device glance) ============== */
+.fleet-strip {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px;
+  margin-bottom: 16px;
+}
+.fleet-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+  margin: 0;
+  padding: 12px 14px;
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-card);
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color .15s, box-shadow .15s;
+}
+.fleet-card:hover { border-color: var(--text-mute); }
+.fleet-card.is-selected {
+  border-color: var(--pow-green);
+  box-shadow: 0 0 0 1px var(--pow-green);
+}
+.fleet-card-top {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+.fleet-name {
+  font-size: 13px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.fleet-badge {
+  flex-shrink: 0;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  color: var(--text-mute);
+}
+.fleet-badge.charging { color: var(--accent-2); }
+.fleet-badge.discharging { color: var(--pow-green); }
+.fleet-soc {
+  font-variant-numeric: tabular-nums;
+  font-size: 28px;
+  font-weight: 600;
+  letter-spacing: -0.03em;
+  line-height: 1;
+}
+.fleet-soc small { font-size: 13px; margin-left: 2px; }
+.fleet-bar {
+  height: 4px;
+  background: var(--border);
+  border-radius: 2px;
+  overflow: hidden;
+}
+.fleet-bar-fill {
+  display: block;
+  height: 100%;
+  background: var(--accent-3);
+  border-radius: 2px;
+  width: 0;
+}
+.fleet-card.charging .fleet-bar-fill { background: var(--accent-2); }
+.fleet-card.discharging .fleet-bar-fill { background: var(--pow-green); }
+.fleet-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 10px;
+  font-size: 11px;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+.fleet-packs { color: var(--text-mute); }
+@media (max-width: 720px) {
+  .fleet-strip { grid-template-columns: 1fr; }
+}
+
+/* ============== Main + Tabs ============== */
+main {
+  /* Default tier — laptops and most desktops. Stays the same as the
+     historical cap so users on 1080p/QHD don't see any change. */
+  max-width: min(95vw, 1500px);
+  margin: 0 auto;
+  padding: 22px;
+}
+/* Tier 2 — 27" QHD / 24" 4K. Cap grows from 1500 to ~1900 so the
+   dashboard fills more of the screen without making line lengths
+   uncomfortable to scan. */
+@media (min-width: 2000px) {
+  main { max-width: min(92vw, 1900px); padding: 26px; }
+}
+/* Tier 3 — 32"+ 4K and ultrawide (3440x1440 etc.). Bigger cap, but
+   still bounded — at 5K we'd otherwise hit ~5000px-wide rows that
+   are very hard to scan visually. 2400px is roughly the sweet spot
+   where the chart and battery-pack bars look full but the hero
+   cards aren't absurdly wide. */
+@media (min-width: 3000px) {
+  main { max-width: min(90vw, 2400px); padding: 32px; }
+}
+.tabs {
+  display: flex;
+  gap: 4px;
+  border-bottom: 1px solid var(--border-soft);
+  margin-bottom: 22px;
+  overflow-x: auto;
+  flex-wrap: nowrap;
+  max-width: 100%;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: thin;
+}
+
+/* Sub-tabs inside the Settings panel — visually distinct from the
+   main tab bar (which is "underline" style) so the user can read at
+   a glance "I'm in Settings, looking at the Backup section." Pills
+   on a faint surface, with the active pill in the accent color.
+   On mobile the row scrolls horizontally rather than wrapping so it
+   stays scannable. */
+.settings-subtabs {
+  display: flex;
+  gap: 6px;
+  padding: 4px;
+  margin-bottom: 22px;
+  background: var(--bg-elev-2, rgba(255,255,255,.03));
+  border: 1px solid var(--border, rgba(255,255,255,.08));
+  border-radius: 10px;
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+.settings-subtab {
+  flex: 0 0 auto;
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--text-dim);
+  font-size: 13px;
+  font-weight: 500;
+  padding: 8px 16px;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background .15s, color .15s, border-color .15s;
+  white-space: nowrap;
+}
+.settings-subtab:hover { color: var(--text); }
+.settings-subtab.on {
+  color: var(--bg);
+  background: var(--pow-green);
+  border-color: var(--pow-green);
+}
+@media (max-width: 720px) {
+  .settings-subtabs { padding: 3px; gap: 3px; }
+  .settings-subtab { font-size: 12px; padding: 7px 12px; }
+}
+
+/* Automation sub-tabs.
+   Mirror the Settings sub-tab look so the two tabs feel consistent.
+   Four buttons (Controllers / Devices / Rules / Insights) at the top
+   of the Automation pane; JS toggles the `on` class + hides sections
+   that don't match the selected group. */
+.automation-subtabs {
+  display: flex;
+  gap: 6px;
+  padding: 4px;
+  margin-bottom: 22px;
+  background: var(--bg-elev-2, rgba(255,255,255,.03));
+  border: 1px solid var(--border, rgba(255,255,255,.08));
+  border-radius: 10px;
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+.automation-subtab {
+  flex: 0 0 auto;
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--text-dim);
+  font-size: 13px;
+  font-weight: 500;
+  padding: 8px 16px;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background .15s, color .15s, border-color .15s;
+  white-space: nowrap;
+}
+.automation-subtab:hover { color: var(--text); }
+.automation-subtab.on {
+  color: var(--bg);
+  background: var(--pow-green);
+  border-color: var(--pow-green);
+}
+@media (max-width: 720px) {
+  .automation-subtabs { padding: 3px; gap: 3px; }
+  .automation-subtab { font-size: 12px; padding: 7px 12px; }
+}
+
+/* Collapsed history list: shows the latest decision plus a button that
+   reveals the rest. Used by both Smart-charge and Excess-diversion
+   history blocks so the Automation tab doesn't dump a full day of
+   30s-tick rows on the user. */
+.history-toggle {
+  display: block;
+  width: 100%;
+  background: transparent;
+  border: 1px dashed var(--border, rgba(255,255,255,.12));
+  color: var(--text-dim);
+  padding: 7px 12px;
+  border-radius: 6px;
+  cursor: pointer;
+  margin-top: 8px;
+  font-size: 12px;
+  text-align: center;
+  transition: color .15s, border-color .15s, background .15s;
+}
+.history-toggle:hover {
+  color: var(--text);
+  border-color: var(--pow-green);
+  background: rgba(255,255,255,.02);
+}
+
+/* Controllers sub-tab: 2-column grid on wide screens so smart-charge
+   and excess-diversion sit side-by-side. Stacks on narrow screens. */
+#tab-automation[data-active-group="controllers"] {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 18px;
+}
+#tab-automation[data-active-group="controllers"] > .automation-subtabs {
+  grid-column: 1 / -1;
+  margin-bottom: 4px;
+}
+@media (min-width: 1100px) {
+  #tab-automation[data-active-group="controllers"] {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+/* Settings global search.
+   Input is full-width. The results dropdown floats over the cards
+   below — `position: absolute` so it doesn't push the page down
+   while open. Each result row is breadcrumb + label + hint snippet,
+   with the matched query highlighted via <mark>. The selected
+   result (kbd nav) gets a soft accent background; clicking jumps
+   to the corresponding card. */
+.settings-search-wrap {
+  position: relative;
+  margin-bottom: 14px;
+}
+#settings-search {
+  width: 100%;
+  padding: 10px 14px;
+  background: var(--bg-elev-2, rgba(255,255,255,.03));
+  border: 1px solid var(--border, rgba(255,255,255,.08));
+  border-radius: 10px;
+  color: var(--text);
+  font-size: 14px;
+  font-family: inherit;
+  outline: none;
+  transition: border-color .15s, background .15s;
+}
+#settings-search:focus {
+  border-color: var(--pow-green);
+  background: var(--bg-elev-3, rgba(255,255,255,.05));
+}
+#settings-search::placeholder { color: var(--text-mute); }
+
+.settings-search-results {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0; right: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  background: var(--bg-elev-2, rgba(20,22,26,.98));
+  border: 1px solid var(--border, rgba(255,255,255,.10));
+  border-radius: 10px;
+  max-height: 360px;
+  overflow-y: auto;
+  z-index: 50;
+  box-shadow: 0 12px 32px rgba(0,0,0,.45);
+}
+.settings-search-result {
+  padding: 10px 14px;
+  cursor: pointer;
+  border-bottom: 1px solid var(--border-soft, rgba(255,255,255,.06));
+  transition: background .12s;
+}
+.settings-search-result:last-child { border-bottom: none; }
+.settings-search-result:hover,
+.settings-search-result.on {
+  background: rgba(74, 222, 128, .10);
+}
+.settings-search-crumb {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-mute);
+  margin-bottom: 2px;
+}
+.settings-search-label {
+  font-size: 14px;
+  color: var(--text);
+  font-weight: 500;
+}
+.settings-search-hint {
+  font-size: 12px;
+  color: var(--text-dim);
+  margin-top: 3px;
+  /* Truncate long hints to one line so the dropdown stays compact. */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.settings-search-empty {
+  padding: 14px;
+  color: var(--text-mute);
+  font-style: italic;
+  text-align: center;
+}
+.settings-search-hl {
+  background: rgba(234, 240, 68, .35);
+  color: var(--text);
+  padding: 0 2px;
+  border-radius: 2px;
+  font-weight: 600;
+}
+
+/* Pulse highlight on the row search jumped to — a brief accent flash
+   so the user's eye finds it after the smooth-scroll lands. Animation
+   restarts each jump (via reflow trick in JS). */
+@keyframes settings-search-pulse {
+  0%   { background: rgba(74, 222, 128, .25); box-shadow: 0 0 0 2px rgba(74, 222, 128, .35); }
+  100% { background: transparent; box-shadow: 0 0 0 2px transparent; }
+}
+.settings-search-jumped {
+  animation: settings-search-pulse 1.6s ease-out;
+  border-radius: 6px;
+}
+
+@media (max-width: 720px) {
+  #settings-search { font-size: 13px; padding: 9px 12px; }
+  .settings-search-result { padding: 9px 12px; }
+}
+.tab {
+  flex: 0 0 auto;
+  background: transparent;
+  border: none;
+  color: var(--text-dim);
+  font-size: 13px;
+  font-weight: 500;
+  padding: 10px 16px;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  transition: color .15s, border-color .15s;
+  text-decoration: none;
+  cursor: pointer;
+}
+.tab:hover { color: var(--text); }
+.tab.on {
+  color: var(--text);
+  border-bottom-color: var(--pow-green);
+}
+.tab-dot {
+  display: inline-block;
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: var(--pow-green);
+  margin-left: 6px;
+  vertical-align: middle;
+  animation: pulse 2s ease-in-out infinite;
+}
+/* The class rule above ties on specificity with the UA's [hidden]
+   { display: none } rule, and wins by source order — meaning
+   `dot.hidden = true` from JS had no visual effect, so the dot was
+   permanently visible regardless of state. Restore the intended
+   hidden behavior with a higher-specificity selector. */
+.tab-dot[hidden] { display: none; }
+
+.tab-panel {
+  display: flex; flex-direction: column; gap: 18px;
+  animation: tabFadeIn .25s ease-out;
+}
+.tab-panel[hidden] { display: none; }
+@keyframes tabFadeIn {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: none; }
+}
+
+/* Card hover — subtle lift, slightly brighter border. Doesn't apply on the
+   battery card (already has a glow) or on touch devices (no hover state). */
+@media (hover: hover) {
+  .kpi-card.has-accent:hover {
+    border-color: var(--card-accent, var(--pow-green));
+    transform: translateY(-1px);
+    transition: transform .15s, border-color .15s;
+  }
+}
+
+/* ============== Cards / grid ============== */
+.grid { display: grid; gap: 16px; }
+.hero-grid {
+  /* 2-row hero (Option B):
+       row 1: battery (2 cols) | today (1 col)
+       row 2: power-flow spans full width
+     The SVG flow diagram in the power-flow card is the visual
+     headline, so it gets the wider canvas instead of being
+     squeezed into a side card. */
+  grid-template-columns: 2fr 1fr;
+  grid-auto-rows: auto;
+}
+.hero-grid > [data-card="battery"]    { grid-column: 1 / 2; grid-row: 1; }
+.hero-grid > [data-card="today"]      { grid-column: 2 / 3; grid-row: 1; }
+.hero-grid > [data-card="power-flow"] { grid-column: 1 / -1; grid-row: 2; }
+/* Drag-and-drop reordering for the hero cards (Sortable.js).
+   - .grab-handle: small "drag" icon top-left of each card so the
+     affordance is visible without blocking content under the rest
+     of the card.
+   - .sortable-ghost: applied to the placeholder slot during drag —
+     dimmed and dashed so the user sees where the card will land.
+   - .sortable-drag: applied to the floating clone that follows the
+     pointer/finger.
+   On touch this triggers via long-press. */
+.hero-grid > [data-card] {
+  position: relative;
+  transition: box-shadow .2s;
+}
+.grab-handle {
+  position: absolute; top: 12px; left: 12px;
+  width: 22px; height: 22px;
+  display: flex; align-items: center; justify-content: center;
+  cursor: grab;
+  color: var(--text-mute);
+  border-radius: 4px;
+  z-index: 5;
+  opacity: 0.4;
+  transition: opacity .2s, background .2s;
+  user-select: none;
+  touch-action: none;
+}
+.grab-handle:hover { opacity: 1; background: var(--bg-elev-2); }
+.grab-handle:active { cursor: grabbing; }
+.grab-handle::before {
+  content: "⋮⋮";
+  font-size: 14px;
+  letter-spacing: -2px;
+  line-height: 1;
+}
+.sortable-ghost {
+  opacity: 0.35;
+  outline: 2px dashed var(--pow-green);
+  outline-offset: -2px;
+}
+.sortable-drag {
+  cursor: grabbing !important;
+  box-shadow: 0 12px 32px rgba(0,0,0,0.45);
+  opacity: 0.95;
+}
+.energy-grid {
+  grid-template-columns: 1fr 1fr;
+}
+.forecast-stats-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+@media (max-width: 900px) {
+  .hero-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+  .hero-grid > [data-card="battery"]    { grid-column: 1 / 2; grid-row: 1; }
+  .hero-grid > [data-card="today"]      { grid-column: 2 / 3; grid-row: 1; }
+  .hero-grid > [data-card="power-flow"] { grid-column: 1 / -1; grid-row: 2; }
+  .energy-grid { grid-template-columns: 1fr 1fr; }
+  .forecast-stats-grid { grid-template-columns: 1fr 1fr; }
+}
+@media (max-width: 720px) {
+  .hero-grid {
+    grid-template-columns: 1fr;
+  }
+  .hero-grid > [data-card="battery"]    { grid-column: 1; grid-row: 1; }
+  .hero-grid > [data-card="today"]      { grid-column: 1; grid-row: 2; }
+  .hero-grid > [data-card="power-flow"] { grid-column: 1; grid-row: 3; }
+  .energy-grid { grid-template-columns: 1fr; }
+  .forecast-stats-grid { grid-template-columns: 1fr; }
+}
+
+.card {
+  /* Light: flat card surface. Dark: subtle depth gradient. */
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 18px;
+  box-shadow: var(--shadow-card);
+  position: relative;
+  overflow: hidden;
+  color: var(--card-foreground, var(--text));
+}
+.dark .card {
+  background: linear-gradient(180deg, var(--bg-elev) 0%, #11161c 100%);
+  border-color: var(--border-soft);
+}
+/* Accent stripe along the top edge — colored per metric so cards become
+   identifiable at a glance instead of all looking the same. */
+.card::before {
+  content: "";
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--foreground) 6%, transparent), transparent);
+  pointer-events: none;
+}
+.dark .card::before {
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,.04), transparent);
+}
+.card.has-accent::before {
+  background: linear-gradient(90deg,
+    transparent 0%,
+    var(--card-accent, var(--pow-green)) 18%,
+    var(--card-accent, var(--pow-green)) 82%,
+    transparent 100%);
+  opacity: .7;
+}
+.battery-card.has-accent { --card-accent: var(--accent-3); }
+.kpi-card.output  { --card-accent: var(--pow-green);   }
+.kpi-card.input   { --card-accent: var(--accent-2); }
+.kpi-card.today   { --card-accent: var(--accent-3); }
+/* Power-flow card combines output + input, picking up the cooler input
+   accent on the eyebrow stripe. The two halves carry their own colored
+   labels (green=output, sky=input) so the metric origin still reads at
+   a glance. */
+.kpi-card.power-flow { --card-accent: var(--accent-2); }
+/* ---- Animated power-flow diagram (Tesla-app style) ----
+   Pattern: each "channel" is a solid translucent line in its source
+   color; a bright dot travels along a parallel hidden <path> via
+   <animateMotion>. Channels stay visible when idle (faint guide);
+   the dot's group toggles visibility based on watts.
+
+   Color palette per user spec:
+     - solar  → yellow  (#fbbf24)
+     - grid   → amber   (#fb923c, slightly orange to read distinct
+                          from solar's pure yellow)
+     - load   → grayish white (#cbd5e1)
+   Battery node ring color is set by JS to encode direction
+   (charging green, discharging amber). */
+.power-flow-svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  /* No max-width cap: let the SVG fill the full card so the diagram
+     uses the available real estate instead of leaving a giant empty
+     gutter on either side. */
+  margin: 4px 0 0;
+  user-select: none;
+  aspect-ratio: 1000 / 300;
+}
+
+/* Hidden geometry paths used as animateMotion targets. They live in
+   <defs> in the SVG markup — invisible by default, but be defensive. */
+.power-flow-svg defs path { display: none; }
+
+/* The visible channels — solid lines, no dashes. */
+.flow-channel {
+  fill: none;
+  stroke-width: 8;
+  stroke-linecap: round;
+  opacity: 0.18;            /* idle = faint guide */
+  transition: opacity .3s, stroke .3s, filter .3s;
+}
+.flow-channel.solar { stroke: #fbbf24; }
+.flow-channel.grid  { stroke: #fb923c; }
+.flow-channel.load  { stroke: #cbd5e1; }
+.flow-channel.active {
+  opacity: 0.55;
+  filter: drop-shadow(0 0 6px var(--flow-glow, rgba(255,255,255,.25)));
+}
+.flow-channel.solar.active { --flow-glow: rgba(251, 191, 36, 0.45); }
+.flow-channel.grid.active  { --flow-glow: rgba(251, 146, 60, 0.45); }
+.flow-channel.load.active  { --flow-glow: rgba(203, 213, 225, 0.40); }
+
+/* Traveling dots — bright, glowing, scaled to wattage. The <g>
+   inherits visibility=hidden when the line is idle, hiding both the
+   circle and the animateMotion runtime cleanly. */
+.flow-dot { visibility: hidden; }
+.flow-dot.active { visibility: visible; }
+.flow-dot circle {
+  stroke: rgba(255, 255, 255, 0.85);
+  stroke-width: 1.5;
+  filter: drop-shadow(0 0 6px var(--dot-glow, rgba(255,255,255,.7)));
+}
+.flow-dot.solar circle {
+  fill: #fbbf24;
+  --dot-glow: rgba(251, 191, 36, 0.85);
+}
+.flow-dot.grid circle {
+  fill: #fb923c;
+  --dot-glow: rgba(251, 146, 60, 0.85);
+}
+.flow-dot.load circle {
+  fill: #f1f5f9;
+  --dot-glow: rgba(241, 245, 249, 0.75);
+}
+
+/* Nodes ---------------------------------------------------------- */
+.flow-node {
+  fill: var(--bg-elev-2);
+  stroke: var(--border);
+  stroke-width: 2.5;
+  transition: stroke .25s, fill .25s;
+}
+.flow-node.solar.active {
+  stroke: #fbbf24;
+  fill: rgba(251, 191, 36, 0.08);
+}
+.flow-node.grid.active {
+  stroke: #fb923c;
+  fill: rgba(251, 146, 60, 0.08);
+}
+.flow-node.load.active {
+  stroke: #cbd5e1;
+  fill: rgba(203, 213, 225, 0.06);
+}
+/* Battery node: green when charging (input > output), amber when
+   discharging, neutral when idle. Class set by renderPowerFlow. */
+.flow-node.battery {
+  fill: rgba(74, 222, 128, 0.06);
+  stroke: var(--text-mute);
+}
+.flow-node.battery.charging {
+  stroke: #4ade80;
+  fill: rgba(74, 222, 128, 0.10);
+}
+.flow-node.battery.discharging {
+  stroke: #fbbf24;
+  fill: rgba(251, 191, 36, 0.08);
+}
+
+.flow-icon {
+  font-size: 30px;
+  text-anchor: middle;
+  dominant-baseline: central;
+  fill: var(--text);
+  pointer-events: none;
+}
+.flow-icon.house { font-size: 36px; }
+.flow-soc {
+  font-size: 26px;
+  font-weight: 600;
+  text-anchor: middle;
+  dominant-baseline: central;
+  fill: var(--text);
+  font-family: var(--font-mono);
+  pointer-events: none;
+}
+.flow-w {
+  font-size: 16px;
+  text-anchor: middle;
+  fill: var(--text);
+  font-family: var(--font-mono);
+}
+.flow-label {
+  font-size: 11px;
+  text-anchor: middle;
+  fill: var(--text-mute);
+  letter-spacing: 0.10em;
+  text-transform: uppercase;
+}
+
+/* Time-to-full / time-to-empty rendered inside the battery ring,
+   directly below the SOC headline. Same telemetry as the SOC card's
+   meta line. Color-coded (green charging / amber discharging) to
+   match the battery node ring; em-dash when balanced/idle. */
+.flow-eta {
+  font-size: 11px;
+  font-family: var(--font-mono);
+  text-anchor: middle;
+  dominant-baseline: central;
+  fill: var(--text-dim);
+  letter-spacing: 0.02em;
+  pointer-events: none;
+}
+.flow-eta.charging    { fill: #4ade80; }
+.flow-eta.discharging { fill: #fbbf24; }
+@media (max-width: 720px) {
+  /* Same scale-up logic as the rest of the diagram (viewBox 1000x300
+     at iPhone width ≈340 → content scale ~0.34). 22 SVG units ≈ 7.5
+     CSS px, just enough to read the timer below the SOC numeral. */
+  .flow-eta { font-size: 22px; }
+}
+
+/* iPhone / narrow-viewport legibility for the flow diagram.
+   The SVG has viewBox 0 0 1000 300 and renders at the card's full
+   width (~340px on iPhone), giving a content scale ≈0.34. Default
+   font-sizes (11 / 16 / 26 SVG-units) become 3.7 / 5.4 / 8.8 actual
+   px — unreadable. Bump them ~1.8–2× on small screens so the SOC
+   number, the wattages, and the SOLAR/GRID/BATTERY/LOADS labels are
+   all clearly readable without redesigning the diagram. The icons
+   get the same treatment so they read as proper symbols, not dots.
+   Bumps stay below the gap between nodes/labels so nothing collides. */
+@media (max-width: 720px) {
+  .flow-label { font-size: 22px; }
+  .flow-w    { font-size: 30px; font-weight: 600; }
+  .flow-soc  { font-size: 48px; }
+  .flow-icon { font-size: 44px; }
+  .flow-icon.house { font-size: 52px; }
+  /* Beef up the channel + dot a touch so the line doesn't look
+     anemic next to the larger labels. */
+  .flow-channel { stroke-width: 11; }
+  .flow-dot circle { r: 8; }
+}
+.card-eyebrow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: 11px;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: .06em;
+  margin-bottom: 10px;
+}
+
+.flow-unified-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--muted, #94a3b8);
+  cursor: pointer;
+  user-select: none;
+}
+.flow-unified-toggle input { accent-color: var(--accent, #38bdf8); }
+
+.flow-solar-inputs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0 0 10px;
+}
+.flow-solar-chip {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px 10px;
+  border: 1px solid color-mix(in srgb, #fbbf24 35%, transparent);
+  background: color-mix(in srgb, #fbbf24 10%, transparent);
+  border-radius: 8px;
+  min-width: 5.5rem;
+}
+.flow-solar-chip .chip-label {
+  font-size: 11px;
+  color: var(--muted, #94a3b8);
+}
+.flow-solar-chip .chip-w {
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+  color: #fbbf24;
+}
+.flow-solar-chip.source-ecoflow {
+  border-color: color-mix(in srgb, #34d399 40%, transparent);
+  background: color-mix(in srgb, #34d399 10%, transparent);
+}
+.flow-solar-chip.source-ecoflow .chip-w { color: #34d399; }
+
+.power-flow-diagram {
+  position: relative;
+}
+.flow-load-gear-wrap {
+  position: absolute;
+  right: 2.5%;
+  top: 18%;
+  z-index: 3;
+}
+.flow-load-gear {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border-radius: 8px;
+  border: 1px solid var(--border, #334155);
+  background: color-mix(in srgb, var(--bg-elev, #1e293b) 90%, transparent);
+  color: var(--muted, #94a3b8);
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+}
+.flow-load-gear:hover,
+.flow-load-gear[aria-expanded="true"] {
+  color: var(--text, #e2e8f0);
+  border-color: color-mix(in srgb, #cbd5e1 40%, transparent);
+}
+.flow-load-menu {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 6px);
+  min-width: 11.5rem;
+  padding: 8px;
+  border-radius: 10px;
+  border: 1px solid var(--border, #334155);
+  background: var(--bg-elev, #1e293b);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.35);
+  display: grid;
+  gap: 4px;
+}
+.flow-load-menu[hidden] { display: none !important; }
+.flow-load-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  font-size: 12px;
+  color: var(--text, #e2e8f0);
+  cursor: pointer;
+  user-select: none;
+}
+.flow-load-option:hover {
+  background: color-mix(in srgb, #fff 6%, transparent);
+}
+.flow-load-option input {
+  accent-color: #cbd5e1;
+  margin: 0;
+}
+.flow-load-option .opt-label { flex: 1; min-width: 0; }
+.flow-load-option .opt-w {
+  font-variant-numeric: tabular-nums;
+  color: var(--muted, #94a3b8);
+}
+
+.linked-ecoflow-body {
+  display: grid;
+  gap: 12px;
+  padding: 0 4px 8px;
+}
+.linked-ecoflow-unit {
+  border-top: 1px solid var(--border, #333);
+  padding-top: 10px;
+}
+.linked-ecoflow-unit:first-child { border-top: none; padding-top: 0; }
+.linked-ecoflow-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(7.5rem, 1fr));
+  gap: 8px;
+}
+.linked-ecoflow-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.linked-ecoflow-stat .stat-label {
+  font-size: 11px;
+  color: var(--muted, #94a3b8);
+}
+.linked-ecoflow-stat .stat-value {
+  font-size: 15px;
+  font-variant-numeric: tabular-nums;
+}
+.linked-ecoflow-batt {
+  display: grid;
+  grid-template-columns: 1fr 56px 56px;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+  font-family: var(--font-mono);
+  font-size: 13px;
+}
+.linked-ecoflow-switches {
+  margin-top: 10px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.linked-ecoflow-reconnect {
+  margin-left: auto;
+  flex-shrink: 0;
+  align-self: center;
+}
+.linked-ecoflow-reconnect:disabled {
+  opacity: .5;
+  cursor: wait;
+}
+.card-header {
+  display: flex; justify-content: space-between; align-items: center;
+  flex-wrap: wrap; gap: 10px;
+  margin-bottom: 14px;
+}
+.card-header .hint { font-size: 12px; color: var(--text-mute); }
+
+.forecast-input {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
+  font-family: var(--font-mono);
+  font-size: 14px;
+  min-width: 6em;
+}
+.dark .forecast-input {
+  color-scheme: dark;
+}
+.forecast-input:focus {
+  outline: 1px solid var(--pow-green);
+  border-color: var(--pow-green);
+}
+input.forecast-input[type="time"] { min-width: 8.5em; }
+input.forecast-input[type="password"] { min-width: 12em; flex: 1; }
+.forecast-config-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+  align-items: center;
+}
+.solar-array-fields {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px 18px;
+}
+.solar-array-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+.solar-array-field .forecast-input {
+  width: 100%;
+  max-width: 140px;
+}
+.solar-array-field .settings-hint { margin: 0; }
+@media (max-width: 720px) {
+  .solar-array-fields { grid-template-columns: 1fr; }
+  .solar-array-field .forecast-input { max-width: none; }
+}
+.forecast-key-row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+/* Collapsible card: only the header is visible by default; clicking
+   it expands. Summary stays in the header always. Used by the
+   Battery packs card so the live tab isn't dominated by a stack of
+   per-pack rows the user rarely needs to glance at. */
+.card.collapsible .collapsible-header {
+  cursor: pointer;
+  user-select: none;
+  margin-bottom: 0;
+}
+.card.collapsible .collapsible-chevron {
+  display: inline-block;
+  transition: transform .2s;
+  color: var(--text-mute);
+  font-size: 14px;
+  margin-left: 4px;
+}
+.card.collapsible:not(.collapsed) .collapsible-header {
+  margin-bottom: 14px;
+}
+.card.collapsible.collapsed .collapsible-chevron {
+  transform: rotate(-90deg);
+}
+.card.collapsible.collapsed > :not(.collapsible-header) {
+  display: none;
+}
+.card.collapsible .collapsible-header:hover .collapsible-chevron {
+  color: var(--text);
+}
+
+/* ============== Battery card ============== */
+.battery-card {
+  display: flex; flex-direction: column; gap: 14px;
+  position: relative;
+}
+/* Soft radial glow behind the percentage — subtle but the card no longer
+   feels flat. Color shifts based on charging/idle/discharging state. */
+.battery-card::after {
+  content: "";
+  position: absolute;
+  top: 30px; left: 14px;
+  width: 220px; height: 120px;
+  background: radial-gradient(ellipse at center, var(--bat-glow, rgba(251,191,36,.18)), transparent 70%);
+  pointer-events: none;
+  filter: blur(6px);
+  opacity: .9;
+  transition: background .4s, opacity .4s;
+  z-index: 0;
+}
+.battery-card.charging::after    { --bat-glow: rgba(74,222,128,.20); }
+.battery-card.discharging::after { --bat-glow: rgba(56,189,248,.16); }
+.battery-card.low::after         { --bat-glow: rgba(239,68,68,.22); }
+.battery-card > * { position: relative; z-index: 1; }
+/* Targeted overrides for the children that MUST stay absolutely
+   positioned. Each `.battery-card > .X` selector beats the generic
+   `> *` rule on specificity (0,0,2,0 vs 0,0,1,0), and z-index keeps
+   them above the radial-glow ::after. */
+.battery-card > .grab-handle  { position: absolute; z-index: 5; }
+.battery-card > .eod-forecast { position: absolute; z-index: 2; }
+
+.battery-pct {
+  font-family: var(--font-mono);
+  font-size: 64px;
+  line-height: 1;
+  font-weight: 700;
+  color: var(--text);
+  display: flex; align-items: baseline;
+  letter-spacing: -0.02em;
+  text-shadow: 0 0 24px rgba(255,255,255,.04);
+}
+.battery-pct small { font-size: 20px; color: var(--text-dim); margin-left: 6px; font-weight: 500; }
+.battery-bar {
+  height: 10px;
+  background: var(--bg-elev-2);
+  border-radius: 999px;
+  overflow: hidden;
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.08);
+}
+.dark .battery-bar {
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.4);
+}
+.battery-bar-fill {
+  height: 100%;
+  width: 0%;
+  background: linear-gradient(90deg, var(--accent-3), var(--pow-green));
+  border-radius: 999px;
+  transition: width .6s cubic-bezier(.22,.61,.36,1), background .4s;
+  box-shadow: 0 0 12px rgba(74,222,128,.4);
+}
+.battery-card.charging .battery-bar-fill {
+  background: linear-gradient(90deg, var(--pow-green), #6ee69a);
+}
+.battery-card.low .battery-bar-fill {
+  background: linear-gradient(90deg, #ef4444, var(--accent-3));
+  box-shadow: 0 0 12px rgba(239,68,68,.5);
+}
+
+/* EOD-forecast pill: small panel top-right of battery card showing the
+   predicted SOC at midnight tonight. Refit by the forecaster hourly.
+   top is set to clear the eyebrow (CLOUD pill) by a comfortable margin
+   so the two badges don't visually collide. */
+.eod-forecast {
+  position: absolute;
+  top: 72px;
+  right: 18px;
+  z-index: 2;
+  display: flex; flex-direction: column; align-items: flex-end;
+  gap: 2px;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: rgba(255,255,255,.03);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  min-width: 96px;
+  transition: border-color .3s, background .3s;
+}
+.eod-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: .08em;
+  color: var(--text-mute);
+}
+.eod-row {
+  font-family: var(--font-mono);
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--text);
+  display: flex; align-items: baseline; gap: 4px;
+  line-height: 1;
+}
+.eod-row small {
+  font-size: 12px; color: var(--text-dim); margin-left: 2px; font-weight: 500;
+}
+/* Peak·sunset two-column alignment. The label and the value row both
+   become full-width 3-col grids (value | dot | value) with the same
+   template, so "Peak" lines up over the peak number and "sunset" over
+   the sunset number, dots centered between. */
+.eod-forecast.eod-pair .eod-row { width: 100%; }
+.eod-forecast.eod-pair .eod-label,
+.eod-forecast.eod-pair #eod-pct {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: baseline;
+  /* Center each word/number within its column so "Peak" sits over the
+     middle of the peak number (not hugging the dot) and "sunset" over
+     the sunset number — symmetric two-stat layout with the dot between. */
+  justify-items: center;
+  gap: 0 6px;
+  width: 100%;
+}
+.eod-forecast.eod-pair .eod-dot { color: var(--text-mute); }
+.eod-trend { font-size: 14px; line-height: 1; color: var(--text-dim); }
+.eod-trend.up   { color: var(--pow-green); }
+.eod-trend.down { color: #ef4444; }
+.eod-forecast.low {
+  border-color: rgba(239,68,68,.5);
+  background: rgba(239,68,68,.06);
+}
+.eod-forecast.low .eod-row { color: #ef4444; }
+/* Calibrating state — shown when forecast_readiness fails. Replaces the
+   numeric prediction with a progress hint so the user knows the card is
+   waiting on data, not silently broken. */
+.eod-forecast.calibrating .eod-row { font-size: 13px; font-weight: 500; color: var(--text-dim); }
+.eod-forecast.calibrating .eod-row small { display: none; }
+.eod-forecast.calibrating { border-style: dashed; }
+@media (max-width: 720px) {
+  .eod-forecast { top: 60px; right: 12px; min-width: 84px; padding: 6px 10px; }
+  .eod-row { font-size: 18px; }
+}
+.battery-meta {
+  display: flex; gap: 8px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+.dot-sep { color: var(--text-mute); }
+
+/* ============== KPI cards ============== */
+.kpi-card { display: flex; flex-direction: column; gap: 6px; }
+.kpi-value {
+  font-family: var(--font-mono);
+  font-size: 34px;
+  font-weight: 700;
+  color: var(--text);
+  line-height: 1.1;
+  display: flex; align-items: baseline;
+  letter-spacing: -0.02em;
+  transition: color .25s;
+}
+.kpi-value small { font-size: 13px; color: var(--text-dim); margin-left: 6px; font-family: var(--font-sans); font-weight: 400; }
+.kpi-value.alt { color: var(--accent-2); }
+
+/* Brief amber pulse whenever a KPI value changes — adds the "live" feel
+   without being noisy. JS toggles .changed for ~600ms. */
+.kpi-value.changed > span:first-child { animation: valuePulse .6s ease-out; }
+@keyframes valuePulse {
+  0%   { color: var(--accent-3); text-shadow: 0 0 16px rgba(251,191,36,.5); }
+  100% { color: inherit; text-shadow: none; }
+}
+
+.kpi-sub { font-size: 12px; color: var(--text-dim); margin-top: 2px; }
+.kpi-sub .lbl { color: var(--text-mute); margin-right: 2px; text-transform: uppercase; font-size: 10px; letter-spacing: .05em; }
+
+.kpi-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+  align-items: end;
+}
+.kpi-row.panels { grid-template-columns: repeat(3, 1fr); }
+.kpi-row .kpi-value { font-size: 26px; }
+
+/* Cost savings row inside the TODAY (Live) and Lifetime (Energy) cards.
+   Three numbers in a row: solar savings (green), grid cost (red),
+   and the net (highlighted). Hidden if the cost plan can't be loaded. */
+.savings-row {
+  display: flex; align-items: baseline; gap: 8px;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  font-weight: 600;
+}
+.savings-row .sav-pos { color: var(--pow-green); }
+.savings-row .sav-neg { color: #ef4444; }
+.savings-row .sav-net { color: var(--text); margin-left: auto; }
+.savings-row .sav-sep { color: var(--text-mute); font-weight: 400; }
+
+/* Per-expansion-battery list. One row per pack with a small SOC bar +
+   numeric SOC + flow indicator + temp + last-6-of-SN tag. The "Main"
+   row at the top shows the derived standalone SOC for the host unit. */
+.battery-packs-list {
+  display: flex; flex-direction: column; gap: 6px;
+  font-family: var(--font-mono);
+  font-size: 13px;
+}
+.pack-row {
+  display: grid;
+  grid-template-columns: 24px 1fr 56px 64px 48px 80px;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 4px;
+  border-radius: 6px;
+}
+.pack-row:hover { background: var(--card-bg-hover, rgba(255,255,255,.02)); }
+.pack-idx { color: var(--text-mute); text-align: center; font-weight: 600; }
+/* Main row keeps the same grid as pack rows so columns line up exactly;
+   only the star icon is tinted to mark it visually. */
+.pack-row-main .pack-idx { color: var(--accent-2); }
+.pack-bar {
+  height: 8px; border-radius: 4px;
+  background: var(--border);
+  overflow: hidden;
+}
+.pack-bar-fill {
+  display: block; height: 100%;
+  background: linear-gradient(90deg, var(--accent-3), var(--pow-green));
+  transition: width .4s ease;
+}
+.pack-soc { font-weight: 700; text-align: right; }
+.pack-soc small { color: var(--text-mute); font-weight: 400; margin-left: 1px; }
+.pack-flow { text-align: right; font-size: 12px; }
+.pack-flow.flow-in   { color: var(--pow-green); }
+.pack-flow.flow-out  { color: #ef4444; }
+.pack-flow.flow-idle { color: var(--text-mute); }
+.pack-temp { color: var(--text-mute); font-size: 12px; text-align: right; }
+.pack-temp-fault {
+  color: #f59e0b;
+  font-weight: 600;
+  cursor: help;
+  border-bottom: 1px dotted currentColor;
+}
+.pack-sn { color: var(--text-mute); font-size: 11px; text-align: right; }
+@media (max-width: 720px) {
+  /* 6 fixed columns (~350px min) overflow a phone card. Collapse to
+     a 3-col grid that wraps: idx | bar | soc, then flow / temp / sn. */
+  .pack-row {
+    grid-template-columns: 24px minmax(0, 1fr) auto;
+    gap: 6px 8px;
+  }
+  .pack-bar { min-width: 0; }
+  .pack-flow { grid-column: 2; text-align: left; font-size: 11px; }
+  .pack-temp { grid-column: 3; font-size: 11px; }
+  .pack-sn { grid-column: 2 / -1; text-align: left; }
+}
+
+/* Smart-charge: current plan card + decision history. Compact, mono
+   for numbers so the columns line up. */
+.sc-current-plan {
+  margin-top: 16px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, .02);
+}
+.sc-plan-header {
+  display: flex; align-items: baseline; gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+.sc-plan-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 8px 16px;
+  font-family: var(--font-mono);
+  font-size: 13px;
+}
+.sc-plan-grid > div {
+  display: flex; justify-content: space-between; gap: 8px;
+  padding: 4px 0;
+  border-bottom: 1px dashed var(--border);
+}
+.sc-lbl { color: var(--text-mute); }
+.sc-action {
+  font-family: var(--font-mono);
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 12px;
+}
+.sc-act-on   { background: rgba(74,222,128,.15);  color: var(--pow-green); }
+.sc-act-off  { background: rgba(239,68,68,.15);   color: #ef4444; }
+.sc-act-skip { background: rgba(148,163,184,.15); color: var(--text-mute); }
+.sc-mode    { color: var(--text-mute); font-size: 12px; font-family: var(--font-mono); }
+.sc-reason  { color: var(--text); font-size: 13px; }
+.sc-history {
+  display: flex; flex-direction: column; gap: 4px;
+  font-size: 12px; font-family: var(--font-mono);
+  /* Cap height so a busy week of decisions doesn't push every other
+     panel off the screen; scroll inside the list instead. */
+  max-height: 420px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+/* Slim scrollbar that matches the dark theme — full-width default scrollbars
+   are visually loud against the otherwise dense decision rows. */
+.sc-history::-webkit-scrollbar { width: 6px; }
+.sc-history::-webkit-scrollbar-thumb {
+  background: var(--bg-elev-2); border-radius: 3px;
+}
+.sc-history::-webkit-scrollbar-thumb:hover { background: var(--border); }
+
+.sc-row {
+  display: grid;
+  /* First column (timestamp) was 140px — wide enough for full datetimes
+     but they wrap on narrow screens. Now the formatter emits short
+     strings ("11:54 AM", "Yesterday 11:54 AM", "Apr 30, 11:54 AM") and
+     auto-sizes to whichever is widest in the current view. nowrap on
+     .sc-when keeps multi-line wrapping from re-introducing the issue. */
+  grid-template-columns: auto 56px 56px auto 1fr;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 6px;
+  border-radius: 4px;
+}
+.sc-row:hover { background: rgba(255,255,255,.02); }
+.sc-row .sc-when   { color: var(--text-mute); white-space: nowrap; }
+.sc-row .sc-pred   { color: var(--text-dim); white-space: nowrap; }
+.sc-row .sc-reason { color: var(--text-mute); white-space: nowrap;
+                     overflow: hidden; text-overflow: ellipsis; }
+.sc-detail-btn {
+  margin-left: auto;
+  padding: 2px 8px;
+  font-size: 11px;
+}
+.sc-detail-panel {
+  margin: 4px 0 8px 6px;
+  padding: 12px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-family: var(--font-sans);
+  font-size: 13px;
+}
+.dd-actions { margin-bottom: 12px; display: flex; justify-content: flex-end; }
+.dd-section { margin-bottom: 16px; }
+.dd-section h4 {
+  margin: 0 0 8px;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-dim);
+}
+.dd-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(280px, 100%), 1fr));
+  gap: 4px 16px;
+}
+.dd-field {
+  display: flex; justify-content: space-between; gap: 12px;
+  padding: 4px 0;
+  border-bottom: 1px solid var(--border-soft);
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+.dd-key { color: var(--text-mute); }
+.dd-val { color: var(--text); text-align: right; }
+.dd-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+.dd-table th {
+  text-align: left;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--border);
+  color: var(--text-mute);
+  font-weight: 500;
+  text-transform: uppercase;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+}
+.dd-table td {
+  padding: 3px 8px;
+  border-bottom: 1px solid var(--border-soft);
+  color: var(--text);
+}
+.sc-narration {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text-dim);
+  padding: 4px 6px 8px 32px;
+  border-left: 2px solid var(--accent-2);
+  margin-left: 6px;
+  margin-bottom: 4px;
+  font-style: italic;
+}
+
+.sc-analytics {
+  margin-top: 12px;
+  padding: 10px 12px;
+  background: rgba(56, 189, 248, .07);
+  border: 1px solid rgba(56, 189, 248, .25);
+  border-radius: 6px;
+}
+.sc-ana-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 6px 16px;
+  font-family: var(--font-mono);
+  font-size: 13px;
+}
+.sc-ana-grid > div {
+  display: flex; justify-content: space-between; gap: 8px;
+}
+
+/* Logs → Debug panel: compact tables for ad-hoc data inspection */
+.debug-buttons {
+  display: flex; flex-wrap: wrap; gap: 8px;
+  margin-bottom: 12px;
+}
+.debug-output {
+  display: flex; flex-direction: column; gap: 16px;
+  margin-top: 12px;
+}
+.dbg-block {
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, .02);
+}
+.dbg-block h3 {
+  margin: 0 0 10px;
+  font-size: 14px;
+  font-weight: 600;
+}
+.dbg-block h3 small { font-weight: 400; margin-left: 6px; }
+.dbg-summary {
+  display: flex; flex-direction: column; gap: 4px;
+  font-family: var(--font-mono);
+  font-size: 13px;
+}
+.dbg-table-wrap { overflow-x: auto; max-height: 400px; }
+.dbg-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+.dbg-table th, .dbg-table td {
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+}
+.dbg-table th {
+  position: sticky; top: 0;
+  background: var(--card);
+  color: var(--text-mute);
+  font-weight: 600;
+}
+.dbg-table tr:hover { background: color-mix(in srgb, var(--foreground) 4%, transparent); }
+.dbg-pre {
+  background: color-mix(in srgb, var(--foreground) 6%, var(--background));
+  padding: 10px;
+  border-radius: 4px;
+  font-size: 11px;
+  max-height: 400px;
+  overflow: auto;
+  margin: 0;
+}
+
+/* AI insights / Claude advisor panel on Automation tab */
+.alg-badge {
+  display: inline-block;
+  background: var(--accent-2);
+  color: #0c111c;
+  padding: 1px 8px;
+  border-radius: 10px;
+  font-size: 11px;
+  font-weight: 700;
+  margin-left: 6px;
+  vertical-align: middle;
+}
+.alg-summary {
+  font-size: 13px;
+  margin: 8px 0 14px;
+  padding: 10px 12px;
+  background: rgba(56, 189, 248, .07);
+  border-left: 3px solid var(--accent-2);
+  border-radius: 4px;
+}
+.alg-suggestions { display: flex; flex-direction: column; gap: 10px; }
+.alg-card {
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, .02);
+}
+.alg-card.alg-anomaly { border-color: rgba(245, 158, 11, .35); }
+.alg-card.alg-sev-warn { background: rgba(245, 158, 11, .06); }
+.alg-card-head {
+  display: flex; gap: 10px; align-items: baseline;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+  font-size: 12px;
+}
+.alg-target {
+  font-family: var(--font-mono);
+  font-weight: 700;
+  color: var(--text);
+}
+.alg-when { color: var(--text-mute); margin-left: auto; }
+.alg-conf {
+  padding: 1px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.alg-conf-high { background: rgba(74, 222, 128, .15); color: var(--pow-green); }
+.alg-conf-medium { background: rgba(251, 191, 36, .15); color: #fbbf24; }
+.alg-conf-low { background: rgba(148, 163, 184, .15); color: var(--text-mute); }
+.alg-sev-tag {
+  padding: 1px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  background: rgba(245, 158, 11, .15);
+  color: #fbbf24;
+  text-transform: uppercase;
+}
+.alg-change-line {
+  font-family: var(--font-mono);
+  font-size: 16px;
+  margin: 6px 0 10px;
+  display: flex; gap: 12px; align-items: baseline;
+}
+.alg-num-old { color: var(--text-mute); text-decoration: line-through; }
+.alg-arrow { color: var(--text-mute); }
+.alg-num-new { color: var(--pow-green); font-weight: 700; }
+.alg-reasoning {
+  font-size: 13px;
+  color: var(--text-dim);
+  line-height: 1.4;
+  margin-bottom: 10px;
+}
+.alg-actions { display: flex; gap: 8px; }
+
+.alg-ack-all {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 8px 12px;
+  background: var(--bg-elev-2);
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-sm);
+  font-size: 13px; color: var(--text-dim);
+}
+
+.alg-changes { margin-top: 14px; }
+.alg-change-row {
+  display: grid;
+  grid-template-columns: 160px 200px 80px 20px 80px 1fr;
+  gap: 10px;
+  padding: 6px 4px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  border-bottom: 1px solid var(--border);
+}
+.alg-change-row .alg-when { color: var(--text-mute); margin-left: 0; }
+.alg-change-row .alg-reasoning {
+  margin: 0; color: var(--text-mute); font-size: 11px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+
+/* TOU rate slot editor in Settings. One row per slot, with the
+   start-end window read-only (utility-defined) and the rate editable. */
+.cost-tou-slots {
+  display: flex; flex-direction: column; gap: 6px;
+  max-width: 420px;
+}
+.cost-tou-slot {
+  display: grid;
+  grid-template-columns: 110px 1fr auto;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  background: var(--bg-elev-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 12px;
+}
+.cost-tou-slot .slot-time {
+  font-family: var(--font-mono);
+  color: var(--text-dim);
+}
+.cost-tou-slot .slot-rate {
+  width: 90px;
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text);
+  padding: 4px 6px;
+  font-family: var(--font-mono);
+}
+.cost-tou-slot .slot-rate:focus { outline: 1px solid var(--pow-green); }
+.cost-tou-slot .slot-label {
+  color: var(--text-mute);
+  text-transform: uppercase;
+  font-size: 10px;
+  letter-spacing: 0.05em;
+}
+
+/* "Keep screen on" toggle row in Settings. Compact, single-line. */
+.keep-awake-row {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 12px;
+  background: var(--bg-elev-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  cursor: pointer;
+  user-select: none;
+}
+.keep-awake-row input[type="checkbox"] {
+  cursor: pointer;
+  accent-color: var(--pow-green);
+}
+.keep-awake-row .hint { margin-left: auto; }
+
+/* Temperature unit (°C / °F) pill picker on the Settings tab.
+   Mirrors the keep-awake-row visually so the Display section reads
+   as a coherent pair of preferences. */
+.temp-unit-row {
+  display: flex; align-items: center; gap: 12px;
+  padding: 8px 12px;
+  background: var(--bg-elev-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  user-select: none;
+}
+.temp-unit-pills { margin-left: auto; display: inline-flex; gap: 4px; }
+.temp-pill {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  padding: 4px 12px;
+  border-radius: 4px;
+  font-size: 13px;
+  cursor: pointer;
+  transition: background .15s, color .15s, border-color .15s;
+  font-family: var(--font-mono);
+}
+.temp-pill:hover { color: var(--text); }
+.temp-pill.on {
+  background: rgba(74, 222, 128, .12);
+  border-color: var(--pow-green);
+  color: var(--pow-green);
+}
+
+/* Raw cloud-properties dump on the Device tab. Shown collapsed by
+   default; clicking "Show" expands it. */
+.raw-props {
+  margin: 0;
+  padding: 10px 12px;
+  background: var(--bg-elev-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 11px;
+  font-family: var(--font-mono);
+  color: var(--text-dim);
+  max-height: 320px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+/* ============== Switches ============== */
+/* Flex (not grid) so that hidden buttons (e.g. AC-charge plug when
+   not configured) collapse cleanly and the remaining buttons share
+   the full width evenly. Compact padding keeps 5 buttons on one row
+   without wrapping on typical viewports. */
+.switches {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.switch {
+  flex: 1 1 0;
+  min-width: 90px;
+  display: flex; flex-direction: column; align-items: flex-start;
+  gap: 2px;
+  padding: 10px 12px;
+  background: var(--bg-elev-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  text-align: left;
+  transition: border-color .15s, background .15s;
+  font-family: inherit;
+  cursor: pointer;
+}
+.switch:hover {
+  border-color: var(--border);
+  background: color-mix(in srgb, var(--foreground) 4%, var(--bg-elev-2));
+}
+.dark .switch:hover { border-color: #2f3744; }
+.switch:disabled { cursor: wait; opacity: .7; }
+.switch.pending { border-color: var(--pow-green); }
+/* Smart-charge active = the periodic loop will revert manual toggles
+   on the next 5-min tick. Yellow border + the title attribute on the
+   button explains why. */
+.switch.warn { border-color: #fbbc04; }
+.switch.warn:hover { border-color: #fbbc04; }
+/* Inverter recovery watchdog. Namespaced .wd-* so they don't collide
+   with .switch.warn (used by smart-charge "active mode" tooltip).
+     .wd-warn: yellow border while retries are in flight (1-5 attempts)
+     .wd-err:  red border + pulse after 5 attempts exhausted; click
+               dismisses and a fresh AC=OFF observation restarts retries */
+.switch.wd-warn { border-color: #fbbc04; }
+.switch.wd-warn:hover { border-color: #fbbc04; }
+.switch.wd-err { border-color: #ef4444; background: rgba(239,68,68,.08); animation: switch-err-pulse 2s ease-in-out infinite; }
+.switch.wd-err:hover { border-color: #ef4444; }
+.switch.wd-err .sw-state { color: #ef4444; }
+@keyframes switch-err-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(239,68,68,0); }
+  50%      { box-shadow: 0 0 0 4px rgba(239,68,68,.18); }
+}
+
+/* ============== Settings tab ============== */
+.settings-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.settings-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 12px;
+  padding: 12px 14px;
+  background: var(--bg-elev-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  align-items: center;
+}
+.settings-label { display: flex; flex-direction: column; gap: 2px; }
+.settings-label-text { font-weight: 500; color: var(--text); font-size: 14px; }
+.settings-hint { font-size: 12px; color: var(--text-dim); }
+.settings-control { display: flex; align-items: center; gap: 8px; }
+.settings-control input[type="number"],
+.settings-control input[type="time"] {
+  width: 110px; padding: 8px 10px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 14px;
+  text-align: right;
+}
+.settings-control input[type="time"] {
+  width: auto;
+  min-width: 8.5em;
+}
+.dark .settings-control input[type="time"] {
+  color-scheme: dark;
+}
+.settings-control input[type="number"]:focus { outline: 1px solid var(--pow-green); }
+.settings-control input[type="number"]:disabled {
+  opacity: 0.5; cursor: not-allowed;
+  background: var(--bg-elev-2);
+}
+.settings-row.gated { opacity: 0.55; }
+.settings-row.gated .settings-label-text::after {
+  content: " — needs Anthropic key";
+  font-weight: 400; font-size: 12px; color: var(--text-dim);
+}
+
+/* ============== Automation tab ============== */
+.kasa-list {
+  display: flex; flex-direction: column; gap: 8px;
+}
+.kasa-row {
+  display: grid;
+  grid-template-columns: auto 1fr auto auto;
+  gap: 12px;
+  padding: 12px 14px;
+  background: var(--bg-elev-2);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+  align-items: center;
+}
+.kasa-row .kr-state {
+  width: 44px; padding: 3px 8px;
+  border-radius: 999px;
+  text-align: center;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 600;
+  border: 1px solid var(--border);
+  color: var(--text-mute);
+  background: rgba(0,0,0,.2);
+  text-transform: uppercase;
+  letter-spacing: .04em;
+}
+.kasa-row .kr-state.on { color: var(--pow-green); border-color: rgba(74,222,128,.3); background: rgba(74,222,128,.08); }
+.kasa-row .kr-state.off { color: var(--accent-2); border-color: rgba(56,189,248,.3); background: rgba(56,189,248,.08); }
+.kasa-row .kr-state.offline { color: var(--text-mute); }
+.kasa-row .kr-name {
+  display: flex; flex-direction: column; gap: 2px;
+}
+.kasa-row .kr-alias { font-weight: 500; color: var(--text); font-size: 14px; }
+.kasa-row .kr-meta { font-family: var(--font-mono); font-size: 11px; color: var(--text-dim); }
+.kasa-row .kr-meta .host { color: var(--text-mute); }
+.kasa-row .kr-error {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: #f08080;
+  margin-top: 4px;
+  word-break: break-word;
+}
+.kasa-row-actions { display: flex; gap: 6px; }
+.kasa-row-actions button { font-size: 12px; padding: 4px 10px; }
+
+
+.auto-toolbar {
+  display: flex; gap: 10px; align-items: center; flex-wrap: wrap;
+  margin-bottom: 14px;
+}
+.auto-filter {
+  display: inline-flex; align-items: center; gap: 8px;
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+.auto-filter .auto-filter-name {
+  color: var(--text);
+  font-weight: 500;
+  padding: 3px 8px;
+  background: var(--bg-elev-2);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+}
+.auto-filter button { font-size: 11px; padding: 3px 10px; }
+.auto-discovered {
+  margin-bottom: 14px;
+  padding: 10px 12px;
+  background: var(--bg-elev-2);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  color: var(--text-dim);
+}
+.auto-discovered .auto-disc-row {
+  display: flex; gap: 10px; padding: 4px 0; align-items: center;
+}
+.auto-discovered .auto-disc-row .alias { color: var(--text); font-weight: 500; }
+.auto-discovered .auto-disc-row .host { font-family: var(--font-mono); }
+.auto-discovered button { font-size: 11px; padding: 3px 8px; }
+
+.auto-rules {
+  display: flex; flex-direction: column; gap: 8px;
+}
+.auto-rule {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 12px;
+  padding: 12px 14px;
+  background: var(--bg-elev-2);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+  align-items: center;
+}
+.auto-rule.disabled { opacity: 0.55; }
+.auto-rule .ar-title { font-weight: 500; color: var(--text); margin-bottom: 4px; font-size: 14px; }
+.auto-rule .ar-cond {
+  font-size: 12px;
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+}
+.auto-rule .ar-cond .op,
+.auto-rule .ar-cond .val { color: var(--accent-3); font-weight: 500; }
+.auto-rule .ar-cond .device { color: var(--text); }
+.auto-rule .ar-cond .action.on { color: var(--pow-green); }
+.auto-rule .ar-cond .action.off { color: var(--accent-2); }
+.auto-rule .ar-meta { font-size: 11px; color: var(--text-mute); margin-top: 4px; font-family: var(--font-mono); }
+.auto-rule .ar-meta.err { color: var(--danger); }
+.auto-rule-actions {
+  display: flex; gap: 6px; align-items: center;
+}
+.auto-rule-actions button { font-size: 12px; padding: 4px 10px; }
+.auto-toggle {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-size: 11px; color: var(--text-dim);
+}
+.auto-empty {
+  padding: 24px;
+  text-align: center;
+  color: var(--text-mute);
+  border: 1px dashed var(--border-soft);
+  border-radius: var(--radius-sm);
+}
+
+/* Rule editor form */
+.auto-form-grid {
+  display: flex; flex-direction: column; gap: 14px;
+}
+.auto-field {
+  display: flex; flex-direction: column; gap: 6px;
+  border: none; padding: 0; margin: 0;
+}
+.auto-field .auto-label,
+.auto-field legend.auto-label {
+  font-size: 11px; color: var(--text-dim);
+  text-transform: uppercase; letter-spacing: .05em;
+  padding: 0;
+}
+.auto-field input[type="text"],
+.auto-field input[type="password"],
+.auto-field input[type="email"],
+.auto-field input[type="number"],
+.auto-field select {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  color-scheme: dark;
+  padding: 8px 10px;
+  font-family: inherit;
+  font-size: 14px;
+  outline: none;
+}
+.auto-field input:focus, .auto-field select:focus { border-color: var(--pow-green); }
+.auto-condition { display: flex; gap: 8px; align-items: center; }
+.auto-condition select { flex: 0 0 auto; min-width: 140px; }
+.auto-condition input { flex: 0 0 90px; text-align: right; }
+.auto-condition .auto-pct { color: var(--text-dim); font-size: 14px; }
+.auto-action-row {
+  display: flex; gap: 16px;
+  font-size: 14px;
+}
+.auto-action-row label { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
+.auto-kasa-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr auto;
+  gap: 8px;
+}
+.auto-enabled { display: flex; gap: 8px; align-items: center; font-size: 13px; color: var(--text-dim); }
+@media (max-width: 720px) {
+  .auto-condition { flex-wrap: wrap; }
+  .auto-kasa-row { grid-template-columns: 1fr; }
+  .auto-rule { grid-template-columns: 1fr; }
+}
+
+/* ============== Standalone auth page (/login, /setup) ============== */
+.auth-page {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+}
+.auth-page .login-card {
+  max-width: 400px;
+  width: 100%;
+}
+
+/* ============== Logs tab ============== */
+.logs-controls { display: flex; align-items: center; gap: 10px; }
+.logs-auto { font-size: 12px; color: var(--text-dim); display: flex; align-items: center; gap: 6px; }
+.logs-list {
+  display: flex; flex-direction: column; gap: 0;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  max-height: 600px;
+  overflow-y: auto;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+}
+.logs-row {
+  display: grid;
+  grid-template-columns: 110px 60px 80px 1fr;
+  gap: 10px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border-soft);
+  align-items: baseline;
+}
+.logs-row:last-child { border-bottom: none; }
+.logs-row .lr-ts { color: var(--text-mute); white-space: nowrap; }
+.logs-row .lr-cat {
+  color: var(--text-dim);
+  text-transform: uppercase;
+  font-size: 10px;
+  letter-spacing: .05em;
+  font-family: var(--font-sans);
+  font-weight: 500;
+}
+.logs-row .lr-level {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  font-family: var(--font-sans);
+  font-weight: 600;
+  text-align: center;
+}
+.logs-row .lr-msg { color: var(--text); word-break: break-word; }
+.logs-row.lvl-info  .lr-level { background: rgba(56,189,248,.12); color: var(--accent-2); }
+.logs-row.lvl-warn  .lr-level { background: rgba(251,191,36,.12); color: var(--accent-3); }
+.logs-row.lvl-error .lr-level { background: rgba(239,68,68,.16);  color: var(--danger); }
+.logs-row.lvl-error .lr-msg   { color: #ffd1d1; }
+.logs-empty {
+  padding: 24px;
+  text-align: center;
+  color: var(--text-mute);
+  font-family: var(--font-sans);
+}
+@media (max-width: 720px) {
+  .logs-row { grid-template-columns: 80px 50px 1fr; }
+  .logs-row .lr-cat { display: none; }
+  .logs-controls { flex-wrap: wrap; }
+}
+.settings-range { font-size: 11px; color: var(--text-dim); font-family: var(--font-mono); }
+@media (max-width: 720px) {
+  .settings-row { grid-template-columns: 1fr; }
+  .settings-control { justify-content: flex-start; }
+}
+.switch .sw-label { font-size: 11px; text-transform: uppercase; color: var(--text-dim); letter-spacing: .06em; }
+.switch .sw-state {
+  font-family: var(--font-mono);
+  font-size: 14px;
+  font-weight: 500;
+}
+.switch.on { border-color: var(--pow-green); background: rgba(74,222,128,.06); }
+.switch.on .sw-state { color: var(--pow-green); }
+
+/* ============== Charts ============== */
+.chart {
+  width: 100%;
+  height: 320px;
+  display: block;
+}
+.chart-tall { height: 420px; }
+
+/* Hover tooltip for both Live and Energy charts */
+.chart-tooltip {
+  position: fixed;
+  pointer-events: none;
+  z-index: 100;
+  background: var(--popover);
+  color: var(--popover-foreground, var(--text));
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  font-size: 12px;
+  font-family: var(--font-mono);
+  box-shadow: var(--shadow-card);
+  min-width: 160px;
+}
+.dark .chart-tooltip {
+  background: rgba(20, 24, 29, 0.96);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.45);
+}
+.chart-tooltip[hidden] { display: none; }
+.chart-tooltip .cht-ts {
+  font-family: var(--font-sans);
+  font-size: 11px;
+  color: var(--text-mute);
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  margin-bottom: 6px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--border-soft);
+}
+.chart-tooltip .cht-row {
+  display: flex; align-items: center; gap: 6px;
+  padding: 2px 0;
+  font-family: var(--font-sans);
+  color: var(--text-dim);
+}
+.chart-tooltip .cht-row i {
+  display: inline-block;
+  width: 10px; height: 10px; border-radius: 2px;
+}
+.chart-tooltip .cht-row b {
+  margin-left: auto;
+  font-family: var(--font-mono);
+  color: var(--text);
+  font-weight: 500;
+}
+
+.legend {
+  display: flex; gap: 18px; flex-wrap: wrap;
+  margin-top: 10px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+/* Click toggles series visibility on the chart. */
+.legend-item {
+  display: inline-flex; align-items: center; gap: 6px;
+  background: transparent;
+  border: none;
+  padding: 4px 8px;
+  margin: 0;
+  border-radius: 6px;
+  font-family: inherit;
+  font-size: inherit;
+  color: inherit;
+  cursor: pointer;
+  transition: background .15s, opacity .15s;
+}
+.legend-item:hover { background: color-mix(in srgb, var(--foreground) 6%, transparent); }
+.legend-item.off { opacity: 0.35; }
+.legend-item.off i { background: var(--text-mute) !important; }
+.legend-item.off:hover { opacity: 0.55; }
+.legend i {
+  display: inline-block; width: 10px; height: 10px; border-radius: 2px;
+}
+.lg-bat { background: var(--accent-3); }
+.lg-out { background: var(--pow-green); }
+.lg-in  { background: var(--accent-2); }
+.energy-legend { margin-top: 14px; justify-content: center; }
+
+/* ============== Range picker ============== */
+.range-picker {
+  display: inline-flex; flex-wrap: wrap;
+  background: var(--bg-elev-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 3px;
+}
+.range-btn {
+  background: transparent;
+  border: none;
+  color: var(--text-dim);
+  padding: 5px 12px;
+  font-size: 12px;
+  font-weight: 500;
+  border-radius: 6px;
+  transition: background .15s, color .15s;
+}
+.range-btn:hover { color: var(--text); }
+.range-btn.on { background: var(--pow-green); color: #032012; }
+
+/* Energy history: extra-device chips for overlay comparison. Hidden
+   when the account only has one Jackery. */
+.energy-compare {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin: 10px 0 4px;
+}
+.energy-compare-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--bg-elev-2);
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  padding: 4px 10px;
+  font-size: 12px;
+  font-weight: 500;
+  font-family: inherit;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background .15s, color .15s, border-color .15s, opacity .15s;
+}
+.energy-compare-chip:hover { color: var(--text); border-color: var(--text-mute); }
+.energy-compare-chip.on {
+  color: var(--text);
+  border-color: var(--energy-chip-color, var(--pow-green));
+  background: color-mix(in srgb, var(--energy-chip-color, var(--pow-green)) 16%, var(--bg-elev-2));
+}
+.energy-compare-swatch {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--energy-chip-color, var(--pow-green));
+  flex-shrink: 0;
+}
+.energy-compare-hint {
+  flex: 1 1 100%;
+  margin: 2px 0 0;
+  font-size: 11px;
+}
+
+/* ============== Data table ============== */
+.data-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+.data-table th {
+  text-align: left;
+  padding: 10px 12px;
+  font-size: 11px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: .06em;
+  color: var(--text-dim);
+  border-bottom: 1px solid var(--border-soft);
+}
+.data-table td {
+  padding: 12px;
+  border-bottom: 1px solid var(--border-soft);
+  font-family: var(--font-mono);
+}
+.data-table td:first-child { font-family: var(--font-sans); font-weight: 500; }
+.data-table tr:last-child td { border-bottom: none; }
+
+/* ============== Device tab ============== */
+/* "Unknown model detected" banner — accent-colored card the user sees
+   the first time they connect a Jackery model that isn't in models.json. */
+.unknown-model-banner {
+  border: 1px solid var(--pow-green);
+  background: linear-gradient(180deg, rgba(74,222,128,.08) 0%, var(--bg-elev) 100%);
+}
+.unknown-model-banner h2 { color: var(--pow-green); }
+.unknown-model-banner code {
+  background: var(--bg-elev-2);
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-size: 12px;
+}
+.unknown-model-banner button + button { margin-left: 8px; }
+.probe-candidate {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 12px;
+  background: var(--bg-elev-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  margin-bottom: 6px;
+}
+.probe-cap-value {
+  font-family: var(--font-mono);
+  font-weight: 700;
+  color: var(--pow-green);
+  font-size: 14px;
+}
+.probe-cap-source { font-size: 12px; }
+.btn-small { padding: 4px 10px; font-size: 12px; }
+
+/* Per-device "Learned parameters" panel on the Device tab. One row
+   per resolvable param showing source, value, and override controls. */
+.device-params-list { display: flex; flex-direction: column; gap: 8px; }
+.device-param-row {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  background: var(--bg-elev-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+.device-param-label { font-weight: 500; color: var(--text); font-size: 14px; }
+.device-param-desc { color: var(--text-dim); font-size: 12px; margin-top: 2px; }
+.device-param-value {
+  font-family: var(--font-mono);
+  font-size: 14px;
+  color: var(--text);
+  white-space: nowrap;
+}
+.device-param-source {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 2px 8px;
+  border-radius: 3px;
+  background: var(--bg);
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+.device-param-source-user { color: var(--pow-green); }
+.device-param-source-fit { color: var(--accent-2); }
+.device-param-source-unknown { color: #f59e0b; }
+.device-param-edit {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.device-param-edit input {
+  width: 110px;
+  padding: 4px 8px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  text-align: right;
+}
+@media (max-width: 720px) {
+  .device-param-row {
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+  .device-param-value { white-space: normal; }
+}
+
+.device-card dl {
+  display: grid;
+  grid-template-columns: 180px 1fr;
+  gap: 6px 16px;
+  margin: 0;
+}
+.device-card dt {
+  color: var(--text-dim);
+  font-size: 12px;
+  padding: 8px 0;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+}
+.device-card dd {
+  margin: 0;
+  padding: 8px 0;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  color: var(--text);
+  border-bottom: 1px solid var(--border-soft);
+}
+.device-card dt { border-bottom: 1px solid var(--border-soft); }
+.device-card dl > :nth-last-child(-n+2) { border-bottom: none; }
+@media (max-width: 720px) {
+  .device-card dl { grid-template-columns: 1fr; }
+  .device-card dt { padding-bottom: 0; border-bottom: none; }
+  .device-card dd { padding-top: 0; }
+}
+
+/* ============== Alerts ============== */
+.alert {
+  background: var(--danger-soft);
+  border: 1px solid rgba(239,68,68,.4);
+  color: #fecaca;
+  padding: 12px 14px;
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+}
+
+/* ============== Footer ============== */
+footer {
+  text-align: center;
+  padding: 24px;
+  color: var(--text-mute);
+  font-size: 11px;
+  border-top: 1px solid var(--border-soft);
+  margin-top: 22px;
+}
+
+/* ============== Login overlay ============== */
+.login-overlay {
+  position: fixed; inset: 0;
+  background: rgba(8, 10, 13, .82);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  z-index: 100;
+  display: flex; align-items: center; justify-content: center;
+  padding: 20px;
+}
+.login-overlay[hidden] { display: none; }
+
+.login-card {
+  width: 100%;
+  max-width: 380px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 28px;
+  display: flex; flex-direction: column; gap: 14px;
+  box-shadow: var(--shadow-card);
+  color: var(--card-foreground, var(--text));
+}
+.dark .login-card {
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.5);
+}
+.login-brand {
+  display: flex; align-items: center; gap: 10px;
+  margin-bottom: 4px;
+}
+.login-brand h1 { font-size: 18px; }
+.login-sub {
+  margin: 0 0 8px;
+  color: var(--text-dim);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.field { display: flex; flex-direction: column; gap: 6px; }
+.field-label {
+  font-size: 11px;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: .06em;
+  font-weight: 500;
+}
+.field input,
+.field select {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 14px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  outline: none;
+  transition: border-color .15s;
+}
+.field input:focus,
+.field select:focus { border-color: var(--pow-green); }
+
+.login-error {
+  background: var(--danger-soft);
+  border: 1px solid rgba(239,68,68,.35);
+  color: #fecaca;
+  padding: 10px 12px;
+  border-radius: 8px;
+  font-size: 13px;
+}
+
+.login-foot {
+  margin: 6px 0 0;
+  font-size: 11px;
+  color: var(--text-mute);
+  text-align: center;
+}
+
+/* ===========================================================================
+   Backup & restore (Settings tab).
+   - .backup-runs / .backup-run rows show daily run history.
+   - .backup-snap rows let the user pick a snapshot to restore.
+   - Status pills reuse the dashboard color tokens (accent green for
+     success, danger for fail, accent-3 amber for skipped).
+   ======================================================================== */
+
+.backup-runs, .backup-snapshots {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.backup-run, .backup-snap {
+  border: 1px solid var(--border);
+  background: var(--bg-elev);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+}
+.backup-snap-bad { border-color: var(--danger); }
+
+.backup-run-head, .backup-snap-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 4px;
+  flex-wrap: wrap;
+}
+.backup-run-ts { font-size: 12px; color: var(--text-dim); }
+.backup-run-body, .backup-snap-body { font-size: 13px; color: var(--text); }
+
+.backup-pill {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: .02em;
+  text-transform: uppercase;
+}
+.backup-pill-ok   { background: rgba(74,222,128,.16);  color: var(--pow-green);   }
+.backup-pill-warn { background: rgba(251,191,36,.16);  color: var(--accent-3); }
+.backup-pill-err  { background: var(--danger-soft);    color: var(--danger);   }
+
+.backup-snap-files {
+  border-top: 1px dashed var(--border);
+  margin-top: 8px;
+  padding-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.backup-file-pick {
+  font-size: 12px;
+  color: var(--text-dim);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.backup-file-pick code {
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+/* Inline status messages — color-coded by data-kind. */
+.hint[data-kind="ok"]  { color: var(--pow-green); }
+.hint[data-kind="err"] { color: var(--danger); }
+
+/* Auto-discovery panel — shown above the credentials form when no
+   backup destination is configured yet. Lists SMB hosts found on the
+   local subnet so the user can click instead of typing an IP. */
+.backup-discover {
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+  margin-bottom: 12px;
+}
+.backup-discover-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 6px;
+}
+.backup-discover-head strong { font-size: 13px; }
+.backup-discover-head .hint  { margin-left: auto; }
+.backup-discover-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.backup-discover-list li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 80ms ease;
+}
+.backup-discover-list li:hover { background: var(--surface-3, rgba(255,255,255,.04)); }
+.backup-discover-list .nas-name {
+  font-weight: 500;
+  color: var(--text);
+}
+.backup-discover-list .nas-ip {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text-dim);
+}
+.btn-tiny {
+  font-size: 11px;
+  padding: 2px 8px;
+  height: auto;
+  line-height: 1.6;
+}
+
+/* Manual location override card on the Forecast tab. Mode toggle
+   (search vs raw coords), search results list with hover, and the
+   side-by-side lat/lon entry row. */
+.manual-loc-mode {
+  display: flex;
+  gap: 16px;
+  margin-bottom: 12px;
+}
+.manual-loc-mode label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  font-size: 13px;
+}
+.manual-loc-pane { margin-top: 4px; }
+.manual-loc-results {
+  list-style: none;
+  padding: 0;
+  margin: 8px 0 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 240px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+}
+.manual-loc-results:empty { display: none; }
+.manual-loc-results li {
+  padding: 8px 10px;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  border-bottom: 1px solid var(--border);
+  transition: background 80ms ease;
+}
+.manual-loc-results li:last-child { border-bottom: none; }
+.manual-loc-results li:hover { background: var(--surface-3, rgba(255,255,255,.04)); }
+.manual-loc-results .loc-name { font-weight: 500; color: var(--text); }
+.manual-loc-results .loc-meta { font-size: 12px; color: var(--text-dim); }
+.manual-loc-coord-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 6px;
+}
+.manual-loc-coord-row label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+
+/* "Forecasting for: <city> (lat, lon)" line under the chart title.
+   Tight margin so it visually belongs to the header rather than
+   floating above the chart. */
+.forecast-current-loc {
+  margin: -4px 0 10px 0;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+.forecast-current-loc .loc-name { color: var(--text); font-weight: 500; }
+.forecast-current-loc .loc-coords { font-variant-numeric: tabular-nums; }
+
+/* Per-day strip — five compact tiles above the forecast chart, one
+   per day in the ~5-day forecast window. Headline numbers only:
+   start→end SOC and total solar kWh, with a warning marker if SOC
+   bottoms at 0 during the day. Wraps on narrow viewports. */
+.forecast-day-strip {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 8px;
+  margin: 0 0 14px 0;
+}
+@media (max-width: 900px) {
+  .forecast-day-strip { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+@media (max-width: 720px) {
+  .forecast-day-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+.forecast-day-tile {
+  background: var(--bg-elev-2, rgba(255,255,255,.03));
+  border: 1px solid var(--border, rgba(255,255,255,.08));
+  border-radius: 8px;
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-variant-numeric: tabular-nums;
+}
+.forecast-day-tile .fdt-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: .08em;
+  color: var(--text-mute);
+  font-weight: 600;
+}
+.forecast-day-tile .fdt-soc {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--text);
+  font-family: var(--font-mono, monospace);
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+}
+.forecast-day-tile .fdt-soc small { color: var(--text-dim); font-weight: 500; font-size: 12px; }
+.forecast-day-tile .fdt-arrow { color: var(--text-mute); font-weight: 400; }
+.forecast-day-tile .fdt-solar {
+  font-size: 12px;
+  color: var(--text-dim);
+  font-family: var(--font-mono, monospace);
+  text-align: center;
+  margin-top: 4px;
+}
+/* Trajectory arc: each point is a label-above-value pair, spread
+   across the full tile width so the eye can scan left-to-right
+   through NOW → SUNSET → MIDNIGHT → SUNRISE without the values
+   bunching at the left edge. */
+.forecast-day-tile .fdt-arc {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  width: 100%;
+  gap: 4px 8px;
+  font-variant-numeric: tabular-nums;
+}
+.forecast-day-tile .fdt-pt {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.1;
+}
+.forecast-day-tile .fdt-pt-label {
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: .06em;
+  color: var(--text-mute);
+  font-weight: 500;
+}
+.forecast-day-tile .fdt-pt-value {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text);
+  font-family: var(--font-mono, monospace);
+}
+.forecast-day-tile .fdt-pt-value small {
+  color: var(--text-dim);
+  font-weight: 500;
+  font-size: 10px;
+}
+/* Color cues: green border when SOC stays comfortably above 20 all
+   day, amber when min dips into the 10-30 band (running thin),
+   red when SOC bottoms at 0 (depleted). The dashboard's existing
+   accent palette so the colors mean the same thing as elsewhere. */
+.forecast-day-tile.tile-good { border-color: rgba(74, 222, 128, .35); }
+.forecast-day-tile.tile-warn { border-color: rgba(251, 191, 36, .45); }
+.forecast-day-tile.tile-bad  { border-color: rgba(239, 68, 68, .55); background: rgba(239, 68, 68, .04); }
+.forecast-day-tile.tile-bad .fdt-warn {
+  color: #f87171;
+  font-size: 11px;
+  font-weight: 500;
+}
+
+
+/* Sunset/sunrise prediction-vs-actual table on the Forecast tab.
+   Compact row layout with grouped header showing pred / actual /
+   error per phase. Error cell color codes magnitude so the eye
+   catches misses at a glance. */
+.acc-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-variant-numeric: tabular-nums;
+  font-size: 13px;
+}
+.acc-table th, .acc-table td {
+  padding: 6px 10px;
+  text-align: right;
+  border-bottom: 1px solid var(--border, rgba(255,255,255,.06));
+}
+.acc-table th:first-child, .acc-table td:first-child {
+  text-align: left;
+  color: var(--text-dim);
+}
+.acc-table thead th {
+  font-weight: 500;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  font-size: 11px;
+}
+.acc-table .acc-group {
+  text-align: center;
+  border-left: 1px solid var(--border, rgba(255,255,255,.06));
+  padding-bottom: 2px;
+}
+.acc-table .acc-subhead th {
+  border-bottom: 1px solid var(--border, rgba(255,255,255,.10));
+  padding-top: 0;
+  font-size: 10px;
+}
+.acc-table .acc-subhead th:nth-child(2),
+.acc-table tbody td:nth-child(2) {
+  border-left: 1px solid var(--border, rgba(255,255,255,.06));
+}
+.acc-table .acc-subhead th:nth-child(5),
+.acc-table tbody td:nth-child(5) {
+  border-left: 1px solid var(--border, rgba(255,255,255,.06));
+}
+.acc-table tbody td.acc-err-good   { color: #4ade80; }
+.acc-table tbody td.acc-err-warn   { color: #facc15; }
+.acc-table tbody td.acc-err-bad    { color: #f87171; }
+.acc-table tbody td.acc-missing    { color: var(--text-dim); }
+/* Stale rows: predictions made by older code (before the latest
+   forecaster cutoff). Shown for context but visually muted, and the
+   error cells lose their green/yellow/red tint so the eye doesn't
+   read them as comparable to current performance. */
+.acc-table tbody tr.acc-row-stale td { color: var(--text-mute); opacity: .6; }
+.acc-table tbody tr.acc-row-stale td.acc-err-good,
+.acc-table tbody tr.acc-row-stale td.acc-err-warn,
+.acc-table tbody tr.acc-row-stale td.acc-err-bad { color: var(--text-mute); }
+.acc-stale-badge {
+  display: inline-block;
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: .06em;
+  color: var(--text-mute);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 1px 5px;
+  margin-left: 6px;
+  vertical-align: 1px;
+}
+
+/* Three-up summary row above the daily-accuracy table: per-phase MAE
+   plus an overall hit-rate score for the selected window. */
+.acc-summary {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+  margin: 0 0 14px 0;
+}
+.acc-summary-tile {
+  background: var(--surface-2, rgba(255,255,255,.03));
+  border: 1px solid var(--border, rgba(255,255,255,.06));
+  border-radius: 6px;
+  padding: 8px 12px;
+}
+.acc-summary-label {
+  font-size: 11px;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  margin-bottom: 4px;
+}
+.acc-summary-value {
+  font-size: 22px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  font-family: var(--font-mono, monospace);
+}
+.acc-summary-value small {
+  font-size: 12px;
+  color: var(--text-dim);
+  margin-left: 4px;
+  font-weight: 400;
+  font-family: var(--font-sans, sans-serif);
+}
+.acc-summary-sub {
+  font-size: 11px;
+  color: var(--text-dim);
+  margin-top: 2px;
+}
+@media (max-width: 720px) {
+  .acc-summary { grid-template-columns: 1fr; }
+}
+
+/* ============== Energy: Records + Daily breakdown ============== */
+.energy-records-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 16px;
+}
+.energy-record .kpi-value { font-size: 22px; }
+.energy-record .rec-label {
+  text-transform: uppercase;
+  letter-spacing: .05em;
+  font-size: 10px;
+  color: var(--text-mute);
+  margin-bottom: 4px;
+}
+
+/* Header controls: range picker + search + export on one wrapping row. */
+.energy-history-controls,
+.daily-controls {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+}
+.daily-search {
+  padding: 6px 10px;
+  width: 170px;
+  background: var(--bg-elev-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  font-size: 12px;
+  font-family: inherit;
+  outline: none;
+  transition: border-color .15s, background .15s;
+}
+.daily-search:focus { border-color: var(--pow-green); }
+.daily-search::placeholder { color: var(--text-mute); }
+
+/* Same look as .range-btn, but a separate class so the energy-history
+   chart's global .range-btn click handler can't grab these buttons. */
+.drange-btn,
+.ebucket-btn {
+  background: transparent;
+  border: none;
+  color: var(--text-dim);
+  padding: 5px 12px;
+  font-size: 12px;
+  font-weight: 500;
+  border-radius: 6px;
+  transition: background .15s, color .15s;
+}
+.drange-btn:hover,
+.ebucket-btn:hover { color: var(--text); }
+.drange-btn.on,
+.ebucket-btn.on { background: var(--pow-green); color: #032012; }
+
+.lmode-btn {
+  background: transparent;
+  border: none;
+  color: var(--text-dim);
+  padding: 5px 12px;
+  font-size: 12px;
+  font-weight: 500;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.lmode-btn:hover { color: var(--text); }
+.lmode-btn.on { background: var(--pow-green); color: #032012; }
+
+.load-calendar { margin-top: 4px; }
+.load-cal-nav {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+.load-cal-strip {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 6px;
+}
+.load-cal-day {
+  display: flex; flex-direction: column; align-items: center; gap: 2px;
+  padding: 8px 4px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-elev-2);
+  color: var(--text);
+  cursor: pointer;
+  font: inherit;
+}
+.load-cal-day:hover { border-color: var(--text-mute); }
+.load-cal-day.on {
+  border-color: var(--pow-green);
+  background: color-mix(in srgb, var(--pow-green) 12%, var(--card));
+}
+.load-cal-day .lcd-dow { font-size: 10px; color: var(--text-mute); text-transform: uppercase; }
+.load-cal-day .lcd-num { font-size: 15px; font-weight: 600; }
+.load-cal-draft {
+  display: flex; flex-direction: column; gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+  background: var(--bg-elev-2);
+}
+.load-cal-draft-fields {
+  display: flex; flex-wrap: wrap; gap: 8px; align-items: center;
+}
+.load-weekday-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.load-wd-chip {
+  border: 1px solid var(--border);
+  background: var(--card);
+  color: var(--text-dim);
+  border-radius: 6px;
+  padding: 4px 8px;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.load-wd-chip.on {
+  background: var(--pow-green);
+  border-color: var(--pow-green);
+  color: #032012;
+}
+
+/* Mobile: the table scrolls inside its wrapper, never the page.
+   Vertical cap + sticky header keep a year of rows navigable. */
+.table-scroll {
+  overflow: auto;
+  max-height: 480px;
+  border-radius: var(--radius-sm);
+}
+.table-scroll .data-table th {
+  position: sticky;
+  top: 0;
+  background: var(--bg-elev);
+  z-index: 1;
+}
+.daily-table th, .daily-table td { white-space: nowrap; }
+.daily-table th.num, .daily-table td.num { text-align: right; }
+.daily-table th.sortable { cursor: pointer; user-select: none; }
+.daily-table th.sortable:hover { color: var(--text); }
+.daily-table th.sortable::after { content: ""; display: inline-block; width: 12px; }
+.daily-table th.sortable.sort-asc::after  { content: " ▲"; color: var(--pow-green); width: auto; }
+.daily-table th.sortable.sort-desc::after { content: " ▼"; color: var(--pow-green); width: auto; }
+
+/* Record rows: subtle colored left edge (inset shadow = no layout shift).
+   Gold for the peak-solar day, red for the peak-consumption day. */
+.daily-table tr.record-solar td:first-child { box-shadow: inset 3px 0 0 var(--accent-3); }
+.daily-table tr.record-load  td:first-child { box-shadow: inset 3px 0 0 var(--danger); }
+.daily-table tr.record-solar.record-load td:first-child {
+  box-shadow: inset 3px 0 0 var(--accent-3), inset 6px 0 0 var(--danger);
+}
+
+.today-badge {
+  display: inline-block;
+  font-size: 9px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: .06em;
+  color: var(--pow-green);
+  border: 1px solid var(--pow-green);
+  border-radius: 4px;
+  padding: 1px 5px;
+  margin-left: 6px;
+  vertical-align: 1px;
+}
+
+/* Charged-source split (solar vs AC) under the Today "kWh charged" KPI —
+   muted annotation line, hidden entirely on single-source days. */
+.charged-split small { color: var(--text-dim); letter-spacing: .2px; }
+.charged-split { margin-top: 2px; }
+
+/* Device-switch loading state: header pill with a spinner + dimmed tab
+   content while the new device's first data frame is in flight. */
+.switch-pill { display: inline-flex; align-items: center; gap: 7px;
+  color: var(--text-dim); }
+.spinner { width: 12px; height: 12px; flex: 0 0 auto;
+  border: 2px solid var(--text-dim); border-top-color: var(--pow-green);
+  border-radius: 50%; animation: spin .7s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+body.device-switching .tab-panel { opacity: .45; pointer-events: none;
+  transition: opacity .15s ease; }
+
+.fleet-source {
+  display: inline-block;
+  margin-left: 6px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  vertical-align: 1px;
+}
+.siseli-controls {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px;
+}
+.siseli-control.siseli-switch {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+#siseli-hybrid-pull-row .switch {
+  cursor: pointer;
+}
+.lan-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 18px 0 8px;
+}
+.lan-toggle {
+  flex: 0 0 auto;
+  min-width: 72px;
+  padding: 8px 16px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--bg-elev-2);
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+  font-size: 14px;
+  cursor: pointer;
+}
+.lan-toggle.on {
+  border-color: var(--pow-green);
+  color: var(--pow-green);
+  background: rgba(74,222,128,.06);
+}
+.lan-streams {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 6px 0 8px;
+}
+.lan-streams label {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  font-family: var(--font-mono);
+  font-size: 13px;
+}
+.lan-stream-enc {
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+  font-size: 13px;
+}
+.mqtt-capture {
+  margin: 8px 0 0;
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-elev-2);
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-x: auto;
+}
+.lan-readings {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  margin: 4px 0 8px;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  color: var(--text);
+}
+.siseli-device-settings {
+  display: flex;
+  flex-direction: column;
+}
+.siseli-setting-row {
+  display: grid;
+  grid-template-columns: minmax(160px, 1.4fr) minmax(96px, 180px) auto auto auto;
+  gap: 8px 12px;
+  align-items: center;
+  padding: 10px 0;
+  border-top: 1px solid var(--border);
+}
+.siseli-setting-row.is-known {
+  grid-template-columns: minmax(160px, 1.4fr) minmax(180px, 1fr) auto;
+}
+.siseli-setting-label {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.siseli-setting-label .auto-label { text-transform: none; letter-spacing: 0; font-size: 14px; color: var(--text); }
+.siseli-setting-row input[type="number"] {
+  width: 100%;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  color-scheme: dark;
+  padding: 8px 10px;
+  font-family: inherit;
+  font-size: 14px;
+}
+.siseli-setting-row input[type="number"]:focus { border-color: var(--pow-green); outline: none; }
+.siseli-setting-editor .siseli-control { margin: 0; }
+.siseli-pin {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-dim);
+  white-space: nowrap;
+  user-select: none;
+  cursor: pointer;
+}
+.siseli-pin input { accent-color: var(--pow-green); }
+.dev-alias-dd {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.dev-alias-dd input {
+  flex: 1 1 160px;
+  min-width: 0;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  padding: 8px 10px;
+  font-family: inherit;
+  font-size: 14px;
+}
+.dev-alias-dd input:focus { border-color: var(--pow-green); outline: none; }
+@media (max-width: 720px) {
+  .siseli-setting-row, .siseli-setting-row.is-known { grid-template-columns: 1fr 1fr; }
+  .siseli-setting-label { grid-column: 1 / -1; }
+}
+
+/* BLE inspection controls and raw capture data. */
+#tab-ble .form-row { display: flex; flex-wrap: wrap; align-items: end; gap: 12px; margin: 16px 0; }
+#tab-ble .form-row label { display: flex; flex-direction: column; gap: 6px; }
+#tab-ble input:not([type="checkbox"]) { padding: 9px; border: 1px solid var(--border-soft); border-radius: 8px; background: var(--bg-elev-2); color: var(--text); max-width: 100%; }
+#tab-ble pre { overflow-wrap: anywhere; font-size: 12px; }
+#ble-captures p, #ble-gatt label { overflow-wrap: anywhere; }
+#ble-captures .btn { margin: 4px; }
+
+/* ============== AI Assistant panel ============== */
+:root {
+  --assistant-panel-w: 400px;
+}
+
+.app-shell {
+  transition: padding-right .2s ease;
+}
+@media (min-width: 901px) {
+  .app-shell.assistant-panel-open {
+    padding-right: var(--assistant-panel-w);
+  }
+}
+
+.asst-topbar-label {
+  display: inline;
+}
+@media (max-width: 720px) {
+  .asst-topbar-label { display: none; }
+}
+
+.asst-panel {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: var(--assistant-panel-w);
+  max-width: 100vw;
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-elev);
+  border-left: 1px solid var(--border-soft);
+  box-shadow: -12px 0 32px rgba(0, 0, 0, .18);
+  color: var(--text);
+}
+.asst-panel.is-dragging {
+  outline: 2px dashed var(--pow-green);
+  outline-offset: -6px;
+}
+
+.asst-backdrop {
+  display: none;
+  position: fixed;
+  inset: 0;
+  z-index: 55;
+  border: 0;
+  padding: 0;
+  margin: 0;
+  background: rgba(8, 10, 13, .45);
+  cursor: pointer;
+}
+@media (max-width: 900px) {
+  .asst-backdrop { display: block; }
+  .asst-panel {
+    width: min(var(--assistant-panel-w), 100vw);
+    max-width: 100vw;
+  }
+}
+
+.asst-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 10px 10px 10px 4px;
+  border-bottom: 1px solid var(--border-soft);
+  flex-shrink: 0;
+  background: linear-gradient(180deg, var(--bg-elev) 0%, var(--bg) 100%);
+}
+.asst-header-left {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+}
+.asst-title {
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+}
+.asst-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+.asst-model-select {
+  max-width: 110px;
+  font-size: 11px;
+  padding: 4px 6px;
+}
+
+.asst-select {
+  background: var(--bg-elev-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 8px;
+  font-family: inherit;
+  font-size: 12px;
+  padding: 6px 8px;
+  outline: none;
+  cursor: pointer;
+}
+.asst-select:focus { border-color: var(--pow-green); }
+.asst-select option { background: var(--bg-elev); color: var(--text); }
+
+.asst-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 14px;
+}
+.asst-chat {
+  display: flex;
+  flex-direction: column;
+}
+
+.asst-muted {
+  color: var(--text-dim);
+  font-size: 12px;
+  margin: 0;
+  line-height: 1.45;
+}
+.asst-muted code {
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+.asst-empty {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 8px 4px 24px;
+}
+.asst-empty-icon {
+  width: 28px;
+  height: 28px;
+  color: var(--text-mute);
+  opacity: .7;
+}
+.asst-empty-blurb {
+  margin: 0;
+  color: var(--text-dim);
+  font-size: 13px;
+  line-height: 1.5;
+}
+.asst-starter-h {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  color: var(--text-mute);
+  margin: 8px 0 0;
+}
+.asst-starter-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.asst-starter-card {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  text-align: left;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-elev-2);
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  transition: border-color .15s, background .15s;
+}
+.asst-starter-card:hover {
+  border-color: var(--pow-green);
+  background: color-mix(in srgb, var(--pow-green) 8%, var(--bg-elev-2));
+}
+.asst-starter-title {
+  font-size: 13px;
+  font-weight: 600;
+}
+.asst-starter-sum {
+  font-size: 12px;
+  color: var(--text-dim);
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.asst-messages {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding-bottom: 8px;
+}
+.asst-msg {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-width: 100%;
+}
+.asst-msg.is-user .asst-msg-body {
+  background: color-mix(in srgb, var(--pow-green) 14%, var(--bg-elev-2));
+  border-color: color-mix(in srgb, var(--pow-green) 30%, var(--border));
+  align-self: flex-end;
+}
+.asst-msg.is-asst .asst-msg-body {
+  background: var(--bg-elev-2);
+  align-self: flex-start;
+}
+.asst-msg-role {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: .05em;
+  color: var(--text-mute);
+  font-weight: 600;
+}
+.asst-msg.is-user .asst-msg-role { text-align: right; }
+.asst-msg-body {
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  font-size: 13px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.asst-msg-body :global(strong) { font-weight: 650; }
+.asst-typing { color: var(--text-dim); font-style: italic; }
+
+.asst-pending-tools {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.asst-tool-card {
+  border: 1px solid color-mix(in srgb, var(--pow-amber) 40%, var(--border));
+  background: color-mix(in srgb, var(--pow-amber) 8%, var(--bg-elev-2));
+  border-radius: 10px;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.asst-tool-card-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+.asst-tool-name {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 600;
+}
+.asst-tool-status {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  color: var(--pow-amber);
+}
+.asst-tool-args {
+  margin: 0;
+  padding: 8px;
+  border-radius: 6px;
+  background: var(--bg);
+  border: 1px solid var(--border-soft);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  max-height: 120px;
+  overflow: auto;
+  white-space: pre-wrap;
+}
+.asst-tool-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.asst-composer {
+  flex-shrink: 0;
+  border-top: 1px solid var(--border-soft);
+  padding: 10px 12px 12px;
+  background: var(--bg);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.asst-error {
+  font-size: 12px;
+  color: var(--danger);
+  background: var(--danger-soft);
+  border: 1px solid color-mix(in srgb, var(--danger) 35%, var(--border));
+  border-radius: 8px;
+  padding: 6px 10px;
+}
+.asst-context-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.asst-context-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--bg-elev-2);
+  font-size: 11px;
+  color: var(--text-dim);
+  text-transform: lowercase;
+}
+.asst-context-chip.is-auto {
+  border-color: color-mix(in srgb, var(--pow-green) 45%, var(--border));
+  color: var(--pow-green);
+}
+.asst-att-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.asst-att-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px 4px 4px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--bg-elev-2);
+  max-width: 100%;
+}
+.asst-att-thumb {
+  width: 28px;
+  height: 28px;
+  object-fit: cover;
+  border-radius: 4px;
+}
+.asst-att-name {
+  font-size: 11px;
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.asst-att-remove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  background: transparent;
+  color: var(--text-mute);
+  padding: 2px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.asst-att-remove:hover { color: var(--danger); background: var(--danger-soft); }
+
+.asst-composer-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 4px;
+}
+.asst-input {
+  flex: 1;
+  min-width: 0;
+  resize: none;
+  border: 1px solid var(--border);
+  background: var(--bg-elev-2);
+  color: var(--text);
+  border-radius: 10px;
+  padding: 8px 10px;
+  font-family: inherit;
+  font-size: 13px;
+  line-height: 1.4;
+  outline: none;
+  max-height: 140px;
+}
+.asst-input:focus { border-color: var(--pow-green); }
+.asst-input:disabled { opacity: .6; }
+
+.asst-history-toolbar { margin-bottom: 12px; }
+.asst-history-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.asst-history-item {
+  display: flex;
+  align-items: stretch;
+  gap: 4px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-elev-2);
+  overflow: hidden;
+}
+.asst-history-item.is-active {
+  border-color: var(--pow-green);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--pow-green) 40%, transparent);
+}
+.asst-history-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  text-align: left;
+  padding: 10px 12px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+.asst-history-title {
+  font-size: 13px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.asst-history-snip {
+  font-size: 12px;
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.asst-history-when {
+  font-size: 10px;
+  color: var(--text-mute);
+  margin-top: 2px;
+}
+.asst-history-del {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  border: 0;
+  border-left: 1px solid var(--border-soft);
+  background: transparent;
+  color: var(--text-mute);
+  cursor: pointer;
+}
+.asst-history-del:hover { color: var(--danger); background: var(--danger-soft); }
+
+.asst-settings {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.asst-settings-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+.asst-settings-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+.asst-settings-h {
+  font-size: 13px;
+  margin: 4px 0 0;
+}
+.asst-settings-lead { margin-top: -8px; }
+.asst-tool-prefs {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.asst-tool-pref {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.asst-tool-pref-label {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 13px;
+  min-width: 0;
+}
+.asst-tool-pref-id {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-mute);
+}

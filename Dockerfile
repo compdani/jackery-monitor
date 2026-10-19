@@ -11,6 +11,15 @@
 #   mock       - no hardware/cloud, synthetic telemetry (UI dev)
 #   synology   - dashboard + bridge, both in containers (Linux/NAS)
 
+# ---------- Stage 1: build the SvelteKit SPA into web/next ----------
+FROM node:22-bookworm-slim AS ui-build
+WORKDIR /ui
+COPY ui/package.json ui/package-lock.json ./
+RUN npm ci
+COPY ui/ ./
+RUN npm run build
+
+# ---------- Stage 2: Python runtime ----------
 FROM python:3.11-slim
 
 ENV PYTHONUNBUFFERED=1 \
@@ -52,6 +61,8 @@ COPY *.py ./
 COPY siseli_local ./siseli_local
 COPY ecoflow_proto ./ecoflow_proto
 COPY web ./web
+# Overlay the built SvelteKit SPA (adapter-static → web/next).
+COPY --from=ui-build /web/next ./web/next
 # Static reference data shipped with the image — model_code → capacity
 # catalog (forecaster.py) and the AI advisor's allowed-tunables list
 # (claude_advisor.py). Both loaded at import time. Keep separate from

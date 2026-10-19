@@ -24,6 +24,16 @@ if [ ! -f "$VENV/.deps_installed" ] || [ requirements.txt -nt "$VENV/.deps_insta
   touch "$VENV/.deps_installed"
 fi
 
+# Build the SvelteKit SPA into web/next (served at / + /_app).
+if [ -f ui/package.json ]; then
+  if [ ! -d ui/node_modules ] || [ ui/package-lock.json -nt ui/node_modules/.package-lock.json ] 2>/dev/null; then
+    echo "[setup] Installing UI dependencies..."
+    npm ci --prefix ui
+  fi
+  echo "[setup] Building SvelteKit UI..."
+  npm run build --prefix ui
+fi
+
 PORT="${PORT:-8000}"
 URL="http://localhost:${PORT}"
 

@@ -41,6 +41,7 @@ def _cookie_secure() -> bool:
 # pages that render the login/setup forms.
 _BUILTIN_PUBLIC_PREFIXES: tuple[str, ...] = (
     "/static",
+    "/_app",  # SvelteKit hashed client bundles (web/next/_app)
     "/manifest.webmanifest",
     "/sw.js",
     "/login",
@@ -87,6 +88,12 @@ def install(app: FastAPI, web_dir: Path,
     async def _auth_middleware(request: Request, call_next):
         path = request.url.path
         if any(path == p or path.startswith(p) for p in public_prefixes):
+            return await call_next(request)
+
+        # Svelte SPA shell at "/" — must be exact-match only. A prefix of
+        # "/" would make every path public. The SPA owns its login/setup
+        # screens via /api/auth/me; every /api/* call stays gated below.
+        if path == "/":
             return await call_next(request)
 
         # 1. Valid app-session (Bearer, ?token=, or cookie) → fast path.
@@ -174,10 +181,17 @@ def install(app: FastAPI, web_dir: Path,
             raise HTTPException(500, "failed to save")
         return {"ok": True}
 
+    def _spa_or_login_html():
+        """Prefer the Svelte shell; fall back to legacy login.html."""
+        spa = web_dir / "next" / "index.html"
+        if spa.is_file():
+            return FileResponse(spa, headers={"Cache-Control": "no-cache"})
+        return FileResponse(web_dir / "login.html")
+
     @app.get("/login")
     def login_page():
-        return FileResponse(web_dir / "login.html")
+        return _spa_or_login_html()
 
     @app.get("/setup")
     def setup_page():
-        return FileResponse(web_dir / "login.html")
+        return _spa_or_login_html()
