@@ -645,7 +645,7 @@
 
       {#if !unifiedSolar && solarInputs.length >= 2}
         <div class="flow-solar-inputs">
-          {#each solarInputs as row, i (row.source || row.label || i)}
+          {#each solarInputs as row, i (`${row.id ?? row.label ?? 'solar'}-${i}`)}
             <div class="flow-solar-chip source-{row.source || 'siseli'}">
               <span class="chip-label">{row.label || 'Solar'}</span>
               <span class="chip-w">{Math.round(Number(row.watts) || 0)} W</span>

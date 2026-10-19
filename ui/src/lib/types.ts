@@ -90,7 +90,7 @@ export type Telemetry = {
   bms_source?: boolean | string | null;
   ignore_inverter_soc?: boolean | null;
   linked_ecoflow?: LinkedEcoflow[];
-  solar_inputs?: { source?: string; label?: string; watts?: number }[];
+  solar_inputs?: { id?: string; device_sn?: string; source?: string; label?: string; watts?: number }[];
   load_inputs?: { id?: string; label?: string; watts?: number }[];
   history?: (Telemetry & { ts: number })[];
   [key: string]: unknown;
