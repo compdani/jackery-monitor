@@ -44,6 +44,19 @@ READ_TOOLS = {
 ToolHandler = Callable[[str, dict[str, Any]], Awaitable[dict[str, Any]]]
 
 
+def _needs_write_approval(name: str, args: dict[str, Any] | None) -> bool:
+    """True when a tool must wait for UI Approve (unless Autopilot).
+
+    ``fit_device_param`` with ``apply=false`` is preview-only and runs
+    immediately so the model can report the fitted value in-chat.
+    """
+    if name not in WRITE_TOOLS:
+        return False
+    if name == "fit_device_param" and not bool((args or {}).get("apply")):
+        return False
+    return True
+
+
 def _resolve_key(provider: str | None = None) -> str | None:
     provider = provider or anthropic_prefs.get_provider()
     if provider == "openai":
@@ -285,10 +298,13 @@ def tool_definitions() -> list[dict[str, Any]]:
                 "Fit a learned parameter over a custom lookback and optionally "
                 "save it as a sticky user override. Use lookback_hours=24 for "
                 "'last day', 168 for a week, etc. (clamped 6…1080). "
-                "apply=true persists until the user Resets the param; "
-                "apply=false is preview only. Keys: solar_coefficient, "
-                "parasitic_w, inverter_overhead_pct, charge_efficiency, "
-                "max_charge_w. Not for battery_capacity_wh."
+                "apply=false (default) is preview-only: runs immediately and "
+                "returns the fitted value — use this to answer 'what would be "
+                "a better coefficient?' without saving. apply=true persists "
+                "until the user Resets the param and requires Approve unless "
+                "Autopilot is on. Keys: solar_coefficient, parasitic_w, "
+                "inverter_overhead_pct, charge_efficiency, max_charge_w. "
+                "Not for battery_capacity_wh."
             ),
             "input_schema": {
                 "type": "object",
@@ -534,7 +550,7 @@ async def _turn_anthropic(
         for tu in tool_uses:
             name = tu.name
             args = tu.input if isinstance(tu.input, dict) else {}
-            if name in WRITE_TOOLS and not autopilot:
+            if _needs_write_approval(name, args) and not autopilot:
                 run = store.create_tool_run(
                     conversation_id, name, args, message_id=user_message_id,
                 )
@@ -667,7 +683,7 @@ async def _turn_openai(
                 args = json.loads(tc.function.arguments or "{}")
             except Exception:
                 args = {}
-            if name in WRITE_TOOLS and not autopilot:
+            if _needs_write_approval(name, args) and not autopilot:
                 run = store.create_tool_run(
                     conversation_id, name, args, message_id=user_message_id,
                 )

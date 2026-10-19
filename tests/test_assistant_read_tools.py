@@ -177,6 +177,20 @@ async def test_fit_device_param_write_tool(helpers):
     assert out["lookback_hours"] == 24
 
 
+def test_fit_device_param_approval_gating():
+    """Preview (apply=false) runs inline; apply=true still needs Approve."""
+    import assistant_agent as agent
+    assert agent._needs_write_approval("fit_device_param", {"key": "solar_coefficient"}) is False
+    assert agent._needs_write_approval(
+        "fit_device_param", {"key": "solar_coefficient", "apply": False},
+    ) is False
+    assert agent._needs_write_approval(
+        "fit_device_param", {"key": "solar_coefficient", "apply": True},
+    ) is True
+    assert agent._needs_write_approval("set_output", {"port": "ac", "on": True}) is True
+    assert agent._needs_write_approval("get_forecast", {}) is False
+
+
 @pytest.mark.asyncio
 async def test_tool_definitions_include_new_reads():
     import assistant_agent as agent

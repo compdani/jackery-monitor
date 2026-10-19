@@ -18,6 +18,7 @@ export const WRITE_TOOL_NAMES = [
   'solar_charge_set',
   'set_output',
   'apply_suggestion',
+  'fit_device_param',
 ] as const;
 
 export type WriteToolName = (typeof WRITE_TOOL_NAMES)[number];
@@ -79,7 +80,19 @@ const DEFAULT_TOOL_PREFS: ToolPrefs = {
   solar_charge_set: 'ask',
   set_output: 'ask',
   apply_suggestion: 'ask',
+  fit_device_param: 'ask',
 };
+
+function formatApproveResult(toolName: string, result: unknown): string {
+  let body: string;
+  try {
+    body = JSON.stringify(result, null, 2);
+  } catch {
+    body = String(result);
+  }
+  if (body.length > 4000) body = `${body.slice(0, 4000)}\n…`;
+  return `Approved \`${toolName}\`:\n\`\`\`json\n${body}\n\`\`\``;
+}
 
 function readToolPrefs(): ToolPrefs {
   const raw = getJson<Partial<ToolPrefs>>(KEYS.assistantToolPrefs, {});
@@ -432,14 +445,27 @@ class AssistantStore {
 
   async approveTool(runId: string, opts?: { silent?: boolean; always?: boolean }) {
     try {
+      const tool = this.pendingTools.find((t) => t.id === runId);
       if (opts?.always) {
-        const tool = this.pendingTools.find((t) => t.id === runId);
         if (tool && WRITE_TOOL_NAMES.includes(tool.tool_name as WriteToolName)) {
           this.setToolPref(tool.tool_name as WriteToolName, 'always');
         }
       }
-      await apiPost(`/assistant/tools/${encodeURIComponent(runId)}/approve`);
+      const data = await apiPost<{ ok?: boolean; run_id?: string; result?: unknown }>(
+        `/assistant/tools/${encodeURIComponent(runId)}/approve`,
+      );
       this.pendingTools = this.pendingTools.filter((t) => t.id !== runId);
+      if (!opts?.silent && data?.result !== undefined) {
+        const name = tool?.tool_name || 'tool';
+        this.messages = [
+          ...this.messages,
+          {
+            id: `local-approve-${runId}`,
+            role: 'system',
+            content: formatApproveResult(name, data.result),
+          },
+        ];
+      }
     } catch (err) {
       if (!opts?.silent) {
         this.error = err instanceof Error ? err.message : 'Approve failed';

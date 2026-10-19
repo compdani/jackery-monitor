@@ -36,6 +36,9 @@
   let efBusy = $state<Record<string, boolean>>({});
   /** Local override while a save is in flight; null means follow server prefs. */
   let unifiedSolarOverride = $state<boolean | null>(null);
+  /** Optimistic load_sources while a prefs save is in flight. */
+  let loadSourcesOverride = $state<string[] | null>(null);
+  let loadMenuOpen = $state(false);
 
   const acCharge = createKasaPlugToggle({
     controllerName: 'smart-charge',
@@ -100,9 +103,15 @@
   const hideTemp = $derived(t?.system_soc_pct != null);
 
   const solarInputs = $derived(Array.isArray(t?.solar_inputs) ? t!.solar_inputs! : []);
+  const loadInputs = $derived(Array.isArray(t?.load_inputs) ? t!.load_inputs! : []);
   const unifiedSolar = $derived(
     unifiedSolarOverride ?? !!live.status?.device_prefs?.solar_flow_unified,
   );
+  const selectedLoadIds = $derived.by(() => {
+    const pref = loadSourcesOverride ?? live.status?.device_prefs?.load_sources;
+    if (Array.isArray(pref)) return new Set(pref.map(String));
+    return new Set(loadInputs.map((row) => String(row.id ?? '')));
+  });
   const solarW = $derived.by(() => {
     if (!unifiedSolar && solarInputs.length) {
       return Math.max(
@@ -113,7 +122,23 @@
     return Math.max(0, Math.round(Number(t?.solar_input_w ?? 0)));
   });
   const gridW = $derived(Math.max(0, Math.round(Number(t?.ac_input_w ?? 0))));
-  const loadW = $derived(Math.max(0, Math.round(Number(t?.output_power_w ?? 0))));
+  const loadW = $derived.by(() => {
+    if (loadInputs.length >= 2) {
+      return Math.max(
+        0,
+        Math.round(
+          loadInputs.reduce(
+            (sum, row) =>
+              selectedLoadIds.has(String(row.id ?? ''))
+                ? sum + Math.max(0, Number(row.watts) || 0)
+                : sum,
+            0,
+          ),
+        ),
+      );
+    }
+    return Math.max(0, Math.round(Number(t?.output_power_w ?? 0)));
+  });
   const solarLabel = $derived(
     !unifiedSolar && solarInputs.length > 1 ? `SOLAR (${solarInputs.length})` : 'SOLAR',
   );
@@ -372,6 +397,36 @@
     }
   }
 
+  async function setLoadSources(next: string[]) {
+    const deviceId = live.selectedDeviceId;
+    if (!deviceId) return;
+    const prev =
+      loadSourcesOverride ??
+      (Array.isArray(live.status?.device_prefs?.load_sources)
+        ? [...live.status!.device_prefs!.load_sources!]
+        : null);
+    loadSourcesOverride = next;
+    try {
+      await apiPost('/device_prefs', { device_id: deviceId, load_sources: next });
+      loadSourcesOverride = null;
+    } catch (err) {
+      loadSourcesOverride = prev;
+      live.showAlert(err instanceof Error ? err.message : 'Failed to save preference');
+    }
+  }
+
+  function toggleLoadMenu(e: MouseEvent) {
+    e.stopPropagation();
+    loadMenuOpen = !loadMenuOpen;
+  }
+
+  function onLoadSourceChange(id: string, checked: boolean) {
+    const next = checked
+      ? [...new Set([...selectedLoadIds, id])]
+      : [...selectedLoadIds].filter((x) => x !== id);
+    void setLoadSources(next);
+  }
+
   onMount(() => {
     applyHeroOrder(document.querySelector('.hero-grid') as HTMLElement | null);
     tempUnit = readTempUnit();
@@ -383,8 +438,16 @@
       void acCharge.refresh();
       void solarCharge.refresh();
     }, 30_000);
+    const onDocClick = (e: MouseEvent) => {
+      if (!loadMenuOpen) return;
+      if (e.target instanceof Element && e.target.closest('.flow-load-gear-wrap')) return;
+      loadMenuOpen = false;
+    };
+    document.addEventListener('click', onDocClick);
     const unsub = live.onDeviceChange(() => {
       unifiedSolarOverride = null;
+      loadSourcesOverride = null;
+      loadMenuOpen = false;
       siseliStatusText = '';
       eod = { kind: 'hidden' };
       efOverride = {};
@@ -395,6 +458,7 @@
     return () => {
       clearInterval(eodTimer);
       clearInterval(kasaTimer);
+      document.removeEventListener('click', onDocClick);
       unsub();
     };
   });
@@ -727,6 +791,40 @@
           </g>
           <text class="flow-w" x="820" y="220"><tspan>{loadW}</tspan> W</text>
         </svg>
+        {#if loadInputs.length >= 2}
+          <div class="flow-load-gear-wrap">
+            <button
+              type="button"
+              class="flow-load-gear"
+              aria-label="Choose load sources"
+              aria-expanded={loadMenuOpen}
+              aria-controls="flow-load-menu"
+              title="Load sources"
+              onclick={toggleLoadMenu}
+            >⚙</button>
+            <div
+              class="flow-load-menu"
+              id="flow-load-menu"
+              hidden={!loadMenuOpen}
+              role="group"
+              aria-label="Load sources"
+            >
+              {#each loadInputs as row, i (`${row.id ?? row.label ?? 'load'}-${i}`)}
+                {@const id = String(row.id ?? '')}
+                <label class="flow-load-option">
+                  <input
+                    type="checkbox"
+                    checked={selectedLoadIds.has(id)}
+                    onchange={(e) =>
+                      onLoadSourceChange(id, (e.currentTarget as HTMLInputElement).checked)}
+                  />
+                  <span class="opt-label">{row.label || row.id || 'Load'}</span>
+                  <span class="opt-w">{Math.round(Number(row.watts) || 0)} W</span>
+                </label>
+              {/each}
+            </div>
+          </div>
+        {/if}
       </div>
     </section>
 
