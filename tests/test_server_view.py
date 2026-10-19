@@ -678,3 +678,47 @@ def test_siseli_forecast_seed_uses_ecoflow_overlay(server_state):
     soc2, cap2 = server_state._siseli_forecast_seed("siseli:42")
     assert soc2 == 64
     assert cap2 is None
+
+
+def test_energy_db_row_to_chart_point_preserves_null_soc(server_state):
+    """Disconnect / missing SOC must chart as null, not a false 0% spike."""
+    pt = server_state._energy_db_row_to_chart_point({
+        "ts": 1700000000,
+        "system_soc": None,
+        "battery_pct": None,
+        "input_w": 0,
+        "output_w": 50,
+    })
+    assert pt["battery_percent"] is None
+    assert pt["output_power_w"] == 50
+
+    pt2 = server_state._energy_db_row_to_chart_point({
+        "ts": 1700000060,
+        "system_soc": None,
+        "battery_pct": 61,
+        "input_w": 0,
+        "output_w": 40,
+    })
+    assert pt2["battery_percent"] == 61.0
+
+
+def test_record_siseli_energy_passes_none_soc_on_disconnect(server_state):
+    """Bluetooth disconnect blanks battery_percent → energy.record gets None."""
+    recorded = []
+
+    def fake_record(sn, ts, input_w, output_w, battery_pct=None, **kwargs):
+        recorded.append(battery_pct)
+
+    server_state.state.energy.record = fake_record
+    server_state._record_siseli_energy(
+        "siseli:99", "House",
+        {
+            "battery_percent": None,
+            "input_power_w": 0,
+            "output_power_w": 10,
+            "solar_input_w": 0,
+            "ac_input_w": 0,
+        },
+        1700000100,
+    )
+    assert recorded == [None]

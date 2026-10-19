@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import time
 
+import pytest
+
 import forecaster
 
 
@@ -733,7 +735,7 @@ def test_build_forecast_glues_pieces_together():
     now = int(time.time())
     weather = []
     energy = []
-    for i in range(-14 * 24, 24 * 5):  # past 14 days through next 5 days, hourly
+    for i in range(-14 * 24, 24 * 7):  # past 14 days through next 7 days, hourly
         ts = now + i * 3600  # interval start (telemetry)
         # 8am-4pm peaks at 800 W/m², zero at night
         hour_of_day = (ts // 3600) % 24
@@ -781,7 +783,7 @@ def _ready_history_and_weather(now: int):
     """
     weather = []
     energy = []
-    for i in range(-14 * 24, 24 * 5):
+    for i in range(-14 * 24, 24 * 7):
         ts = now + i * 3600  # interval start
         hour_of_day = (ts // 3600) % 24
         ghi = 800 if 8 <= hour_of_day <= 16 else 0
@@ -2265,3 +2267,139 @@ def test_row_soc_telemetry_distinguishes_system_soc_from_battery_pct():
     assert stats["last_fit_caller"] == "fit_drain_model"
     assert win["battery_pct_fallbacks"] > 0, win
     assert win["system_soc_hits"] == 0, win
+
+
+def test_summarize_forecast_days_start_end_and_surplus():
+    # Midnight-aligned so interval-start dating keeps three hours on day 0.
+    base = (1_700_000_000 // 86400) * 86400
+    # Two local days of hours (utc_offset 0): day0 three hours, day1 two.
+    # `ts` is interval end; duration_h marks Open-Meteo semantics.
+    hours = [
+        {"ts": base + 3600, "duration_h": 1.0, "solar_w": 1000, "load_w": 200,
+         "predicted_soc": 70},
+        {"ts": base + 7200, "duration_h": 1.0, "solar_w": 1500, "load_w": 1751,
+         "predicted_soc": 40},
+        {"ts": base + 10800, "duration_h": 1.0, "solar_w": 800, "load_w": 0,
+         "predicted_soc": 55},
+        {"ts": base + 86400 + 3600, "duration_h": 1.0, "solar_w": 900,
+         "load_w": 0, "predicted_soc": 60},
+        {"ts": base + 86400 + 7200, "duration_h": 1.0, "solar_w": 1100,
+         "load_w": 0, "predicted_soc": 65},
+    ]
+    days = forecaster.summarize_forecast_days(
+        hours, starting_soc_pct=80.0, utc_offset_seconds=0)
+    assert len(days) >= 2
+    d0 = days[0]
+    assert d0["start_soc"] == 80.0
+    assert d0["end_soc"] == 55.0
+    assert d0["min_soc"] == 40.0
+    assert d0["solar_wh"] == pytest.approx(3300.0)
+    assert d0["load_wh"] == pytest.approx(1951.0)
+    assert d0["surplus_wh"] == pytest.approx(3300.0 - 1951.0)
+    assert d0["peak_solar_w"] == 1500.0
+    # Day 1 inherits prior end as start.
+    assert days[1]["start_soc"] == 55.0
+    assert days[1]["end_soc"] == 65.0
+
+
+def test_summarize_ev_divert_counts_sessions():
+    base = 1_700_050_000
+    # Two contiguous surplus hours, a gap, then one more → 2 sessions.
+    hours = [
+        {"ts": base + 3600, "duration_h": 1.0, "solar_w": 2000, "load_w": 100,
+         "predicted_soc": 70},
+        {"ts": base + 7200, "duration_h": 1.0, "solar_w": 2000, "load_w": 100,
+         "predicted_soc": 75},
+        {"ts": base + 10800, "duration_h": 1.0, "solar_w": 500, "load_w": 100,
+         "predicted_soc": 78},
+        {"ts": base + 14400, "duration_h": 1.0, "solar_w": 2000, "load_w": 100,
+         "predicted_soc": 80},
+    ]
+    out = forecaster.summarize_ev_divert(
+        hours, car_load_w=1751, comfort_floor_pct=20.0)
+    assert out["total_sessions"] == 2
+    assert out["total_hours"] == pytest.approx(3.0)
+    assert out["divertable_wh"] == pytest.approx(1751 * 3)
+    assert sum(d["sessions"] for d in out["days"]) == 2
+
+
+def test_solar_calibration_stats_ratio_near_one_when_k_matches():
+    base = 1_700_000_000
+    weather = [
+        {"ts": base + i * 3600 + 3600, "ghi_w_m2": 800, "cloud_cover_pct": 0}
+        for i in range(10)
+    ]
+    energy = [
+        {"ts": base + i * 3600, "solar_w": 400, "battery_pct": 50, "ac_input_w": 0}
+        for i in range(10)
+    ]
+    # True k = 400/800 = 0.5
+    stats = forecaster.solar_calibration_stats(energy, weather, k=0.5)
+    assert stats["n"] >= forecaster.MIN_FIT_SAMPLES
+    assert abs(stats["actual_over_predicted"] - 1.0) < 0.05
+    assert abs(stats["suggested_k"] - 0.5) < 0.05
+
+
+def test_build_forecast_default_horizon_covers_week_and_daily():
+    now = int(time.time())
+    energy, weather = _ready_history_and_weather(now)
+    res = forecaster.build_forecast(
+        energy_history=energy,
+        weather_hourly=weather,
+        starting_soc_pct=70.0,
+        capacity_wh=5040,
+        now_ts=now,
+    )
+    assert res.get("ready") is True
+    # Default horizon is 168h (~7d); allow partial first hour.
+    assert len(res["forecast"]) >= 160
+    assert res.get("daily")
+    assert len(res["daily"]) >= 6
+    assert "solar_calibration" in res
+    cal = res["solar_calibration"]
+    assert cal.get("n", 0) >= 0
+
+
+def test_scheduled_monday_only_load_leaves_later_days_flat_overnight():
+    """Calendar mode: uncovered hours are 0 W, so SOC holds overnight
+    after the single scheduled pulse once solar has topped the ceiling."""
+    now = int(time.time())
+    # Align "now" to local Monday 08:00 for a stable window.
+    # Use utc_offset 0 and pick a Monday epoch.
+    from datetime import datetime, timezone
+    monday = int(datetime(2024, 7, 1, 8, 0, tzinfo=timezone.utc).timestamp())
+    # 2024-07-01 was a Monday.
+    energy, weather = _ready_history_and_weather(monday)
+    windows = [{
+        "id": "ev1",
+        "label": "EV",
+        "kind": "once",
+        "date": "2024-07-01",
+        "start": "11:00",
+        "end": "15:00",
+        "watts": 1751,
+        "weekdays": None,
+    }]
+    res = forecaster.build_forecast(
+        energy_history=energy,
+        weather_hourly=weather,
+        starting_soc_pct=80.0,
+        capacity_wh=30000,
+        now_ts=monday,
+        horizon_hours=96,
+        load_mode="scheduled",
+        load_windows=windows,
+        sleep_start="00:00",
+        sleep_end="06:00",
+        utc_offset_seconds=0,
+    )
+    assert res.get("ready") is True
+    # Find a night hour on day 2+ with no scheduled load → load_w ~ 0
+    # and SOC should not drain overnight.
+    night = [
+        h for h in res["forecast"]
+        if h["ts"] >= monday + 36 * 3600
+        and ((h["ts"] - 3600) % 86400) // 3600 in (1, 2, 3)
+    ]
+    assert night, "expected overnight hours after Monday"
+    assert all(float(h.get("load_w") or 0) == 0 for h in night[:3])

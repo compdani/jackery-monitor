@@ -7687,14 +7687,19 @@ async function fetchForecast() {
     const sub = $('forecast-coeff-sub');
     if (sub) {
       const minFit = 2;
+      let text;
       if (j.solar_coefficient === 0) {
-        sub.textContent = 'no solar production detected on this device';
+        text = 'no solar production detected on this device';
       } else if (j.fit_samples >= minFit) {
-        sub.textContent = `learned from ${j.fit_samples} hourly samples`;
+        text = `learned from ${j.fit_samples} hourly samples`;
       } else {
         const need = Math.max(1, minFit - j.fit_samples);
-        sub.textContent = `default — need ${need} more daylight hours of data to fit`;
+        text = `default — need ${need} more daylight hours of data to fit`;
       }
+      if (j.charge_ceiling_pct != null && Number.isFinite(Number(j.charge_ceiling_pct))) {
+        text += ` · charge ceiling ${Math.round(Number(j.charge_ceiling_pct))}%`;
+      }
+      sub.textContent = text;
     }
     drawForecastChart(j);
     // Per-day strip above the chart — 5 compact tiles, one per day
@@ -8161,9 +8166,9 @@ function renderForecastDayStrip(j) {
     if (todayActualWh > 0) days[0].solarWh += todayActualWh;
   }
 
-  // Cap to the visible 5-day window. The forecaster returns ~5d so
+  // Cap to the visible 7-day window. The forecaster returns ~7d so
   // this is usually a no-op; defensive against backend changes.
-  const visible = days.slice(0, 5);
+  const visible = days.slice(0, 7);
   if (!visible.length) {
     strip.innerHTML = '';
     strip.hidden = true;

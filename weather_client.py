@@ -38,7 +38,7 @@ REVERSE_GEOCODE_URL = (
 )
 CACHE_TTL_S = 3600  # 1 hour
 DEFAULT_PAST_DAYS = 14
-DEFAULT_FORECAST_DAYS = 5
+DEFAULT_FORECAST_DAYS = 7
 
 _cache: dict[str, tuple[float, dict]] = {}  # key -> (expires_at, data)
 _cache_lock = threading.Lock()

@@ -71,7 +71,17 @@ def tool_definitions() -> list[dict[str, Any]]:
         },
         {
             "name": "get_forecast",
-            "description": "Read-only SOC/solar/load forecast summary for the active device.",
+            "description": (
+                "Read-only SOC/solar/load forecast for the active device "
+                "(~7 days). Prefer `daily` rollups (solar_wh, load_wh, "
+                "surplus_wh, start/end/min SOC) and `ev_divert` (surplus "
+                "hours/sessions that can support car_load_w) for week-ahead "
+                "EV charging advice. Use `load_schedule` for already-planned "
+                "windows. `forecast_sample` is a thinned hourly curve. "
+                "`charge_ceiling_pct` is the learned multi-pack SOC plateau; "
+                "`solar_calibration.actual_over_predicted` diagnoses whether "
+                "the solar coefficient over/under-predicts on clear-sky hours."
+            ),
             "input_schema": {"type": "object", "properties": {
                 "device_sn": {"type": "string"},
             }},

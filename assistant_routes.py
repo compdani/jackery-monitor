@@ -10,6 +10,7 @@ from fastapi.responses import FileResponse
 
 import assistant_agent as agent
 import assistant_store as store
+import forecaster
 import load_schedule
 import smart_charge
 import solar_charge
@@ -173,15 +174,47 @@ async def _handle_tool(name: str, args: dict[str, Any]) -> dict[str, Any]:
     if name == "get_forecast":
         fc = await h.get_forecast(sn)
         if isinstance(fc, dict):
-            # Trim points for context size
-            pts = (fc.get("forecast") or [])[:48]
+            hours = list(fc.get("forecast") or [])
+            # Prefer backend daily rollups; recompute if an older payload
+            # lacks them so week-ahead EV advice still works.
+            daily = fc.get("daily")
+            if not daily and hours:
+                daily = forecaster.summarize_forecast_days(
+                    hours,
+                    starting_soc_pct=fc.get("starting_soc_pct"),
+                )
+            car_w = None
+            try:
+                car_w = float(
+                    (solar_charge.get_config(sn) or {}).get("car_load_w") or 0)
+            except (TypeError, ValueError):
+                car_w = 0.0
+            floor = 20.0
+            try:
+                thr = fc.get("low_battery_threshold")
+                if thr is not None:
+                    floor = float(thr)
+            except (TypeError, ValueError):
+                pass
+            ev = forecaster.summarize_ev_divert(
+                hours, car_w or 0.0, comfort_floor_pct=floor)
+            # Thin hourly sample (~every 3h) for nuance without blowing
+            # the context window; prefer daily + ev_divert for planning.
+            sample = hours[::3] if hours else []
+            if hours and hours[-1] not in sample:
+                sample = list(sample) + [hours[-1]]
             return {
                 "ready": fc.get("ready"),
                 "solar_coefficient": fc.get("solar_coefficient"),
+                "solar_calibration": fc.get("solar_calibration"),
+                "charge_ceiling_pct": fc.get("charge_ceiling_pct"),
                 "capacity_wh": fc.get("capacity_wh"),
                 "load_mode": fc.get("load_mode"),
                 "overall_load_w": fc.get("overall_load_w"),
-                "forecast_sample": pts,
+                "starting_soc_pct": fc.get("starting_soc_pct"),
+                "daily": daily,
+                "ev_divert": ev,
+                "forecast_sample": sample,
                 "load_schedule": fc.get("load_schedule"),
             }
         return {"error": "no forecast"}

@@ -2792,14 +2792,17 @@ footer {
 .forecast-current-loc .loc-coords { font-variant-numeric: tabular-nums; }
 
 /* Per-day strip — five compact tiles above the forecast chart, one
-   per day in the ~5-day forecast window. Headline numbers only:
+   per day in the ~7-day forecast window. Headline numbers only:
    start→end SOC and total solar kWh, with a warning marker if SOC
    bottoms at 0 during the day. Wraps on narrow viewports. */
 .forecast-day-strip {
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(7, minmax(0, 1fr));
   gap: 8px;
   margin: 0 0 14px 0;
+}
+@media (max-width: 1100px) {
+  .forecast-day-strip { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 }
 @media (max-width: 900px) {
   .forecast-day-strip { grid-template-columns: repeat(3, minmax(0, 1fr)); }

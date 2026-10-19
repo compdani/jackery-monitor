@@ -1894,7 +1894,7 @@ def build_forecast(
     starting_soc_pct: float,
     capacity_wh: int,
     now_ts: float | None = None,
-    horizon_hours: int = 120,
+    horizon_hours: int = 168,
     *,
     ac_charge_floor_pct: float | None = None,
     extra_load_w: float | None = None,
@@ -2166,5 +2166,297 @@ def build_forecast(
         "charge_efficiency": round(charge_eff, 3),
         "charge_efficiency_n_windows": charge_eff_n,
         "charge_efficiency_source": charge_eff_source,
+        # Clear-sky actual÷(k·GHI) ratio for coefficient diagnostics.
+        # ~1.0 = well calibrated; <1 means k overpredicts; >1 underpredicts.
+        "solar_calibration": solar_calibration_stats(
+            energy_history, weather_hourly, k),
         "forecast": simulated,
+        "daily": summarize_forecast_days(
+            simulated,
+            starting_soc_pct=starting_soc_pct,
+            utc_offset_seconds=utc_offset_seconds,
+        ),
+    }
+
+
+def solar_calibration_stats(
+    energy_history: list[dict[str, Any]],
+    weather_hourly: list[dict[str, Any]],
+    k: float,
+) -> dict[str, Any]:
+    """Compare actual solar to ``k * GHI`` on clear-sky / headroom hours.
+
+    Returns ``actual_over_predicted`` (mean actual÷predicted), sample
+    count, and a proportional ``suggested_k`` when enough pairs exist.
+    Prefer headroom pairs (SOC headroom, no AC), then clear-sky, then
+    broad daylight — same ordering as ``fit_solar_coefficient``.
+    """
+    empty = {
+        "actual_over_predicted": None,
+        "n": 0,
+        "pool": None,
+        "suggested_k": None,
+    }
+    if k is None or float(k) <= 0:
+        return empty
+
+    by_hour_solar: dict[int, float] = {}
+    by_hour_soc_min: dict[int, float] = {}
+    by_hour_has_ac: dict[int, bool] = {}
+    for row in energy_history:
+        ts = int(row.get("ts") or 0)
+        sol = float(row.get("solar_w") or 0)
+        if ts <= 0:
+            continue
+        h = (ts // 3600) * 3600
+        prev = by_hour_solar.get(h, 0.0)
+        if sol > prev:
+            by_hour_solar[h] = sol
+        soc = _row_soc(row)
+        if soc is not None:
+            prev_soc = by_hour_soc_min.get(h)
+            if prev_soc is None or soc < prev_soc:
+                by_hour_soc_min[h] = soc
+        if float(row.get("ac_input_w") or 0) > SOLAR_FIT_MAX_AC_INPUT_W:
+            by_hour_has_ac[h] = True
+
+    headroom_ratios: list[float] = []
+    clear_ratios: list[float] = []
+    broad_ratios: list[float] = []
+    for w in weather_hourly:
+        h = (int(w.get("ts") or 0) // 3600) * 3600 - 3600
+        ghi = float(w.get("ghi_w_m2") or 0)
+        if ghi <= 50:
+            continue
+        sol = by_hour_solar.get(h)
+        if sol is None or sol <= 0:
+            continue
+        predicted = float(k) * ghi
+        if predicted <= 0:
+            continue
+        ratio = sol / predicted
+        broad_ratios.append(ratio)
+        cloud = float(w.get("cloud_cover_pct") or 0)
+        is_clear = (ghi >= CLEAR_SKY_GHI_THRESHOLD
+                    and cloud <= CLEAR_SKY_MAX_CLOUD_PCT)
+        if is_clear:
+            clear_ratios.append(ratio)
+            soc_at_h = by_hour_soc_min.get(h)
+            has_ac = by_hour_has_ac.get(h, False)
+            if (soc_at_h is not None
+                    and soc_at_h <= SOLAR_FIT_MAX_SOC_PCT
+                    and not has_ac):
+                headroom_ratios.append(ratio)
+
+    if len(headroom_ratios) >= MIN_FIT_SAMPLES:
+        ratios, pool = headroom_ratios, "headroom"
+    elif len(clear_ratios) >= MIN_FIT_SAMPLES:
+        ratios, pool = clear_ratios, "clear_sky"
+    elif len(broad_ratios) >= MIN_FIT_SAMPLES:
+        ratios, pool = broad_ratios, "broad"
+    else:
+        return empty
+
+    mean_ratio = sum(ratios) / len(ratios)
+    suggested = float(k) * mean_ratio
+    if suggested < 0.05 or suggested > 15.0:
+        suggested_out = None
+    else:
+        suggested_out = round(suggested, 4)
+    return {
+        "actual_over_predicted": round(mean_ratio, 4),
+        "n": len(ratios),
+        "pool": pool,
+        "suggested_k": suggested_out,
+    }
+
+
+def summarize_forecast_days(
+    forecast_hours: list[dict[str, Any]],
+    *,
+    starting_soc_pct: float | None = None,
+    utc_offset_seconds: int = 0,
+) -> list[dict[str, Any]]:
+    """Roll hourly forecast points into per-local-day summaries.
+
+    Each entry: date, solar_wh, load_wh, surplus_wh, min/start/end SOC,
+    peak_solar_w. Day 0 starts at ``starting_soc_pct`` when provided;
+    later days inherit the previous day's end SOC.
+    """
+    if not forecast_hours:
+        return []
+
+    days: list[dict[str, Any]] = []
+    current: dict[str, Any] | None = None
+    prev_end = (float(starting_soc_pct)
+                if starting_soc_pct is not None else None)
+
+    for h in forecast_hours:
+        ts = int(h.get("ts") or 0)
+        if ts <= 0:
+            continue
+        # Prefer interval start for local dating when duration_h is set
+        # (ts is interval end); fall back to ts for legacy rows.
+        interval_start = ts - 3600 if h.get("duration_h") is not None else ts
+        local = interval_start + int(utc_offset_seconds)
+        day_key = local // 86400
+        y = time.gmtime(day_key * 86400)
+        date_str = f"{y.tm_year:04d}-{y.tm_mon:02d}-{y.tm_mday:02d}"
+
+        if current is None or current["day_key"] != day_key:
+            if current is not None:
+                days.append(_finalize_day_summary(current))
+                prev_end = current["end_soc"]
+            start = prev_end
+            current = {
+                "day_key": day_key,
+                "date": date_str,
+                "solar_wh": 0.0,
+                "load_wh": 0.0,
+                "min_soc": None,
+                "start_soc": start,
+                "end_soc": start,
+                "peak_solar_w": 0.0,
+            }
+
+        duration_h = max(0.0, min(1.0, float(h.get("duration_h", 1.0))))
+        solar_w = float(h.get("solar_w") or 0)
+        load_w = float(h.get("load_w") or 0)
+        current["solar_wh"] += solar_w * duration_h
+        current["load_wh"] += load_w * duration_h
+        if solar_w > current["peak_solar_w"]:
+            current["peak_solar_w"] = solar_w
+        soc = h.get("predicted_soc")
+        if soc is None:
+            soc = h.get("soc_pct")
+        if soc is not None:
+            s = float(soc)
+            if current["min_soc"] is None or s < current["min_soc"]:
+                current["min_soc"] = s
+            current["end_soc"] = s
+            if current["start_soc"] is None:
+                current["start_soc"] = s
+
+    if current is not None:
+        days.append(_finalize_day_summary(current))
+    return days
+
+
+def _finalize_day_summary(day: dict[str, Any]) -> dict[str, Any]:
+    solar = float(day["solar_wh"])
+    load = float(day["load_wh"])
+    return {
+        "date": day["date"],
+        "solar_wh": round(solar, 1),
+        "load_wh": round(load, 1),
+        "surplus_wh": round(solar - load, 1),
+        "min_soc": (round(day["min_soc"], 1)
+                    if day["min_soc"] is not None else None),
+        "start_soc": (round(day["start_soc"], 1)
+                      if day["start_soc"] is not None else None),
+        "end_soc": (round(day["end_soc"], 1)
+                    if day["end_soc"] is not None else None),
+        "peak_solar_w": round(float(day["peak_solar_w"]), 1),
+    }
+
+
+def summarize_ev_divert(
+    forecast_hours: list[dict[str, Any]],
+    car_load_w: float,
+    *,
+    comfort_floor_pct: float = 20.0,
+    utc_offset_seconds: int = 0,
+) -> dict[str, Any]:
+    """Estimate solar-surplus hours that can support EV divert at ``car_load_w``.
+
+    An hour qualifies when ``solar_w - load_w >= car_load_w`` and the
+    predicted SOC stays above ``comfort_floor_pct``. Contiguous qualifying
+    hours form one session. Per-day rollups help count how many charging
+    windows fit the coming week.
+    """
+    car = max(0.0, float(car_load_w or 0))
+    floor = float(comfort_floor_pct)
+    if car <= 0 or not forecast_hours:
+        return {
+            "car_load_w": car,
+            "comfort_floor_pct": floor,
+            "total_hours": 0,
+            "total_sessions": 0,
+            "divertable_wh": 0.0,
+            "days": [],
+        }
+
+    # Mark qualifying hours, then group into sessions / days.
+    flagged: list[dict[str, Any]] = []
+    for h in forecast_hours:
+        ts = int(h.get("ts") or 0)
+        if ts <= 0:
+            continue
+        solar_w = float(h.get("solar_w") or 0)
+        load_w = float(h.get("load_w") or 0)
+        surplus = solar_w - load_w
+        soc = h.get("predicted_soc")
+        if soc is None:
+            soc = h.get("soc_pct")
+        soc_ok = soc is None or float(soc) >= floor
+        ok = surplus >= car and soc_ok
+        duration_h = max(0.0, min(1.0, float(h.get("duration_h", 1.0))))
+        interval_start = ts - 3600 if h.get("duration_h") is not None else ts
+        local = interval_start + int(utc_offset_seconds)
+        day_key = local // 86400
+        flagged.append({
+            "ts": ts,
+            "day_key": day_key,
+            "ok": ok,
+            "surplus_w": surplus,
+            "duration_h": duration_h,
+        })
+
+    days_map: dict[int, dict[str, Any]] = {}
+    in_session = False
+    total_sessions = 0
+    total_hours = 0.0
+    divertable_wh = 0.0
+
+    for row in flagged:
+        day_key = row["day_key"]
+        if day_key not in days_map:
+            y = time.gmtime(day_key * 86400)
+            days_map[day_key] = {
+                "date": f"{y.tm_year:04d}-{y.tm_mon:02d}-{y.tm_mday:02d}",
+                "hours": 0.0,
+                "sessions": 0,
+                "divertable_wh": 0.0,
+            }
+        day = days_map[day_key]
+        if row["ok"]:
+            if not in_session:
+                in_session = True
+                total_sessions += 1
+                day["sessions"] += 1
+            total_hours += row["duration_h"]
+            day["hours"] += row["duration_h"]
+            wh = car * row["duration_h"]
+            divertable_wh += wh
+            day["divertable_wh"] += wh
+        else:
+            in_session = False
+
+    days_out = []
+    for key in sorted(days_map):
+        d = days_map[key]
+        days_out.append({
+            "date": d["date"],
+            "hours": round(d["hours"], 2),
+            "sessions": d["sessions"],
+            "divertable_wh": round(d["divertable_wh"], 1),
+        })
+
+    return {
+        "car_load_w": round(car, 1),
+        "comfort_floor_pct": floor,
+        "total_hours": round(total_hours, 2),
+        "total_sessions": total_sessions,
+        "divertable_wh": round(divertable_wh, 1),
+        "days": days_out,
     }

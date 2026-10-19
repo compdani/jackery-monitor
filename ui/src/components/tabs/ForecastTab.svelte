@@ -934,7 +934,7 @@
     <div id="solar-array-body" class="solar-array-body">
       <p class="hint" style="margin:0 0 12px">
         Public estimate covers today + 1 day (12 calls/hour). A personal API key extends the horizon.
-        Remaining hours of the 5-day chart still use Open-Meteo × learned k.
+        Remaining hours of the 7-day chart still use Open-Meteo × learned k.
         Infer from history guesses tilt, azimuth, and kWp from your last 14 days of solar vs GHI — check the numbers before saving.
       </p>
       <div class="settings-row">

@@ -546,11 +546,12 @@ async def poll_loop() -> None:
                     # method vs. the configured car_load_w.
                     diverted_w = _solar_charge_current_diverted_w(
                         sn, current_output_w=float(t.get("output_power_w") or 0))
+                    _bp = t.get("battery_percent")
                     state.energy.record(
                         sn, ts,
                         float(t.get("input_power_w") or 0),
                         float(t.get("output_power_w") or 0),
-                        int(t.get("battery_percent") or 0),
+                        int(_bp) if _bp is not None else None,
                         solar_w=float(t.get("solar_input_w") or 0),
                         ac_input_w=float(t.get("ac_input_w") or 0),
                         solar_charge_diverted_w=diverted_w,
@@ -1109,7 +1110,9 @@ def _record_siseli_energy(
     elif bat is not None:
         bat = int(bat)
     else:
-        bat = 0
+        # Missing SOC (Bluetooth disconnect, portal blank) must stay NULL
+        # so charts gap instead of plotting a false 0% spike.
+        bat = None
     state.energy.record(
         sn, ts,
         float(rec.get("input_power_w") or 0),
@@ -1978,10 +1981,10 @@ def _energy_db_row_to_chart_point(p: dict) -> dict:
     the same combined % as the Live headline, not the main unit alone."""
     soc = p.get("system_soc")
     if soc is None:
-        soc = p.get("battery_pct") or 0
+        soc = p.get("battery_pct")
     return {
         "ts": p["ts"],
-        "battery_percent": round(float(soc), 1),
+        "battery_percent": (round(float(soc), 1) if soc is not None else None),
         "input_power_w": p["input_w"] or 0,
         "output_power_w": p["output_w"] or 0,
     }
@@ -4780,7 +4783,7 @@ async def _build_and_record_forecast(device_sn: str | None) -> dict:
 
 @app.get("/api/forecast")
 async def api_forecast(device_sn: str | None = None, _diag: int = 0):
-    """SOC forecast for the next ~5 days based on weather + per-device history.
+    """SOC forecast for the next ~7 days based on weather + per-device history.
 
     Returns the simulated SOC curve plus the fitted model coefficients so the
     UI can show how confident the prediction is.
