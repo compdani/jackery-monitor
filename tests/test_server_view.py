@@ -672,12 +672,24 @@ def test_siseli_forecast_seed_uses_ecoflow_overlay(server_state):
     soc, cap = server_state._siseli_forecast_seed("siseli:42")
     assert soc == 80
     assert cap == 2048
+    assert server_state._has_ecoflow_battery_link("siseli:42") is True
+    assert server_state._ecoflow_battery_capacity_wh("siseli:42") == 2048
+    # Registry-hardened total always includes EcoFlow Wh.
+    total = server_state._total_capacity_wh("siseli:42", model_code=None)
+    assert total >= 2048
+
+    # Stale EcoFlow still contributes capacity via overlay + registry.
+    server_state.state.ecoflow["telemetry_by_sn"]["ecoflow:R351TEST"]["ts"] = now - 500
+    soc_stale, cap_stale = server_state._siseli_forecast_seed("siseli:42")
+    assert soc_stale == 64  # Siseli SOC kept when EcoFlow is stale
+    assert cap_stale == 2048
 
     # Without EcoFlow, seed still returns Siseli SOC (not Jackery's 50%).
     server_state.state.ecoflow_reg.delete("ecoflow:R351TEST")
     soc2, cap2 = server_state._siseli_forecast_seed("siseli:42")
     assert soc2 == 64
     assert cap2 is None
+    assert server_state._has_ecoflow_battery_link("siseli:42") is False
 
 
 def test_energy_db_row_to_chart_point_preserves_null_soc(server_state):

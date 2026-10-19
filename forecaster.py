@@ -1907,6 +1907,7 @@ def build_forecast(
     load_windows: list[dict[str, Any]] | None = None,
     sleep_start: str | None = None,
     sleep_end: str | None = None,
+    apply_charge_ceiling: bool = True,
 ) -> dict[str, Any]:
     """Glue: fit models + simulate. Returns a UI-ready dict.
 
@@ -1925,6 +1926,10 @@ def build_forecast(
     of the learned demand profile using the controller's plug-state log
     (see `fit_load_profile._net_load_w`). Without it, past car charging
     is mis-learned as household demand and the forecast drains to 0%.
+
+    `apply_charge_ceiling`: when False, skip ``fit_charge_ceiling`` and
+    do not clamp simulated SOC. Use for Siseli+EcoFlow banks where the
+    Jackery multi-pack BMS plateau model does not apply.
     """
     readiness = forecast_readiness(energy_history, capacity_wh)
     if not readiness["ready"]:
@@ -2000,9 +2005,12 @@ def build_forecast(
     # system SOC on SURPLUS days (solar exceeded load by >5% of capacity
     # — spare energy that could have charged higher); caps the simulator
     # so multi-pack rigs that plateau ~78% don't run up to 100% on long-
-    # lead net-positive days.
-    soc_ceiling = fit_charge_ceiling(energy_history, capacity_wh,
-                                     utc_offset_seconds=utc_offset_seconds)
+    # lead net-positive days. Callers can disable for Siseli+EcoFlow.
+    soc_ceiling = None
+    if apply_charge_ceiling:
+        soc_ceiling = fit_charge_ceiling(
+            energy_history, capacity_wh,
+            utc_offset_seconds=utc_offset_seconds)
 
     # Hourly weather rows describe (ts-3600, ts]. Include the current
     # partial hour and only charge/drain for the time still ahead.

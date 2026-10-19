@@ -831,6 +831,36 @@ def _system_soc_pct(main_pct: float, device_sn: str | None,
     return max(0.0, min(100.0, stored / total_wh * 100.0))
 
 
+def _ecoflow_battery_capacity_wh(device_sn: str | None) -> int:
+    """Sum of linked EcoFlow battery-role capacity_wh for a Siseli SN.
+
+    Always counted from the registry (online or offline). Non-Siseli /
+    unlinked devices return 0.
+    """
+    if not device_sn or not siseli_client.is_siseli_sn(device_sn):
+        return 0
+    total = 0
+    try:
+        for d in state.ecoflow_reg.list_devices(device_sn):
+            roles = set(d.get("roles") or ecoflow_devices.ALL_ROLES)
+            if "battery" not in roles:
+                continue
+            try:
+                wh = float(d.get("capacity_wh") or 0)
+            except (TypeError, ValueError):
+                wh = 0.0
+            if wh > 0:
+                total += int(wh)
+    except Exception:
+        return 0
+    return total
+
+
+def _has_ecoflow_battery_link(device_sn: str | None) -> bool:
+    """True when a Siseli device has at least one EcoFlow battery-role link."""
+    return _ecoflow_battery_capacity_wh(device_sn) > 0
+
+
 def _total_capacity_wh(device_sn: str | None,
                        model_code: int | None = None) -> int:
     """Total system capacity for a device, including expansion packs.
@@ -842,6 +872,9 @@ def _total_capacity_wh(device_sn: str | None,
          hands-off path; users with packs no longer have to set the
          override explicitly.
       3. Spec capacity for the model (no expansion packs assumed).
+
+    For Siseli SNs, linked EcoFlow battery-role capacity is always added
+    (whether the EcoFlow unit is currently online or not).
     """
     if device_sn:
         override = state.energy.get_capacity_override(device_sn)
@@ -851,8 +884,10 @@ def _total_capacity_wh(device_sn: str | None,
     packs = state.battery_packs_by_sn.get(device_sn or "", []) if device_sn else []
     if packs:
         pack_wh = forecaster.expansion_pack_capacity_wh(model_code)
-        return main_wh + len(packs) * pack_wh
-    return main_wh
+        base = main_wh + len(packs) * pack_wh
+    else:
+        base = main_wh
+    return base + _ecoflow_battery_capacity_wh(device_sn)
 
 
 def _pack_count_for(device_sn: str | None) -> int:
@@ -2894,9 +2929,16 @@ async def _smart_charge_evaluate(record: bool = True,
         main_capacity_wh=main_wh, pack_capacity_wh=pack_wh,
     )
     capacity = _total_capacity_wh(device_sn, model_code)
+    if siseli_client.is_siseli_sn(device_sn):
+        seed_soc, seed_cap = _siseli_forecast_seed(device_sn)
+        if seed_soc is not None:
+            starting_soc = float(seed_soc)
+        if seed_cap is not None and not state.energy.get_capacity_override(device_sn):
+            capacity = max(int(seed_cap), int(capacity))
     pack_count = _pack_count_for(device_sn)
     tz_off = int(weather.get("utc_offset_seconds") or device_location.get_tz_offset() or 0)
     car_load_w = _car_load_w(device_sn)
+    apply_ceiling = not _has_ecoflow_battery_link(device_sn)
     fcast = forecaster.build_forecast(
         energy_history=energy_hist,
         weather_hourly=weather["hourly"],
@@ -2906,6 +2948,7 @@ async def _smart_charge_evaluate(record: bool = True,
         car_load_w=car_load_w,
         pack_count=pack_count,
         utc_offset_seconds=tz_off,
+        apply_charge_ceiling=apply_ceiling,
     )
     # Counterfactual — same forecast computed without the AC charge
     # floor injected. Used by compute_plan to decide if AC is actually
@@ -2920,6 +2963,7 @@ async def _smart_charge_evaluate(record: bool = True,
         car_load_w=car_load_w,
         pack_count=pack_count,
         utc_offset_seconds=tz_off,
+        apply_charge_ceiling=apply_ceiling,
     )
     # If we don't have enough history yet to fit a trustworthy forecast,
     # don't act on it — return a no-op plan so the controller stays in
@@ -3526,6 +3570,13 @@ async def _solar_charge_evaluate(record: bool = True,
                     main_capacity_wh=main_wh, pack_capacity_wh=pack_wh,
                 )
                 capacity = _total_capacity_wh(device_sn, model_code)
+                if siseli_client.is_siseli_sn(device_sn):
+                    seed_soc, seed_cap = _siseli_forecast_seed(device_sn)
+                    if seed_soc is not None:
+                        starting_soc = float(seed_soc)
+                    if (seed_cap is not None
+                            and not state.energy.get_capacity_override(device_sn)):
+                        capacity = max(int(seed_cap), int(capacity))
 
                 # Two forecasts: BASELINE (controller off, natural drain)
                 # vs WITH-DIVERSION (controller keeps the car charging until
@@ -3536,6 +3587,7 @@ async def _solar_charge_evaluate(record: bool = True,
                 sc_tz_off = int(weather.get("utc_offset_seconds")
                                 or device_location.get_tz_offset() or 0)
                 sc_car_load_w = float(cfg.get("car_load_w") or 1400)
+                apply_ceiling = not _has_ecoflow_battery_link(device_sn)
                 fcast_baseline = forecaster.build_forecast(
                     energy_history=energy_hist,
                     weather_hourly=weather["hourly"],
@@ -3545,6 +3597,7 @@ async def _solar_charge_evaluate(record: bool = True,
                     car_load_w=sc_car_load_w,
                     pack_count=_pack_count_for(device_sn),
                     utc_offset_seconds=sc_tz_off,
+                    apply_charge_ceiling=apply_ceiling,
                 )
                 # The simulator's floor for distributing extra_load_w is
                 # the controller's ON threshold (target + margin +
@@ -3571,6 +3624,7 @@ async def _solar_charge_evaluate(record: bool = True,
                     car_load_w=sc_car_load_w,
                     pack_count=_pack_count_for(device_sn),
                     utc_offset_seconds=sc_tz_off,
+                    apply_charge_ceiling=apply_ceiling,
                 )
 
                 def _sunrise_from(fcast):
@@ -4686,13 +4740,15 @@ async def _build_and_record_forecast(device_sn: str | None) -> dict:
 
     # Siseli (+ linked EcoFlow / BMS): seed from the same Live overlays
     # used by energy recording, not Jackery-only last_cloud_meta.
+    # Prefer the larger of overlay vs registry-hardened total so EcoFlow
+    # Wh is never dropped when MQTT is stale or overlay is EcoFlow-only.
     if siseli_client.is_siseli_sn(device_sn):
         seed_soc, seed_cap = _siseli_forecast_seed(device_sn)
         if seed_soc is not None:
             starting_soc = float(seed_soc)
         if seed_cap is not None and not state.energy.get_capacity_override(device_sn):
-            capacity = int(seed_cap)
-            main_wh, pack_wh = int(seed_cap), None
+            capacity = max(int(seed_cap), int(capacity))
+            main_wh, pack_wh = int(capacity), None
 
     energy_hist = state.energy.history(
         device_sn, hours=14 * 24, bucket_s=3600,
@@ -4730,6 +4786,7 @@ async def _build_and_record_forecast(device_sn: str | None) -> dict:
                 continue
 
     sched = load_schedule.get(device_sn)
+    apply_ceiling = not _has_ecoflow_battery_link(device_sn)
 
     result = forecaster.build_forecast(
         energy_history=energy_hist,
@@ -4745,6 +4802,7 @@ async def _build_and_record_forecast(device_sn: str | None) -> dict:
         load_windows=sched.get("windows") or [],
         sleep_start=sched.get("sleep_start"),
         sleep_end=sched.get("sleep_end"),
+        apply_charge_ceiling=apply_ceiling,
     )
     # Only persist when the forecast is actually fit — recording an
     # empty placeholder would corrupt prediction-accuracy analytics.

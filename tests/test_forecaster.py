@@ -1288,6 +1288,43 @@ def test_simulate_soc_respects_ceiling():
     assert max(h["predicted_soc"] for h in out2) > 78.0
 
 
+def test_build_forecast_can_disable_charge_ceiling():
+    """Siseli+EcoFlow callers pass apply_charge_ceiling=False so the
+    learned Jackery multi-pack plateau does not clamp the curve."""
+    now = int(time.time())
+    energy, weather = _ready_history_and_weather(now)
+    # Inject surplus-day history that would learn ~78% if ceiling applied.
+    base = (now // 86400) * 86400 - 10 * 86400
+    for i, dmax in enumerate([77, 78, 79, 78, 77, 78, 79]):
+        day_ts = base + i * 86400 + 8 * 3600
+        energy.append({"ts": day_ts, "battery_pct": 74,
+                       "solar_w": 2000, "solar_wh": 2000,
+                       "output_w": 250, "output_wh": 250,
+                       "ac_input_w": 0, "ac_input_wh": 0})
+        energy.append({"ts": day_ts + 6 * 3600, "battery_pct": dmax,
+                       "solar_w": 2000, "solar_wh": 2000,
+                       "output_w": 250, "output_wh": 250,
+                       "ac_input_w": 0, "ac_input_wh": 0})
+    capped = forecaster.build_forecast(
+        energy_history=energy, weather_hourly=weather,
+        starting_soc_pct=70.0, capacity_wh=30000, now_ts=now,
+        horizon_hours=24, apply_charge_ceiling=True,
+        load_mode="scheduled", load_windows=[],
+    )
+    uncapped = forecaster.build_forecast(
+        energy_history=energy, weather_hourly=weather,
+        starting_soc_pct=70.0, capacity_wh=30000, now_ts=now,
+        horizon_hours=24, apply_charge_ceiling=False,
+        load_mode="scheduled", load_windows=[],
+    )
+    assert capped.get("ready") and uncapped.get("ready")
+    assert capped.get("charge_ceiling_pct") is not None
+    assert uncapped.get("charge_ceiling_pct") is None
+    if capped["forecast"] and uncapped["forecast"]:
+        assert max(h["predicted_soc"] for h in uncapped["forecast"]) >= max(
+            h["predicted_soc"] for h in capped["forecast"])
+
+
 def test_per_pack_baseline_helper():
     """Pure helper: pack_count × 60W, with 0/negative clamped to 0."""
     assert forecaster.per_pack_baseline_w(0) == 0.0

@@ -117,9 +117,10 @@ def test_overlay_sums_solar_and_output(reg):
             "watts": 150,
         },
     ]
-    # Battery role: EcoFlow only (no BMS yet) → EcoFlow SOC
+    # Battery role: EcoFlow only (no BMS yet) → EcoFlow SOC + capacity
     assert out["battery_percent"] == 80.0
     assert out["ecoflow_source"] is True
+    assert out["capacity_wh"] == 2048
     # Siseli + EcoFlow PV strings
     sources = {i["source"] for i in out["solar_inputs"]}
     assert sources == {"siseli", "ecoflow"}
@@ -225,5 +226,42 @@ def test_overlay_skips_stale(reg):
     )
     assert out["solar_input_w"] == 10
     assert out["output_power_w"] == 5
+    # Stale: keep Siseli SOC, but still count EcoFlow registry capacity.
     assert out["battery_percent"] == 40
+    assert out.get("ecoflow_source") is not True
+    assert out["capacity_wh"] == 2048
+    assert out["ecoflow_capacity_wh"] == 2048
     assert out["linked_ecoflow"][0]["fresh"] is False
+
+
+def test_overlay_stale_ecoflow_adds_to_bms_capacity(reg):
+    now = time.time()
+    live = {
+        "ecoflow:R351": {
+            "telemetry": {},
+            "detail": {},
+            "ts": now - 500,
+        },
+    }
+    linked = [{
+        "sn": "ecoflow:R351",
+        "alias": "Garage",
+        "roles": ["battery"],
+        "capacity_wh": 2048,
+    }]
+    out = reg.overlay_telemetry(
+        {
+            "battery_percent": 50.0,
+            "capacity_wh": 5000,
+            "bms_source": True,
+            "solar_input_w": 0,
+            "output_power_w": 0,
+            "source": "siseli",
+        },
+        linked=linked,
+        live_by_sn=live,
+        now=now,
+        bms_already=True,
+    )
+    assert out["capacity_wh"] == 5000 + 2048
+    assert out["battery_percent"] == 50.0  # no fresh EcoFlow SOC

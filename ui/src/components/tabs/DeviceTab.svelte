@@ -70,6 +70,7 @@
   let watchdogApplicable = $state(false);
 
   let params = $state.raw<DeviceParam[]>([]);
+  let paramDrafts = $state<Record<string, string>>({});
   let paramsMsg = $state('');
 
   let bmsPacks = $state.raw<BmsPack[]>([]);
@@ -267,6 +268,7 @@
     const sn = live.activeDeviceSn();
     if (!sn) {
       params = [];
+      paramDrafts = {};
       return;
     }
     try {
@@ -274,9 +276,13 @@
         `/devices/params?device_sn=${encodeURIComponent(sn)}`,
       );
       params = j.params || [];
+      paramDrafts = Object.fromEntries(
+        params.map((p) => [p.key, p.value == null ? '' : String(p.value)]),
+      );
       paramsMsg = '';
     } catch (err) {
       params = [];
+      paramDrafts = {};
       paramsMsg = err instanceof Error ? err.message : 'Params load failed';
     }
   }
@@ -503,6 +509,31 @@
     }
   }
 
+  async function saveParam(key: string) {
+    const sn = live.activeDeviceSn();
+    if (!sn) return;
+    const value = parseFloat(String(paramDrafts[key] ?? ''));
+    if (!Number.isFinite(value)) {
+      paramsMsg = 'Enter a valid number.';
+      return;
+    }
+    busy = true;
+    paramsMsg = `Saving ${key}…`;
+    try {
+      await apiPost('/devices/params', { device_sn: sn, key, value });
+      if (key === 'battery_capacity_wh') {
+        await apiPost('/devices/capacity', { device_sn: sn, capacity_wh: value });
+      }
+      paramsMsg = `Saved ${key}.`;
+      await loadParams();
+      if (key === 'battery_capacity_wh') await loadCapacity();
+    } catch (err) {
+      paramsMsg = err instanceof Error ? err.message : 'Save failed';
+    } finally {
+      busy = false;
+    }
+  }
+
   async function resetParam(key: string) {
     const sn = live.activeDeviceSn();
     if (!sn) return;
@@ -510,8 +541,12 @@
     paramsMsg = `Clearing ${key}…`;
     try {
       await apiPost('/devices/params', { device_sn: sn, key, value: null });
+      if (key === 'battery_capacity_wh') {
+        await apiPost('/devices/capacity', { device_sn: sn, capacity_wh: null });
+      }
       paramsMsg = `Cleared ${key}.`;
       await loadParams();
+      if (key === 'battery_capacity_wh') await loadCapacity();
     } catch (err) {
       paramsMsg = err instanceof Error ? err.message : 'Reset failed';
     } finally {
@@ -607,10 +642,6 @@
     return parts.join(' · ') || '—';
   }
 
-  function fmtParam(p: DeviceParam) {
-    if (p.value == null) return '—';
-    return `${p.value}${p.unit ? ` ${p.unit}` : ''}`;
-  }
 </script>
 
 <section class="tab-panel">
@@ -972,16 +1003,38 @@
       <ul class="device-params-list" style="list-style:none; padding:0; margin:0">
         {#each params as p (p.key)}
           <li
-            style="display:flex; gap:10px; align-items:center; justify-content:space-between; padding:8px 0; border-bottom:1px solid var(--border-soft)"
+            style="display:flex; gap:10px; align-items:flex-start; justify-content:space-between; flex-wrap:wrap; padding:8px 0; border-bottom:1px solid var(--border-soft)"
           >
-            <div>
+            <div style="flex:1; min-width:180px">
               <strong>{p.label || p.key}</strong>
-              <div class="hint">
-                {fmtParam(p)} · {p.source || '—'}
-                {#if p.n_samples} · n={p.n_samples}{/if}
+              <div
+                style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-top:4px"
+              >
+                <input
+                  class="device-select"
+                  type="number"
+                  step="any"
+                  style="width:120px"
+                  disabled={busy}
+                  aria-label={`Value for ${p.label || p.key}`}
+                  bind:value={paramDrafts[p.key]}
+                />
+                {#if p.unit}<small class="hint">{p.unit}</small>{/if}
+                <span class="hint">
+                  {p.source || '—'}
+                  {#if p.n_samples} · n={p.n_samples}{/if}
+                </span>
               </div>
             </div>
-            <div style="display:flex; gap:6px">
+            <div style="display:flex; gap:6px; flex-wrap:wrap">
+              <button
+                class="btn btn-ghost btn-tiny"
+                type="button"
+                disabled={busy}
+                onclick={() => saveParam(p.key)}
+              >
+                Save
+              </button>
               <button
                 class="btn btn-ghost btn-tiny"
                 type="button"

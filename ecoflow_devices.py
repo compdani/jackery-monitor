@@ -336,14 +336,27 @@ def overlay_telemetry(
     have_output_role = False
     batt_weights: list[tuple[float, float]] = []
     linked_payload: list[dict] = []
+    # Registry capacity is always counted (online or offline). SOC from
+    # EcoFlow only enters the weighted average when telemetry is fresh.
+    ecoflow_capacity_wh = 0.0
 
-    # Capture Siseli/BMS load before EcoFlow extras are added.
+    # Capture Siseli/BMS load + capacity before EcoFlow extras are added.
     base_load = float(out.get("output_power_w") or 0)
+    try:
+        base_capacity_wh = float(out.get("capacity_wh") or 0)
+    except (TypeError, ValueError):
+        base_capacity_wh = 0.0
 
     for d in linked:
         roles = set(d.get("roles") or ALL_ROLES)
         sn = d.get("sn")
         live = live_by_sn.get(sn) or {}
+        try:
+            reg_wh = float(d.get("capacity_wh") or 0)
+        except (TypeError, ValueError):
+            reg_wh = 0.0
+        if "battery" in roles and reg_wh > 0:
+            ecoflow_capacity_wh += reg_wh
         if not _is_fresh(live, now, stale_s):
             linked_payload.append({
                 "sn": sn,
@@ -405,9 +418,8 @@ def overlay_telemetry(
             })
         if "battery" in roles:
             soc = et.get("battery_percent")
-            wh = float(d.get("capacity_wh") or 0)
-            if soc is not None and wh > 0:
-                batt_weights.append((float(soc), wh))
+            if soc is not None and reg_wh > 0:
+                batt_weights.append((float(soc), reg_wh))
 
     if solar_inputs:
         out["solar_inputs"] = solar_inputs
@@ -445,16 +457,18 @@ def overlay_telemetry(
         ))
         out["output_power_w"] = round(total)
 
+    # Capacity: always Siseli/BMS base + registered EcoFlow battery Wh.
+    if ecoflow_capacity_wh > 0:
+        out["capacity_wh"] = int(base_capacity_wh + ecoflow_capacity_wh)
+        out["ecoflow_capacity_wh"] = int(ecoflow_capacity_wh)
+
     if batt_weights:
-        # Combine with existing headline SOC when BMS already set it.
-        if bms_already and out.get("battery_percent") is not None:
-            try:
-                existing_wh = float(out.get("capacity_wh") or 0)
-            except (TypeError, ValueError):
-                existing_wh = 0.0
-            if existing_wh > 0:
-                batt_weights.insert(0, (float(out["battery_percent"]), existing_wh))
-        soc = bms_devices.weighted_soc(batt_weights)
+        # Combine with existing headline SOC when Siseli/BMS already set a
+        # capacity-backed %. Otherwise EcoFlow-only weights replace SOC.
+        weights = list(batt_weights)
+        if out.get("battery_percent") is not None and base_capacity_wh > 0:
+            weights.insert(0, (float(out["battery_percent"]), base_capacity_wh))
+        soc = bms_devices.weighted_soc(weights)
         if soc is not None:
             if out.get("inverter_soc_pct") is None and not out.get("bms_source"):
                 out["inverter_soc_pct"] = out.get("battery_percent")
@@ -463,9 +477,6 @@ def overlay_telemetry(
             out["battery_percent"] = rounded
             out["system_soc_pct"] = rounded
             out["ecoflow_source"] = True
-            total_wh = int(sum(w for _, w in batt_weights))
-            if total_wh:
-                out["capacity_wh"] = total_wh
 
     if linked_payload:
         out["linked_ecoflow"] = linked_payload

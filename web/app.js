@@ -1412,6 +1412,20 @@ async function saveDeviceParam(deviceSn, key, value) {
     });
     const j = await r.json().catch(() => ({}));
     if (!r.ok) throw new Error(j.detail || `HTTP ${r.status}`);
+    // Forecast / SOC math reads capacity_wh_override, not device_params.
+    if (key === 'battery_capacity_wh') {
+      const cr = await fetch('/api/devices/capacity', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          device_sn: deviceSn,
+          capacity_wh: value == null ? null : value,
+        }),
+      });
+      const cj = await cr.json().catch(() => ({}));
+      if (!cr.ok) throw new Error(cj.detail || `HTTP ${cr.status}`);
+      if (typeof loadDeviceCapacity === 'function') loadDeviceCapacity();
+    }
     if (status) {
       status.textContent = 'Saved.';
       setTimeout(() => { status.hidden = true; }, 2000);
