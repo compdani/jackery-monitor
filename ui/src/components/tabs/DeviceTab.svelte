@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { api, apiPost } from '$lib/api';
+  import { api, apiPost, ApiError } from '$lib/api';
   import { live } from '$lib/stores/live.svelte';
   import { formatDeviceErrorCode, fmtSecsMMSS } from '$lib/format';
   import { saveCloudCredentials, forgetCloudCredentials, cloudAuthStatus } from '$lib/auth';
@@ -63,6 +63,11 @@
   let f7Pulse = $state(5);
   let f7Msg = $state('');
   let f7Daylight = $state(false);
+
+  let watchdogEnabled = $state(false);
+  let watchdogStatus = $state('');
+  let watchdogBusy = $state(false);
+  let watchdogApplicable = $state(false);
 
   let params = $state.raw<DeviceParam[]>([]);
   let paramsMsg = $state('');
@@ -201,6 +206,63 @@
     }
   }
 
+  function watchdogStatusText(source?: string) {
+    return source === 'user' ? 'Saved for this device' : 'Default for this model';
+  }
+
+  async function loadWatchdogConfig() {
+    try {
+      const j = await api<{
+        enabled?: boolean;
+        source?: 'user' | 'default';
+      }>(`/inverter_watchdog/config${snQ()}`);
+      watchdogApplicable = true;
+      watchdogEnabled = !!j.enabled;
+      watchdogStatus = watchdogStatusText(j.source);
+    } catch (err) {
+      const status = err instanceof ApiError ? err.status : 0;
+      const msg = err instanceof Error ? err.message : '';
+      if (
+        status === 400 ||
+        status === 404 ||
+        /Jackery devices only|AC auto recovery|no active device/i.test(msg)
+      ) {
+        watchdogApplicable = false;
+        watchdogEnabled = false;
+        watchdogStatus = '';
+        return;
+      }
+      watchdogApplicable = false;
+      watchdogEnabled = false;
+      watchdogStatus = msg || 'Watchdog load failed';
+    }
+  }
+
+  async function saveWatchdogConfig() {
+    const sn = live.activeDeviceSn();
+    if (!sn) {
+      watchdogStatus = 'No active device.';
+      return;
+    }
+    watchdogBusy = true;
+    try {
+      const j = await api<{
+        enabled?: boolean;
+        source?: 'user' | 'default';
+      }>('/inverter_watchdog/config', {
+        method: 'PUT',
+        body: JSON.stringify({ device_sn: sn, enabled: watchdogEnabled }),
+      });
+      watchdogEnabled = !!j.enabled;
+      watchdogStatus = watchdogStatusText(j.source);
+    } catch (err) {
+      watchdogStatus = err instanceof Error ? err.message : 'Save failed';
+      await loadWatchdogConfig();
+    } finally {
+      watchdogBusy = false;
+    }
+  }
+
   async function loadParams() {
     const sn = live.activeDeviceSn();
     if (!sn) {
@@ -242,6 +304,7 @@
       loadSiseli(),
       loadEcoflow(),
       loadF7(),
+      loadWatchdogConfig(),
       loadParams(),
       loadBms(),
     ]);
@@ -862,6 +925,36 @@
       <p class="hint" style="margin-top:10px" role="status">{f7Msg}</p>
     {/if}
   </section>
+
+  {#if watchdogApplicable}
+    <section class="card device-card">
+      <div class="card-header">
+        <h2>AC auto recovery</h2>
+        <span class="hint">{watchdogEnabled ? 'on' : 'off'}</span>
+      </div>
+      <p class="hint" style="margin:6px 0 12px">
+        When AC output collapses while the port still claims ON (hardware trip), briefly cycle AC
+        off/on to recover. Defaults on for Explorer 5000 Plus; off for other Jackery models.
+      </p>
+      <div class="settings-row">
+        <label class="settings-label" for="wd-keep-ac">
+          <span class="settings-label-text">Keep AC output on</span>
+        </label>
+        <div class="settings-control">
+          <input
+            id="wd-keep-ac"
+            type="checkbox"
+            bind:checked={watchdogEnabled}
+            disabled={watchdogBusy}
+            onchange={saveWatchdogConfig}
+          />
+        </div>
+      </div>
+      {#if watchdogStatus}
+        <p class="hint" style="margin-top:10px" role="status">{watchdogStatus}</p>
+      {/if}
+    </section>
+  {/if}
 
   <section class="card device-card">
     <div class="card-header">

@@ -8,7 +8,22 @@ Pre-1.0 means breaking changes can land in any minor.
 
 ## [Unreleased]
 
+### Fixed
+- Treat Jackery `"logged in elsewhere"` replies as session contention and
+  reclaim that session after a fixed 60s (instead of exponential backoff up
+  to 1h). Keep the cloud watchdog alive when awaiting a cancelled poller.
+- Align Open-Meteo hourly GHI with telemetry interval starts; forecast
+  hours carry `duration_h` so the partial first hour is simulated correctly.
+- Smart-charge keeps topping up in the final pre-sunrise hour when baseline
+  sunrise SOC is still below target, even if current SOC already meets it.
+- Cancel in-flight inverter recovery cycles when the user turns AC off or
+  disables recovery; pending OFF intents suppress cycling until ack.
+- Smart-charge conflict banner in the Svelte Automation tab refreshes rules
+  after "Disable them" (and the same fix for `/legacy`).
+
 ### Added
+- Per-device **Keep AC output on** toggle (Device tab) for Jackery AC
+  hardware-trip recovery; defaults on for Explorer 5000 Plus.
 - **Calendar expected load** on the Forecast tab: one-off dated events and
   weekly-recurring windows (Mon–Sun chips), with Historical mode retained.
   Calendar (`scheduled`) is the default for new devices; uncovered hours

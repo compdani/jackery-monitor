@@ -305,3 +305,30 @@ def test_no_output_signal_is_backcompat():
     s = _fresh()
     assert inverter_watchdog.evaluate(s, True, now_ts=1000.0) == "idle"
     assert inverter_watchdog.evaluate(s, False, now_ts=1002.0) == "idle"
+
+
+def test_pending_user_off_intent_suppresses_cycle():
+    """In-flight AC-off must suppress cycling once a hardware trip is latched."""
+    s = _fresh()
+    t = 1000.0
+    assert _ev(s, True, 1795.0, t) == "idle"
+    assert _ev(s, True, 0.0, t + 2) == "idle"
+    assert _ev(s, True, 0.0, t + 4) == "idle"
+    assert _ev(s, True, 0.0, t + 8) == "cycle"
+    assert s.hw_trip_active
+    token = object()
+    s.pending_user_off_intents.add(token)
+    assert _ev(s, True, 0.0, t + 20) == "user_grace"
+    s.pending_user_off_intents.discard(token)
+    inverter_watchdog.record_user_off(s, now_ts=t + 20)
+    assert _ev(s, True, 0.0, t + 21) == "user_grace"
+
+
+def test_reset_state_preserves_pending_intents():
+    s = inverter_watchdog.get_state("SN-PEND")
+    token = object()
+    s.pending_user_off_intents.add(token)
+    inverter_watchdog.reset_state("SN-PEND")
+    s2 = inverter_watchdog.get_state("SN-PEND")
+    assert token in s2.pending_user_off_intents
+    inverter_watchdog.reset_state()

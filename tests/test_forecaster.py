@@ -6,6 +6,11 @@ import time
 import forecaster
 
 
+def _weather_interval_ends(weather):
+    """Synthetic telemetry is start-stamped; Open-Meteo is end-stamped."""
+    return [{**w, "ts": w["ts"] + 3600} for w in weather]
+
+
 def test_battery_capacity_known_and_unknown():
     assert forecaster.battery_capacity_wh(13) == 5040
     assert forecaster.battery_capacity_wh(22) == 5040
@@ -39,7 +44,7 @@ def test_solar_fit_recovers_known_coefficient():
          "output_w": 100, "battery_pct": 80}
         for w in weather
     ]
-    k, n = forecaster.fit_solar_coefficient(energy, weather)
+    k, n = forecaster.fit_solar_coefficient(energy, _weather_interval_ends(weather))
     assert n >= forecaster.MIN_FIT_SAMPLES
     assert abs(k - 0.5) < 0.05
 
@@ -53,7 +58,7 @@ def test_solar_fit_zero_when_device_has_no_panels():
                for i in range(20)]
     energy = [{"ts": w["ts"], "solar_w": 0, "output_w": 100, "battery_pct": 60}
               for w in weather]
-    k, n = forecaster.fit_solar_coefficient(energy, weather)
+    k, n = forecaster.fit_solar_coefficient(energy, _weather_interval_ends(weather))
     assert k == 0.0
     assert n == 0
 
@@ -68,7 +73,7 @@ def test_solar_fit_zero_when_only_sensor_noise():
                for i in range(20)]
     energy = [{"ts": w["ts"], "solar_w": 8, "output_w": 100, "battery_pct": 60}
               for w in weather]  # 8W of noise, well below threshold
-    k, n = forecaster.fit_solar_coefficient(energy, weather)
+    k, n = forecaster.fit_solar_coefficient(energy, _weather_interval_ends(weather))
     assert k == 0.0
     assert n == 0
 
@@ -81,7 +86,7 @@ def test_solar_fit_runs_with_real_small_panel():
                for i in range(20)]
     energy = [{"ts": w["ts"], "solar_w": 80, "output_w": 100, "battery_pct": 60}
               for w in weather]
-    k, n = forecaster.fit_solar_coefficient(energy, weather)
+    k, n = forecaster.fit_solar_coefficient(energy, _weather_interval_ends(weather))
     assert k > 0
     assert n >= forecaster.MIN_FIT_SAMPLES
 
@@ -92,7 +97,7 @@ def test_solar_fit_falls_back_when_too_few_pairs():
     base = 1_700_000_000
     weather = [{"ts": base, "ghi_w_m2": 500, "cloud_cover_pct": 0}]
     energy = [{"ts": base, "solar_w": 300, "output_w": 100, "battery_pct": 50}]
-    k, n = forecaster.fit_solar_coefficient(energy, weather)
+    k, n = forecaster.fit_solar_coefficient(energy, _weather_interval_ends(weather))
     assert k == forecaster.DEFAULT_SOLAR_COEFF
     assert n == 1
 
@@ -125,7 +130,7 @@ def test_solar_fit_prefers_clear_sky_pairs_when_available():
         energy.append({"ts": base + (10 + i) * 3600,
                        "solar_w": int(0.18 * ghi),
                        "output_w": 100, "battery_pct": 60})
-    k, n = forecaster.fit_solar_coefficient(energy, weather)
+    k, n = forecaster.fit_solar_coefficient(energy, _weather_interval_ends(weather))
     assert n >= forecaster.MIN_FIT_SAMPLES
     assert abs(k - 0.5) < 0.05, f"got k={k}, expected ~0.5 (clear-sky truth)"
 
@@ -155,7 +160,7 @@ def test_solar_fit_prefers_low_soc_no_ac_pairs_over_high_soc_clear_sky():
         energy.append({"ts": base + (10 + i) * 3600,
                        "solar_w": int(4.0 * ghi),
                        "battery_pct": 60, "ac_input_w": 0})
-    k, n = forecaster.fit_solar_coefficient(energy, weather)
+    k, n = forecaster.fit_solar_coefficient(energy, _weather_interval_ends(weather))
     # Headroom-filter pool exists (5 ≥ MIN_FIT_SAMPLES=2), so it wins.
     # k should recover ~4.0, not the LSQ blend ~3.25.
     assert n == 5
@@ -185,7 +190,7 @@ def test_solar_fit_excludes_hours_with_ac_charging():
         energy.append({"ts": base + (10 + i) * 3600,
                        "solar_w": int(4.0 * ghi),
                        "battery_pct": 60, "ac_input_w": 0})
-    k, n = forecaster.fit_solar_coefficient(energy, weather)
+    k, n = forecaster.fit_solar_coefficient(energy, _weather_interval_ends(weather))
     assert n == 4
     assert abs(k - 4.0) < 0.10, f"got k={k}, expected ~4.0"
 
@@ -205,7 +210,7 @@ def test_solar_fit_falls_back_to_clear_sky_when_no_headroom_pairs():
         energy.append({"ts": base + i * 3600,
                        "solar_w": int(2.8 * ghi),  # tapered
                        "battery_pct": 95, "ac_input_w": 0})
-    k, n = forecaster.fit_solar_coefficient(energy, weather)
+    k, n = forecaster.fit_solar_coefficient(energy, _weather_interval_ends(weather))
     assert n == 8  # clear-sky fallback fires
     # Returns the tapered fit since no headroom data exists. Verify it's
     # not the default coefficient.
@@ -224,7 +229,7 @@ def test_solar_fit_falls_back_to_broad_pool_when_no_clear_sky():
     energy = [{"ts": w["ts"], "solar_w": int(0.25 * w["ghi_w_m2"]),
                "output_w": 100, "battery_pct": 60}
               for w in weather]
-    k, n = forecaster.fit_solar_coefficient(energy, weather)
+    k, n = forecaster.fit_solar_coefficient(energy, _weather_interval_ends(weather))
     # No clear-sky pairs (all cloud=90), but 10 broad pairs available.
     assert n == 10
     assert abs(k - 0.25) < 0.05
@@ -727,28 +732,31 @@ def test_build_forecast_glues_pieces_together():
     # forecast_readiness gate sees clean discharge windows.
     now = int(time.time())
     weather = []
+    energy = []
     for i in range(-14 * 24, 24 * 5):  # past 14 days through next 5 days, hourly
-        ts = now + i * 3600
+        ts = now + i * 3600  # interval start (telemetry)
         # 8am-4pm peaks at 800 W/m², zero at night
         hour_of_day = (ts // 3600) % 24
         ghi = 800 if 8 <= hour_of_day <= 16 else 0
-        weather.append({"ts": ts, "ghi_w_m2": ghi, "cloud_cover_pct": 0})
+        weather.append({"ts": ts + 3600, "ghi_w_m2": ghi, "cloud_cover_pct": 0})
 
-    def _synth_soc(ts: int) -> int:
-        # 90% during the day, drops 5pp/hour overnight, recovers at dawn.
-        h = (ts // 3600) % 24
-        if 8 <= h <= 16:
-            return 90
-        # Hours away from sunset (16) — drops linearly until dawn.
-        hours_after_sunset = (h - 16) % 24
-        return max(60, 90 - hours_after_sunset * 5)
+        def _synth_soc(start_ts: int) -> int:
+            # 90% during the day, drops 5pp/hour overnight, recovers at dawn.
+            h = (start_ts // 3600) % 24
+            if 8 <= h <= 16:
+                return 90
+            # Hours away from sunset (16) — drops linearly until dawn.
+            hours_after_sunset = (h - 16) % 24
+            return max(60, 90 - hours_after_sunset * 5)
 
-    energy = [{"ts": w["ts"], "solar_w": int(2.0 * w["ghi_w_m2"]),
-               "solar_wh": int(2.0 * w["ghi_w_m2"]),
-               "output_w": 100, "output_wh": 100,
-               "ac_input_wh": 0, "ac_input_w": 0,
-               "battery_pct": _synth_soc(w["ts"])}
-              for w in weather if w["ts"] < now]
+        if ts < now:
+            energy.append({
+                "ts": ts, "solar_w": int(2.0 * ghi),
+                "solar_wh": int(2.0 * ghi),
+                "output_w": 100, "output_wh": 100,
+                "ac_input_wh": 0, "ac_input_w": 0,
+                "battery_pct": _synth_soc(ts),
+            })
     res = forecaster.build_forecast(
         energy_history=energy,
         weather_hourly=weather,
@@ -766,27 +774,34 @@ def test_build_forecast_glues_pieces_together():
 
 
 def _ready_history_and_weather(now: int):
-    """14d of history + future weather so build_forecast is ready."""
+    """14d of history + future weather so build_forecast is ready.
+
+    Telemetry rows are interval-start stamped; Open-Meteo weather rows
+    are interval-end stamped (ts + 3600).
+    """
     weather = []
+    energy = []
     for i in range(-14 * 24, 24 * 5):
-        ts = now + i * 3600
+        ts = now + i * 3600  # interval start
         hour_of_day = (ts // 3600) % 24
         ghi = 800 if 8 <= hour_of_day <= 16 else 0
-        weather.append({"ts": ts, "ghi_w_m2": ghi, "cloud_cover_pct": 0})
+        weather.append({"ts": ts + 3600, "ghi_w_m2": ghi, "cloud_cover_pct": 0})
 
-    def _synth_soc(ts: int) -> int:
-        h = (ts // 3600) % 24
-        if 8 <= h <= 16:
-            return 90
-        hours_after_sunset = (h - 16) % 24
-        return max(60, 90 - hours_after_sunset * 5)
+        def _synth_soc(start_ts: int) -> int:
+            h = (start_ts // 3600) % 24
+            if 8 <= h <= 16:
+                return 90
+            hours_after_sunset = (h - 16) % 24
+            return max(60, 90 - hours_after_sunset * 5)
 
-    energy = [{"ts": w["ts"], "solar_w": int(2.0 * w["ghi_w_m2"]),
-               "solar_wh": int(2.0 * w["ghi_w_m2"]),
-               "output_w": 400, "output_wh": 400,
-               "ac_input_wh": 0, "ac_input_w": 0,
-               "battery_pct": _synth_soc(w["ts"])}
-              for w in weather if w["ts"] < now]
+        if ts < now:
+            energy.append({
+                "ts": ts, "solar_w": int(2.0 * ghi),
+                "solar_wh": int(2.0 * ghi),
+                "output_w": 400, "output_wh": 400,
+                "ac_input_wh": 0, "ac_input_w": 0,
+                "battery_pct": _synth_soc(ts),
+            })
     return energy, weather
 
 
@@ -794,10 +809,14 @@ def test_build_forecast_forecast_solar_hours_win_rest_open_meteo():
     from datetime import datetime, timezone
     now = int(datetime(2024, 7, 1, 12, 0, tzinfo=timezone.utc).timestamp())
     energy, weather = _ready_history_and_weather(now)
-    future = [w for w in weather if w["ts"] >= now]
-    first = future[0]["ts"]
-    second = future[1]["ts"]
-    fs_hourly = {first: 9999.0, second: 8888.0}
+    # build_forecast keeps weather rows with ts > now (interval end).
+    # Forecast.Solar keys are interval starts.
+    future = [w for w in weather if w["ts"] > now]
+    first_end = future[0]["ts"]
+    second_end = future[1]["ts"]
+    first_start = first_end - 3600
+    second_start = second_end - 3600
+    fs_hourly = {first_start: 9999.0, second_start: 8888.0}
     res = forecaster.build_forecast(
         energy_history=energy,
         weather_hourly=weather,
@@ -812,9 +831,10 @@ def test_build_forecast_forecast_solar_hours_win_rest_open_meteo():
     assert res["solar_source"] == "mixed"
     by_ts = {h["ts"]: h for h in res["forecast"]}
     # Recent-peak cap is 2x observed solar; 9999 may be capped but source stays FS.
-    assert by_ts[first]["solar_source"] == "forecast_solar"
-    assert by_ts[second]["solar_source"] == "forecast_solar"
-    later = [h for h in res["forecast"] if h["ts"] not in fs_hourly]
+    assert by_ts[first_end]["solar_source"] == "forecast_solar"
+    assert by_ts[second_end]["solar_source"] == "forecast_solar"
+    later = [h for h in res["forecast"]
+             if (h["ts"] - 3600) not in fs_hourly]
     assert later and all(h["solar_source"] == "open_meteo" for h in later)
 
 
@@ -838,10 +858,11 @@ def test_build_forecast_scheduled_window_and_sleep_zeros_parasitic():
         sleep_end="07:00",
     )
     assert res["load_mode"] == "scheduled"
+    # Forecast rows are interval-end stamped; load uses interval start.
     eighteen = [h for h in res["forecast"]
-                if ((h["ts"] // 3600) % 24) == 18]
+                if (((h["ts"] - 3600) // 3600) % 24) == 18]
     midnight = [h for h in res["forecast"]
-                if ((h["ts"] // 3600) % 24) == 0]
+                if (((h["ts"] - 3600) // 3600) % 24) == 0]
     assert eighteen
     assert eighteen[0]["load_w"] >= 800
     assert midnight
@@ -870,8 +891,10 @@ def test_build_forecast_scheduled_zero_or_uncovered_skips_parasitic():
     assert res["ready"]
     para = res["effective_parasitic_w"]
     pct = res["inverter_overhead_pct"]
-    noon = [h for h in res["forecast"] if ((h["ts"] // 3600) % 24) == 12]
-    eighteen = [h for h in res["forecast"] if ((h["ts"] // 3600) % 24) == 18]
+    noon = [h for h in res["forecast"]
+            if (((h["ts"] - 3600) // 3600) % 24) == 12]
+    eighteen = [h for h in res["forecast"]
+                if (((h["ts"] - 3600) // 3600) % 24) == 18]
     assert noon and noon[0]["load_w"] == 0.0
     assert eighteen
     expected_on = 800 * (1.0 + pct) + para
@@ -1115,7 +1138,8 @@ def _solar_day(base_ts, k, shape_by_hour, tz_off=0, days=10):
     simple midday bell. Returns (energy_history, weather_hourly).
 
     base_ts is snapped to UTC midnight so that ts for local hour `hod`
-    buckets to exactly that local hour inside fit_diurnal_shape."""
+    buckets to exactly that local hour inside fit_diurnal_shape.
+    Weather rows end one hour later, matching Open-Meteo."""
     base_ts = (base_ts // 86400) * 86400  # snap to UTC midnight
     energy, weather = [], []
     for d in range(days):
@@ -1126,7 +1150,7 @@ def _solar_day(base_ts, k, shape_by_hour, tz_off=0, days=10):
             sol = k * ghi * shape_by_hour.get(hod, 1.0)
             energy.append({"ts": ts, "solar_w": sol, "battery_pct": 50,
                            "output_wh": 100, "ac_input_wh": 0})
-            weather.append({"ts": ts, "ghi_w_m2": ghi, "cloud_cover_pct": 0})
+            weather.append({"ts": ts + 3600, "ghi_w_m2": ghi, "cloud_cover_pct": 0})
     return energy, weather
 
 

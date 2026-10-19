@@ -64,6 +64,19 @@
   let scStatus = $state.raw<Record<string, unknown> | null>(null);
   let scHistory = $state.raw<DecisionRow[]>([]);
   let scMsg = $state('');
+  let scConflicts = $state.raw<Rule[]>([]);
+  let scConflictsDismissed = $state(false);
+  let scConflictsBusy = $state(false);
+
+  const showScConflicts = $derived(
+    scMode === 'active' && scConflicts.length > 0 && !scConflictsDismissed,
+  );
+
+  const scConflictHint = $derived(
+    scConflicts.length === 1
+      ? '1 enabled battery rule controls the same Kasa plug as smart-charge. It will fire on SOC thresholds and can undo charging decisions.'
+      : `${scConflicts.length} enabled battery rules control the same Kasa plug as smart-charge. They will fire on SOC thresholds and can undo charging decisions.`,
+  );
 
   // Solar charge
   let solMode = $state('off');
@@ -153,12 +166,17 @@
     if (!sn) {
       scStatus = null;
       scHistory = [];
+      scConflicts = [];
+      scConflictsDismissed = false;
       return;
     }
     try {
       const q = snQ(sn);
       const [cfgPayload, st] = await Promise.all([
-        api<{ config?: Record<string, unknown> }>(`/smart_charge/config${q}`),
+        api<{
+          config?: Record<string, unknown>;
+          conflicting_rules?: Rule[];
+        }>(`/smart_charge/config${q}`),
         api<Record<string, unknown>>(`/smart_charge/status${q}`).catch(() => null),
       ]);
       const cfg = cfgPayload.config || {};
@@ -174,6 +192,11 @@
         : Array.isArray(st?.recent_decisions)
           ? (st.recent_decisions as DecisionRow[]).slice(0, 12)
           : [];
+      const conflicts = Array.isArray(cfgPayload.conflicting_rules)
+        ? cfgPayload.conflicting_rules
+        : [];
+      scConflicts = conflicts;
+      if (!conflicts.length) scConflictsDismissed = false;
     } catch (err) {
       scMsg = err instanceof Error ? err.message : 'Smart charge load failed';
     }
@@ -240,6 +263,7 @@
   onMount(() => {
     void refreshAll();
     return live.onDeviceChange(() => {
+      scConflictsDismissed = false;
       void loadSmart();
       void loadSolar();
       void loadKasa();
@@ -258,19 +282,50 @@
     busy = true;
     scMsg = 'Saving…';
     try {
-      await apiPost(`/smart_charge/config${snQ(sn)}`, {
+      const saved = await apiPost<{
+        config?: Record<string, unknown>;
+        conflicting_rules?: Rule[];
+      }>(`/smart_charge/config${snQ(sn)}`, {
         mode: scMode,
         kasa_device_host: scKasaHost || null,
         target_sunrise_soc_pct: scTargetSoc,
         max_charge_w: scMaxChargeW,
       });
       scMsg = 'Saved.';
-      await loadSmart();
+      if (Array.isArray(saved.conflicting_rules)) {
+        scConflicts = saved.conflicting_rules;
+        if (!saved.conflicting_rules.length) scConflictsDismissed = false;
+        if (saved.config?.mode != null) scMode = String(saved.config.mode);
+      } else {
+        await loadSmart();
+      }
     } catch (err) {
       scMsg = err instanceof Error ? err.message : 'Save failed';
     } finally {
       busy = false;
     }
+  }
+
+  async function disableScConflicts() {
+    const ids = scConflicts.map((r) => r.id).filter(Boolean);
+    if (!ids.length) return;
+    scConflictsBusy = true;
+    try {
+      await apiPost('/automation/rules/disable', { rule_ids: ids });
+      await Promise.all([loadSmart(), loadRules()]);
+      scMsg = 'Conflicting rules disabled.';
+    } catch (err) {
+      scMsg =
+        err instanceof Error
+          ? `Disable failed: ${err.message}`
+          : 'Disable failed';
+    } finally {
+      scConflictsBusy = false;
+    }
+  }
+
+  function ignoreScConflicts() {
+    scConflictsDismissed = true;
   }
 
   async function evaluateSmart() {
@@ -520,6 +575,43 @@
       <p class="hint" style="margin:6px 0 12px">
         Grid plug assist when forecast SOC won't last to sunrise.
       </p>
+      {#if showScConflicts}
+        <div class="conflict-banner" role="alert">
+          <div class="conflict-banner-body">
+            <strong>Conflicting battery rules detected.</strong>
+            <p class="hint" style="margin:4px 0">{scConflictHint}</p>
+            <ul class="conflict-list">
+              {#each scConflicts as rule (rule.id)}
+                <li>
+                  <strong>{rule.name || rule.id}</strong>
+                  {#if rule.operator != null || rule.value != null || rule.action}
+                    : SOC {rule.operator || '?'} {rule.value ?? '?'}% →
+                    {(rule.action || '').toUpperCase()}
+                  {/if}
+                </li>
+              {/each}
+            </ul>
+          </div>
+          <div class="conflict-banner-actions">
+            <button
+              class="btn btn-warn"
+              type="button"
+              disabled={busy || scConflictsBusy}
+              onclick={disableScConflicts}
+            >
+              {scConflictsBusy ? 'Disabling…' : 'Disable them'}
+            </button>
+            <button
+              class="btn btn-ghost"
+              type="button"
+              disabled={busy || scConflictsBusy}
+              onclick={ignoreScConflicts}
+            >
+              Ignore
+            </button>
+          </div>
+        </div>
+      {/if}
       <form onsubmit={saveSmart}>
         <div class="settings-row">
           <label class="settings-label" for="sc-mode">

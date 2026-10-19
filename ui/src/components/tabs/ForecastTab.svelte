@@ -44,15 +44,20 @@
     overall_load_w?: number;
     parasitic_w?: number;
     pack_baseline_w?: number;
+    charge_ceiling_pct?: number | null;
+    load_mode?: 'historical' | 'scheduled' | string;
   };
 
   type DayTile = {
     key: string;
     label: string;
+    startSoc: number;
+    endSoc: number;
     minSoc: number;
     maxSoc: number;
     solarKwh: number;
     depleted: boolean;
+    showLow: boolean;
     cls: string;
   };
 
@@ -189,16 +194,23 @@
       solarWh: number;
       minSoc: number;
       maxSoc: number;
+      startSoc: number;
+      endSoc: number;
       depleted: boolean;
     }[] = [];
     let currentKey: string | null = null;
     let current: (typeof days)[0] | null = null;
+    // Day 0 starts at current SOC; later days inherit the prior day's end.
+    let prevEnd = Number(forecast?.starting_soc_pct ?? forecast?.start_soc ?? 0);
     for (const h of fc) {
       if (h.ts == null) continue;
       const d = new Date(h.ts * 1000);
       const key = d.toDateString();
       if (key !== currentKey) {
-        if (current) days.push(current);
+        if (current) {
+          days.push(current);
+          prevEnd = current.endSoc;
+        }
         currentKey = key;
         current = {
           key,
@@ -206,6 +218,8 @@
           solarWh: 0,
           minSoc: Infinity,
           maxSoc: -Infinity,
+          startSoc: prevEnd,
+          endSoc: prevEnd,
           depleted: false,
         };
       }
@@ -215,6 +229,7 @@
       if (Number.isFinite(s)) {
         if (s < current.minSoc) current.minSoc = s;
         if (s > current.maxSoc) current.maxSoc = s;
+        current.endSoc = s;
         if (s <= 0.5) current.depleted = true;
       }
     }
@@ -225,7 +240,7 @@
     }
     const now = new Date();
     const todayMs = Date.UTC(now.getFullYear(), now.getMonth(), now.getDate());
-    return days.slice(0, 5).map((d) => {
+    return days.slice(0, 7).map((d) => {
       const dayMs = Date.UTC(d.date.getFullYear(), d.date.getMonth(), d.date.getDate());
       const diffDays = Math.round((dayMs - todayMs) / 86400000);
       let label = d.date.toLocaleDateString([], {
@@ -235,17 +250,25 @@
       });
       if (diffDays === 0) label = 'Today';
       else if (diffDays === 1) label = 'Tomorrow';
+      const minSoc = d.minSoc === Infinity ? NaN : d.minSoc;
+      const maxSoc = d.maxSoc === -Infinity ? NaN : d.maxSoc;
       let cls = '';
       if (d.depleted) cls = 'tile-bad';
-      else if (d.minSoc !== Infinity && d.minSoc < 20) cls = 'tile-warn';
-      else if (d.minSoc !== Infinity) cls = 'tile-good';
+      else if (Number.isFinite(minSoc) && minSoc < 20) cls = 'tile-warn';
+      else if (Number.isFinite(minSoc)) cls = 'tile-good';
+      // Surface intraday trough when it dips well below the day-end SOC.
+      const showLow =
+        Number.isFinite(minSoc) && Number.isFinite(d.endSoc) && minSoc < d.endSoc - 5;
       return {
         key: d.key,
         label,
-        minSoc: d.minSoc === Infinity ? NaN : d.minSoc,
-        maxSoc: d.maxSoc === -Infinity ? NaN : d.maxSoc,
+        startSoc: d.startSoc,
+        endSoc: d.endSoc,
+        minSoc,
+        maxSoc,
         solarKwh: d.solarWh / 1000,
         depleted: d.depleted,
+        showLow,
         cls,
       };
     });
@@ -352,12 +375,11 @@
   function weekStrip(focus: string): { date: string; label: string; dow: string }[] {
     const base = parseLocalDate(focus);
     const monOff = mondayIndex(base);
-    const monday = new Date(base);
-    monday.setDate(base.getDate() - monOff);
+    // Construct dates without mutating (avoids SvelteDate autofixer nudge).
+    const monday = new Date(base.getFullYear(), base.getMonth(), base.getDate() - monOff);
     const out: { date: string; label: string; dow: string }[] = [];
     for (let i = 0; i < 7; i++) {
-      const d = new Date(monday);
-      d.setDate(monday.getDate() + i);
+      const d = new Date(monday.getFullYear(), monday.getMonth(), monday.getDate() + i);
       out.push({
         date: localDateStr(d),
         label: String(d.getDate()),
@@ -1047,9 +1069,14 @@
         </div>
       </div>
       <p class="hint" style="margin:8px 0 12px">
-        Calendar plans one-off dates and weekly repeats; uncovered hours are 0 W (inverter off).
-        Historical uses the learned 14-day hour × weekday/weekend table instead.
-        Sleep zeros inverter idle even when a calendar event has watts.
+        {#if loadMode === 'scheduled'}
+          Calendar mode: only scheduled events draw power — hours with no event are
+          <strong>0 W</strong> (inverter off). Add one-off dates or weekly repeats below.
+          Sleep zeros inverter idle even when a calendar event has watts.
+        {:else}
+          Historical uses the learned 14-day hour × weekday/weekend table.
+          Sleep zeros inverter idle even when a calendar event has watts.
+        {/if}
       </p>
       <div class="settings-row">
         <label class="settings-label" for="load-sleep-start">
@@ -1293,10 +1320,10 @@
           <div class="forecast-day-tile {d.cls}">
             <span class="fdt-label">{d.label}</span>
             <div class="fdt-soc">
-              {#if Number.isFinite(d.minSoc) && Number.isFinite(d.maxSoc)}
-                {Math.round(d.minSoc)}<small>%</small>
+              {#if Number.isFinite(d.startSoc) && Number.isFinite(d.endSoc)}
+                {Math.round(d.startSoc)}<small>%</small>
                 <span class="fdt-arrow">→</span>
-                {Math.round(d.maxSoc)}<small>%</small>
+                {Math.round(d.endSoc)}<small>%</small>
               {:else}
                 —
               {/if}
@@ -1304,6 +1331,8 @@
             <span class="fdt-solar">{d.solarKwh.toFixed(1)} kWh ↑</span>
             {#if d.depleted}
               <span class="fdt-warn">depleted</span>
+            {:else if d.showLow}
+              <span class="fdt-warn">low {Math.round(d.minSoc)}%</span>
             {/if}
           </div>
         {/each}
@@ -1331,6 +1360,9 @@
         </div>
         <div class="kpi-value"><span>{coeffDisplay}</span></div>
         <div class="kpi-sub">{coeffSub}</div>
+        {#if forecast.charge_ceiling_pct != null && Number.isFinite(forecast.charge_ceiling_pct)}
+          <div class="kpi-sub">Charge ceiling {Math.round(forecast.charge_ceiling_pct)}%</div>
+        {/if}
         {#if coeffMsg}<p class="hint" role="status">{coeffMsg}</p>{/if}
       </section>
       <section class="card">

@@ -440,7 +440,9 @@ def fit_solar_coefficient(
       3. broad_pairs — any GHI > 50, any sky. Last-resort fallback
          for devices with persistently overcast histories.
     """
-    # Bucket both series to the hour (epoch // 3600) and join.
+    # Telemetry is bucketed by interval start. Open-Meteo hourly
+    # shortwave_radiation is the mean of the PRECEDING hour, timestamped
+    # at its end, so weather at 18:00 pairs with telemetry from 17:00.
     # Track SOC at hour start AND whether AC charging was active during
     # the hour, so we can filter out BMS-tapered samples below.
     by_hour_solar: dict[int, float] = {}
@@ -482,7 +484,7 @@ def fit_solar_coefficient(
     clear_sky_pairs: list[tuple[float, float]] = []
     broad_pairs: list[tuple[float, float]] = []
     for w in weather_hourly:
-        h = (int(w.get("ts") or 0) // 3600) * 3600
+        h = (int(w.get("ts") or 0) // 3600) * 3600 - 3600
         ghi = float(w.get("ghi_w_m2") or 0)
         if ghi <= 50:
             continue  # noise / dawn / dusk; coefficient unstable here
@@ -573,7 +575,7 @@ def fit_diurnal_shape(
     lo, hi = DIURNAL_RATIO_CLAMP
     ratios: dict[int, list[float]] = {}
     for w in weather_hourly:
-        h = (int(w.get("ts") or 0) // 3600) * 3600
+        h = (int(w.get("ts") or 0) // 3600) * 3600 - 3600
         ghi = float(w.get("ghi_w_m2") or 0)
         if ghi <= DIURNAL_MIN_GHI:
             continue
@@ -1704,7 +1706,9 @@ def simulate_soc(
 ) -> list[dict[str, Any]]:
     """Walk SOC forward through the forecast window.
 
-    `forecast_hours` is a list of {ts, solar_w, load_w, cloud_cover_pct}.
+    `forecast_hours` is a list of {ts, solar_w, load_w, cloud_cover_pct,
+    duration_h}. `ts` is the interval end and `duration_h` is at most 1;
+    callers without duration_h retain a full-hour interval.
     Output adds `predicted_soc` (clamped 0-100) per hour. Net positive
     inflow is multiplied by `charge_efficiency` (None falls back to the
     population default `CHARGE_EFFICIENCY = 0.90`); pass the fitted
@@ -1758,10 +1762,11 @@ def simulate_soc(
     # actual ON/OFF behavior tick-by-tick.
     nat_hourly_pp = []
     for h in forecast_hours:
+        duration_h = max(0.0, min(1.0, float(h.get("duration_h", 1.0))))
         net = float(h.get("solar_w") or 0) - float(h.get("load_w") or 0)
         if net > 0:
             net *= eff
-        nat_hourly_pp.append(net / capacity_wh * 100.0)
+        nat_hourly_pp.append(net * duration_h / capacity_wh * 100.0)
     # cum_nat[i] = cumulative natural SOC delta from start to start of hour i
     cum_nat = [0.0] * (n + 1)
     for i in range(n):
@@ -1775,6 +1780,7 @@ def simulate_soc(
 
     out: list[dict[str, Any]] = []
     for i, h in enumerate(forecast_hours):
+        duration_h = max(0.0, min(1.0, float(h.get("duration_h", 1.0))))
         solar = float(h.get("solar_w") or 0)
         load = float(h.get("load_w") or 0)
         applied_extra = 0.0
@@ -1784,7 +1790,7 @@ def simulate_soc(
             tentative_net = solar - (load + extra_w)
             if tentative_net > 0:
                 tentative_net *= eff
-            tentative_soc = soc + tentative_net / capacity_wh * 100.0
+            tentative_soc = soc + tentative_net * duration_h / capacity_wh * 100.0
             tentative_soc = max(0.0, min(100.0, tentative_soc))
             # From start of hour i+1 onward, assume natural-only (the
             # controller stops). Worst-case SOC achieved:
@@ -1798,13 +1804,13 @@ def simulate_soc(
         elif extra_w > 0 and extra_floor is None:
             # No floor constraint — apply extra every hour.
             applied_extra = extra_w
-        # 1 hour interval, simple Euler step. Apply CHARGE_EFFICIENCY when
+        # Interval-aware Euler step. Apply CHARGE_EFFICIENCY when
         # net inflow positive — discharge already accounts for inverter
         # losses on the load side.
         net = solar - (load + applied_extra)
         if net > 0:
             net *= eff
-        soc += net / capacity_wh * 100.0
+        soc += net * duration_h / capacity_wh * 100.0
         soc = max(0.0, min(100.0, soc))
         # Learned charge ceiling — multi-pack rigs plateau below 100%
         # system SOC (weakest pack saturates, BMS curtails). Clamp here
@@ -1998,7 +2004,9 @@ def build_forecast(
     soc_ceiling = fit_charge_ceiling(energy_history, capacity_wh,
                                      utc_offset_seconds=utc_offset_seconds)
 
-    future = [w for w in weather_hourly if int(w.get("ts") or 0) >= cutoff]
+    # Hourly weather rows describe (ts-3600, ts]. Include the current
+    # partial hour and only charge/drain for the time still ahead.
+    future = [w for w in weather_hourly if int(w.get("ts") or 0) > cutoff]
     future = future[:horizon_hours]
 
     forecast_hours = []
@@ -2007,19 +2015,22 @@ def build_forecast(
     mode = load_mode if load_mode in ("historical", "scheduled") else "historical"
     for w in future:
         ts = int(w["ts"])
+        interval_start = ts - 3600
+        duration_h = max(0.0, min(1.0, (ts - max(cutoff, interval_start)) / 3600.0))
         ghi = float(w.get("ghi_w_m2") or 0)
         # Apply the learned diurnal shape (afternoon shade etc.) on top of
         # the global coefficient. shape defaults to 1.0 per hour, so this
         # is a no-op until the per-hour factors are learned from history.
-        lhod = ((ts + int(utc_offset_seconds)) % 86400) // 3600
+        lhod = ((interval_start + int(utc_offset_seconds)) % 86400) // 3600
         shape_factor = diurnal_shape.get(lhod, 1.0)
         om_solar = max(0.0, k * ghi * shape_factor)
-        hour_ts = ts - (ts % 3600)
+        # Forecast.Solar hours are interval-start stamped; Open-Meteo
+        # weather rows are interval-end stamped. Prefer start, then end.
         fs_w = None
         if fs_hourly:
-            raw = fs_hourly.get(ts)
+            raw = fs_hourly.get(interval_start)
             if raw is None:
-                raw = fs_hourly.get(hour_ts)
+                raw = fs_hourly.get(ts)
             if raw is not None:
                 try:
                     fs_w = max(0.0, float(raw))
@@ -2040,7 +2051,7 @@ def build_forecast(
             capped = True
 
         hour, weekday, weekend, minute, local_date = _load_sched.clock_parts(
-            ts, utc_offset_seconds)
+            interval_start, utc_offset_seconds)
         asleep = _load_sched.in_sleep_window(minute, sleep_start, sleep_end)
         if mode == "scheduled":
             base = _load_sched.scheduled_load_w(
@@ -2060,13 +2071,14 @@ def build_forecast(
             load_w = 0.0
         else:
             load_w = expected_load_w(
-                profile, ts,
+                profile, interval_start,
                 idle_overhead_w=effective_parasitic_w,
                 inverter_overhead_pct=overhead_pct,
                 utc_offset_seconds=utc_offset_seconds,
             )
         forecast_hours.append({
             "ts": ts,
+            "duration_h": round(duration_h, 6),
             "solar_w": round(solar_w, 1),
             # Surfacing the underlying GHI + uncapped k*GHI value lets
             # the dashboard tell whether a high solar_w prediction came

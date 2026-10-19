@@ -118,14 +118,13 @@ BATTERY_PACK_DB_PERSIST_S = 300
 # The /api/forecast/accuracy endpoint exposes a "post-fix" summary using
 # this as a `made_at` floor so the dashboard headline reflects current
 # model behavior instead of being dragged down by stale rows that age
-# out over 14 days. Most recent bump: drain model is now hybrid
-# (parasitic_w baseline + percentage of throughput) instead of
-# pure-percentage, so the 200-500W constant draw on multi-pack rigs
-# the advisor flagged as "unaccounted gap" is captured directly.
+# out over 14 days. Most recent bump: align hourly weather intervals and
+# account for the partial first forecast hour. Set conservatively after
+# the expected deployment time so pre-deploy predictions stay excluded.
 # Override via env var when shipping new fixes if updating in code is
 # inconvenient.
 FORECASTER_BREAKING_CHANGE_TS = int(
-    os.environ.get("JACKERY_FORECASTER_CUTOFF_TS", "1778565000")
+    os.environ.get("JACKERY_FORECASTER_CUTOFF_TS", "1790184600")
 )
 
 # When cloud telemetry hasn't been refreshed by the bridge in this many
@@ -530,7 +529,7 @@ async def poll_loop() -> None:
                     # port that reports OFF is left alone. Best-effort;
                     # never let this fail the poll-write path.
                     try:
-                        await _inverter_watchdog_tick(sn, t, frame_ts)
+                        await _inverter_watchdog_tick(sn, t, model_code, frame_ts)
                     except Exception as e:
                         log.debug("inverter_watchdog tick failed for %s: %s",
                                    sn, e)
@@ -2160,9 +2159,10 @@ def serialize_status(view_device_id: str | None = None) -> dict[str, Any]:
     cloud_out["devices_overview"] = _devices_overview(cloud_src)
 
     watchdog_state = None
-    if view_id and not viewing_siseli and not viewing_ecoflow:
-        watchdog_state = inverter_watchdog.state_to_dict(
-            inverter_watchdog.get_state(view_id))
+    if view_sn and not viewing_siseli and not viewing_ecoflow:
+        if _inverter_watchdog_enabled(view_sn, model_code):
+            watchdog_state = inverter_watchdog.state_to_dict(
+                inverter_watchdog.get_state(view_sn))
 
     siseli_controls = None
     if viewing_siseli and view_sn:
@@ -2237,7 +2237,7 @@ def _find_sun_phases(forecast_hours: list[dict]) -> tuple[int | None, int | None
             # transition night → day: previous hour was the last dark hour
             # (i.e., sunrise's predicted SOC)
             if i > 0 and sunrise_ts is None:
-                sunrise_ts = int(forecast_hours[i - 1]["ts"]) + 3600
+                sunrise_ts = int(forecast_hours[i - 1]["ts"])
                 sunrise_entry = forecast_hours[i - 1]
                 break
         in_day = sun
@@ -3034,12 +3034,75 @@ async def smart_charge_loop():
 
 
 # ---------- Inverter recovery watchdog (hardware-trip AC cycle) ----------
-# Strong refs for in-flight AC off->on cycle tasks: asyncio holds tasks
-# only weakly, and losing one between the "off" and the "on" is the
-# exact outage this feature exists to prevent.
+# Stored in the existing per-device parameter table; an absent override
+# preserves the 5000 Plus default and leaves every other model alone.
+_INVERTER_WATCHDOG_ENABLED_KEY = "inverter_watchdog_enabled"
+
+
+def _inverter_watchdog_enabled(device_sn: str, model_code: int | None) -> bool:
+    if not device_sn:
+        return False
+    if siseli_client.is_siseli_sn(device_sn) or ecoflow_devices.is_ecoflow_sn(device_sn):
+        return False
+    override = state.energy.get_device_param(
+        device_sn, _INVERTER_WATCHDOG_ENABLED_KEY)
+    if override is not None and override.get("value") is not None:
+        return bool(override["value"])
+    return model_code in inverter_watchdog.EXPLORER_5000_PLUS_MODEL_CODES
+
+
+def _inverter_watchdog_device_context(device_sn: str | None) -> tuple[str, int | None]:
+    if not device_sn:
+        device_sn = state.device.device_sn if state.device else None
+    if not device_sn:
+        raise HTTPException(400, "no active device — pass device_sn explicitly")
+    if siseli_client.is_siseli_sn(device_sn) or ecoflow_devices.is_ecoflow_sn(device_sn):
+        raise HTTPException(400, "AC auto recovery applies to Jackery devices only")
+    if state.device and state.device.device_sn == device_sn:
+        return device_sn, state.device.model_code
+    for device in (state.last_cloud_meta or {}).get("devices") or []:
+        if str(device.get("device_sn")) == device_sn:
+            return device_sn, device.get("model_code")
+    raise HTTPException(404, "Jackery device not found")
+
+
+# Strong refs for recovery command/cycle tasks. Separate tasks let user
+# actions retract queued ON commands without cancelling the poll loop.
 _WATCHDOG_CYCLE_TASKS: set = set()
+_WATCHDOG_CYCLE_DEVICES: dict[asyncio.Task, str] = {}
+_WATCHDOG_CYCLE_LOCK = threading.Lock()
+
+
+def _forget_watchdog_cycle(task: asyncio.Task) -> None:
+    with _WATCHDOG_CYCLE_LOCK:
+        _WATCHDOG_CYCLE_TASKS.discard(task)
+        _WATCHDOG_CYCLE_DEVICES.pop(task, None)
+
+
+def _cancel_watchdog_cycles(device_sn: str) -> None:
+    """Retract pending commands, including tasks awaiting the bridge lock.
+
+    Configuration/dismiss routes run in a worker thread. Dispatch their
+    cancellation to the owning loop; async output routes can cancel now.
+    A command already sent to the bridge cannot be retracted.
+    """
+    with _WATCHDOG_CYCLE_LOCK:
+        tasks = [task for task, sn in _WATCHDOG_CYCLE_DEVICES.items()
+                 if sn == device_sn]
+    try:
+        current_loop = asyncio.get_running_loop()
+    except RuntimeError:
+        current_loop = None
+    for task in tasks:
+        loop = task.get_loop()
+        if loop is current_loop:
+            task.cancel()
+        elif not loop.is_closed():
+            loop.call_soon_threadsafe(task.cancel)
+
 
 async def _inverter_watchdog_tick(device_sn: str, telemetry: dict,
+                                  model_code: int | None,
                                   frame_ts: float | None = None) -> None:
     """Drive the inverter-recovery state machine for one device.
 
@@ -3049,7 +3112,7 @@ async def _inverter_watchdog_tick(device_sn: str, telemetry: dict,
     output collapsed), toggle AC off → on. A port that reports OFF
     is never auto-enabled. Best-effort: any failure logs and bails —
     the inverter recovery layer must never break telemetry persistence."""
-    if not device_sn:
+    if not device_sn or not _inverter_watchdog_enabled(device_sn, model_code):
         return
     ac_on = bool(telemetry.get("ac_on"))
     out_w = telemetry.get("output_power_w")
@@ -3078,17 +3141,36 @@ async def _inverter_watchdog_tick(device_sn: str, telemetry: dict,
             device_sn, rs.consecutive_attempts,
         )
         if setter:
-            async def _cycle(sn=device_sn, set_fn=setter):
+            async def _cycle(sn=device_sn, set_fn=setter,
+                             client=state.client, recovery_state=rs,
+                             recovery_model=model_code):
+                def recovery_still_allowed():
+                    if (state.client is not client
+                            or inverter_watchdog.get_state(sn) is not recovery_state
+                            or not _inverter_watchdog_enabled(sn, recovery_model)
+                            or not recovery_state.hw_trip_active
+                            or recovery_state.pending_user_off_intents):
+                        return False
+                    last_off = recovery_state.last_user_off_ts
+                    return (not last_off or time.time() - last_off
+                            >= inverter_watchdog.DEFAULT_USER_GRACE_S)
+
                 try:
+                    if not recovery_still_allowed():
+                        return
                     await set_fn("ac", False, device_sn=sn)
                     await asyncio.sleep(2.0)
+                    if not recovery_still_allowed():
+                        return
                     await set_fn("ac", True, device_sn=sn)
                 except Exception as e:
                     log.warning("inverter_watchdog: AC cycle failed "
                                 "for %s: %s", sn, e)
             _task = asyncio.create_task(_cycle())
-            _WATCHDOG_CYCLE_TASKS.add(_task)
-            _task.add_done_callback(_WATCHDOG_CYCLE_TASKS.discard)
+            with _WATCHDOG_CYCLE_LOCK:
+                _WATCHDOG_CYCLE_TASKS.add(_task)
+                _WATCHDOG_CYCLE_DEVICES[_task] = device_sn
+            _task.add_done_callback(_forget_watchdog_cycle)
     elif action == "error" and not prior_error:
         log.error(
             "inverter_watchdog: %s hardware-trip recovery exhausted "
@@ -7427,19 +7509,66 @@ async def api_set_output(body: dict):
     setter = getattr(state.client, "set_output", None)
     if not setter:
         raise HTTPException(501, "Backend does not support output toggles")
+    off_state = None
+    off_token = None
+    target_sn = None
+    if port == "ac" and not on:
+        target_sn = device_sn or (state.device.device_sn if state.device else None)
+        if target_sn:
+            off_state = inverter_watchdog.get_state(target_sn)
+            off_token = object()
+            off_state.pending_user_off_intents.add(off_token)
+            _cancel_watchdog_cycles(target_sn)
     try:
         await setter(port, on, device_sn=device_sn)
     except DeviceClientError as e:
         raise HTTPException(400, str(e)) from e
-    # If the user just toggled AC OFF, stamp grace so lagging telemetry
-    # (port still claims ON, watts already 0) cannot look like a
-    # hardware trip and cycle AC back on during the apply window.
-    if port == "ac" and not on:
-        target_sn = device_sn or (state.device.device_sn if state.device else None)
+    else:
+        # If the user just toggled AC OFF, stamp grace so lagging telemetry
+        # (port still claims ON, watts already 0) cannot look like a
+        # hardware trip and cycle AC back on during the apply window.
         if target_sn:
+            current = inverter_watchdog.get_state(target_sn)
             inverter_watchdog.record_user_off(
-                inverter_watchdog.get_state(target_sn))
+                current, now_ts=max(time.time(), current.last_user_off_ts))
+    finally:
+        if off_state is not None and off_token is not None:
+            off_state.pending_user_off_intents.discard(off_token)
     return {"ok": True, "port": port, "on": on, "device_sn": device_sn}
+
+
+@app.get("/api/inverter_watchdog/config")
+def api_inverter_watchdog_config(device_sn: str | None = None):
+    """Return this device's persisted AC recovery preference and default."""
+    device_sn, model_code = _inverter_watchdog_device_context(device_sn)
+    override = state.energy.get_device_param(
+        device_sn, _INVERTER_WATCHDOG_ENABLED_KEY)
+    return {
+        "device_sn": device_sn,
+        "model_code": model_code,
+        "enabled": _inverter_watchdog_enabled(device_sn, model_code),
+        "source": "user" if override and override.get("value") is not None
+                  else "default",
+    }
+
+
+@app.put("/api/inverter_watchdog/config")
+def api_set_inverter_watchdog_config(body: dict):
+    """Change AC auto-recovery for one device; takes effect on the next poll."""
+    device_sn, model_code = _inverter_watchdog_device_context(
+        (body or {}).get("device_sn"))
+    enabled = (body or {}).get("enabled")
+    if not isinstance(enabled, bool):
+        raise HTTPException(400, "enabled must be true or false")
+    state.energy.set_device_param(
+        device_sn, _INVERTER_WATCHDOG_ENABLED_KEY,
+        int(enabled), source="user")
+    if not enabled:
+        _cancel_watchdog_cycles(device_sn)
+        inverter_watchdog.reset_state(device_sn)
+    log.info("inverter_watchdog: %s for %s (model_code=%s)",
+             "enabled" if enabled else "disabled", device_sn, model_code)
+    return api_inverter_watchdog_config(device_sn)
 
 
 @app.get("/api/inverter_watchdog/status")
@@ -7447,10 +7576,14 @@ def api_inverter_watchdog_status(device_sn: str | None = None):
     """Per-device watchdog snapshot for the UI. Returns attempts so far
     (0 = idle), error_message (set after the hardware-trip cycle cap),
     and timestamps. UI uses error_message to decorate the AC button."""
-    if not device_sn:
-        device_sn = state.device.device_sn if state.device else None
-    if not device_sn:
-        return {"device_sn": None, "state": None}
+    try:
+        device_sn, model_code = _inverter_watchdog_device_context(device_sn)
+    except HTTPException as e:
+        if e.status_code == 400 and "no active device" in str(e.detail):
+            return {"device_sn": None, "state": None}
+        raise
+    if not _inverter_watchdog_enabled(device_sn, model_code):
+        return {"device_sn": device_sn, "state": None}
     rs = inverter_watchdog.get_state(device_sn)
     return {"device_sn": device_sn,
             "state": inverter_watchdog.state_to_dict(rs)}
@@ -7465,6 +7598,7 @@ def api_inverter_watchdog_dismiss(device_sn: str | None = None):
         device_sn = state.device.device_sn if state.device else None
     if not device_sn:
         raise HTTPException(400, "no active device — pass device_sn explicitly")
+    _cancel_watchdog_cycles(device_sn)
     inverter_watchdog.dismiss_error(inverter_watchdog.get_state(device_sn))
     return {"ok": True, "device_sn": device_sn}
 
