@@ -321,10 +321,18 @@ def _normalize_device(raw: Any) -> dict[str, Any]:
     d["sleep_start"] = format_hhmm(ss) if ss is not None else None
     d["sleep_end"] = format_hhmm(se) if se is not None else None
     windows = []
+    # Use a dict (not set()) — this module exports set() which shadows builtins.
+    seen_ids: dict[str, None] = {}
     for w in raw.get("windows") or []:
         nw = _normalize_window(w)
-        if nw:
-            windows.append(nw)
+        if not nw:
+            continue
+        wid = nw["id"]
+        if wid in seen_ids:
+            wid = uuid.uuid4().hex[:8]
+            nw["id"] = wid
+        seen_ids[wid] = None
+        windows.append(nw)
     d["windows"] = windows
     return d
 

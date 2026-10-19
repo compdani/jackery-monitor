@@ -8653,19 +8653,10 @@ def next_spa(path: str = ""):
     return _spa_index()
 
 
-# SvelteKit file routes — return the SPA shell so authenticated refreshes
-# (session cookie) get HTML, not 404. /login and /setup are also registered
-# in api_auth (same FileResponse); FastAPI uses the first matching route.
-@app.get("/{segment}")
-def spa_client_route(segment: str):
-    if segment in _SPA_SEGMENTS:
-        return _spa_index()
-    raise HTTPException(404, "Not Found")
-
-
 # PWA manifest + service worker MUST live at the site root for the browser
 # to honor them as PWA assets — `/static/sw.js` would have a scope limited
 # to `/static/`, breaking the install + offline-shell flow.
+# Registered before /{segment} so FastAPI does not 404 them as unknown SPA paths.
 @app.get("/manifest.webmanifest")
 def manifest():
     return FileResponse(WEB_DIR / "manifest.webmanifest",
@@ -8682,6 +8673,16 @@ def service_worker():
             "Cache-Control": "no-cache",
         },
     )
+
+
+# SvelteKit file routes — return the SPA shell so authenticated refreshes
+# (session cookie) get HTML, not 404. /login and /setup are also registered
+# in api_auth (same FileResponse); FastAPI uses the first matching route.
+@app.get("/{segment}")
+def spa_client_route(segment: str):
+    if segment in _SPA_SEGMENTS:
+        return _spa_index()
+    raise HTTPException(404, "Not Found")
 
 
 # Wrap StaticFiles to send `Cache-Control: no-cache` so caching CDNs (e.g.

@@ -66,6 +66,30 @@ def test_legacy_days_migrate_on_normalize(isolated_data, monkeypatch):
     assert w.get("days") is None or "days" not in w
 
 
+def test_normalize_dedupes_duplicate_window_ids(isolated_data, monkeypatch):
+    import importlib
+    monkeypatch.setenv("JACKERY_LOAD_SCHEDULE_FILE",
+                       str(isolated_data / "load_schedule.json"))
+    importlib.reload(ls)
+    rec = ls.set("SN1", {
+        "mode": "scheduled",
+        "windows": [
+            {
+                "id": "duped", "kind": "weekly", "weekdays": [0, 1, 2, 3, 4],
+                "start": "18:00", "end": "20:00", "watts": 400,
+            },
+            {
+                "id": "duped", "kind": "weekly", "weekdays": [0, 1, 2, 3, 4],
+                "start": "20:00", "end": "22:00", "watts": 800,
+            },
+        ],
+    })
+    ids = [w["id"] for w in rec["windows"]]
+    assert len(ids) == 2
+    assert len(set(ids)) == 2
+    assert "duped" in ids
+
+
 def test_set_get_roundtrip(isolated_data, monkeypatch):
     import importlib
     monkeypatch.setenv("JACKERY_LOAD_SCHEDULE_FILE",

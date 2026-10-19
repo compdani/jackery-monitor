@@ -449,6 +449,7 @@
     windows: (Partial<LoadWindow> & { days?: string })[] | undefined,
   ): LoadWindow[] {
     if (!Array.isArray(windows)) return [];
+    const seenIds: string[] = [];
     return windows.map((w) => {
       let kind: 'once' | 'weekly' = w.kind === 'once' ? 'once' : 'weekly';
       let date = w.date ?? null;
@@ -464,8 +465,13 @@
       if (kind === 'once' && !date) {
         date = localDateStr(new Date());
       }
+      let id = w.id;
+      if (!id || seenIds.includes(id)) {
+        id = newWindowId();
+      }
+      seenIds.push(id);
       return {
-        id: w.id || newWindowId(),
+        id,
         label: w.label ?? '',
         start: w.start || '18:00',
         end: w.end || '22:00',
@@ -1252,7 +1258,7 @@
                 </tr>
               </thead>
               <tbody>
-                {#each dayEvents as { w, i } (w.id)}
+                {#each dayEvents as { w, i } (`${w.id}-${i}`)}
                   <tr>
                     <td>
                       <input class="forecast-input lw-field" type="text" bind:value={w.label} style="width:100px" />
@@ -1552,7 +1558,7 @@
             </tr>
           </thead>
           <tbody>
-            {#each accuracyDisplayRows as s, i (`${s.target ?? i}-${s.made_at ?? 0}-${s.lead_time_h ?? 0}`)}
+            {#each accuracyDisplayRows as s, i (`${s.target ?? i}-${s.made_at ?? 0}-${s.lead_time_h ?? 0}-${i}`)}
               {@const err =
                 s.predicted_soc != null && s.actual_soc != null
                   ? s.predicted_soc - s.actual_soc
