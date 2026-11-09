@@ -20,7 +20,7 @@ COPY ui/ ./
 RUN npm run build
 
 # ---------- Stage 2: Python runtime ----------
-FROM python:3.11-slim
+FROM python:3.11-slim AS legacy
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
@@ -86,3 +86,29 @@ EXPOSE 8000 8766
 # Default command runs the dashboard. The bridge service in compose
 # overrides this with `command: ["python", "bridge.py"]`.
 CMD ["python", "server.py"]
+
+
+# Go migration build. The legacy target above remains available for the cloud
+# bridge and rollback while native cloud/MQTT support is being completed.
+FROM golang:1.27-bookworm AS go-build
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN go mod download
+COPY cmd ./cmd
+COPY internal ./internal
+COPY migrations ./migrations
+RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /jackery ./cmd/jackery
+
+FROM debian:bookworm-slim AS go-runtime
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates tzdata \
+    && rm -rf /var/lib/apt/lists/*
+WORKDIR /app
+COPY --from=go-build /jackery /app/jackery
+# adapter-static currently writes web/next, not ui/build.
+COPY --from=ui-build /web/next /app/pb_public
+COPY models.json tunables.json ./
+RUN mkdir -p /data
+VOLUME ["/data"]
+EXPOSE 8000
+ENTRYPOINT ["/app/jackery"]
+CMD ["serve", "--http=0.0.0.0:8000", "--dir=/data/pb_data"]

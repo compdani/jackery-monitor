@@ -1,5 +1,28 @@
 # Solar Pow Monitor
 
+> **Go + PocketBase migration branch:** the Go server is an incomplete
+> migration, with Python retained as the behavioral reference and cloud
+> bridge. See [MIGRATION.md](MIGRATION.md) for supported APIs and remaining
+> work before switching an existing installation.
+
+Build with Go 1.27+:
+
+```sh
+go build -o jackery ./cmd/jackery
+(cd ui && npm ci && npm run build)
+./jackery serve --http=127.0.0.1:8000 --dir=./pb_data
+```
+
+The server serves `pb_public/`, `ui/build/`, or the existing Svelte output
+`web/next/` (in that order). Override with `JACKERY_UI_DIR`.
+Run the reference bridge separately (`python bridge.py`); set `BRIDGE_URL`
+if it is not on `127.0.0.1:8766`. Bootstrap the app account with the existing
+UI setup screen. PocketBase superusers are separate from the app account.
+For containers, `docker compose up -d --build` builds the Go server and a
+separate Python bridge image. Legacy development profiles explicitly build
+the Dockerfile's `legacy` target.
+
+
 [![CI](https://github.com/YanivErel-code/jackery-monitor/actions/workflows/ci.yml/badge.svg)](https://github.com/YanivErel-code/jackery-monitor/actions/workflows/ci.yml)
 [![Docker image](https://github.com/YanivErel-code/jackery-monitor/actions/workflows/docker-publish.yml/badge.svg)](https://github.com/YanivErel-code/jackery-monitor/actions/workflows/docker-publish.yml)
 [![License](https://img.shields.io/github/license/YanivErel-code/jackery-monitor)](LICENSE)
