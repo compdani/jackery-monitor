@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"database/sql"
 	"github.com/pocketbase/pocketbase"
 	"os"
 	"path/filepath"
@@ -48,5 +49,31 @@ func TestImportConfigCLIRequiresExistingKeyBeforeBootstrap(t *testing.T) {
 		if _, err := os.Stat(path); !os.IsNotExist(err) {
 			t.Fatal("created", path)
 		}
+	}
+}
+func TestHistoryDryRunLeavesDestinationUnopened(t *testing.T) {
+	source := filepath.Join(t.TempDir(), "source.db")
+	db, err := sql.Open("sqlite", source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.Exec(`CREATE TABLE samples(device_sn TEXT,bucket INTEGER,output_wh REAL); INSERT INTO samples VALUES('SN',60,10)`); err != nil {
+		t.Fatal(err)
+	}
+	db.Close()
+	dest := filepath.Join(t.TempDir(), "unopened")
+	app := pocketbase.NewWithConfig(pocketbase.Config{DefaultDataDir: dest})
+	cmd := importHistoryCommand(app)
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetArgs([]string{source, "--dry-run"})
+	if err = cmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(out.Bytes(), []byte(`"source_count":1`)) || !bytes.Contains(out.Bytes(), []byte(`"output_wh":10`)) {
+		t.Fatal(out.String())
+	}
+	if _, err = os.Stat(dest); !os.IsNotExist(err) {
+		t.Fatal("dry-run opened destination")
 	}
 }

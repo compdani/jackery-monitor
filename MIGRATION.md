@@ -586,3 +586,63 @@ Step 6a validation passed: `go build ./...`, `go vet ./...`, `go test ./...`,
 `go test -race ./internal/automation ./internal/server ./internal/bridge`, and
 `GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build ./...`. Physical rescue behavior
 has not been tested on a device; all actuation tests use injected fakes.
+
+## Step 4 — domain history conversion
+
+`import-legacy` now converts the checkpointed SQLite source rather than archiving
+content hashes. It uses immutable/read-only SQLite access, rejects nonempty WAL
+files, and commits each table atomically. Use offline checkpointed **copies**;
+the importer never checkpoints or modifies a source. Source table/primary-key
+identities are independent of file path and mutable row contents. Re-imports
+update the same destination records. Previously generated archival duplicates
+of those logical rows are removed only from PocketBase.
+
+```sh
+go run ./cmd/jackery import-legacy /copies/energy.db --dry-run
+go run ./cmd/jackery import-legacy /copies/energy.db --dir=/new/pb_data
+go run ./cmd/jackery import-legacy /copies/assistant.db --attachments=/copies/uploads --dir=/new/pb_data
+```
+
+The command prints JSON source/destination counts and Wh totals per source table.
+Dry-run validates rows, totals Wh, and verifies attachment sizes without opening
+the destination. Destination counts remain zero in dry-run. Apply reconciles
+records after writing; differences caused by later Go output corrections are
+reported rather than silently undoing those corrections. The destination server
+should be stopped while converting; do not interleave mutable source snapshots
+or overlapping independent device-history sources.
+
+Converted tables: devices/capacity overrides, accumulated samples (all original
+Wh and last_* columns), weather observations/forecasts, daily solar summaries,
+pack history, forecast predictions, device parameters, smart/solar decisions,
+automation firings, suggestions/changes, and assistant conversations/messages/
+attachments/tool runs. JSON-encoded parts/args/results and proposal values are
+decoded while original fields remain. Assistant relationships retain original
+IDs. Attachment bytes are SHA-256 verified and copied into managed destination
+storage with exclusive publication; source bytes/paths are never rewritten.
+An interrupted transaction can leave an unreferenced content-addressed copy;
+reruns reuse verified bytes. No legacy attachment is removed.
+
+Energy history/totals now sum authoritative accumulated Wh without reintegrating
+last_* watts. Raw Go observations integrate trapezoidally only against other raw
+observations across gaps <=300s. An imported/corrected minute takes precedence
+over raw records in that same minute, preventing overlap double-counting. The
+history endpoint returns Wh and snapshot means with battery_pct; pack snapshots
+at a shared timestamp are combined for weighted system_soc. Daily rollups,
+rolling/lifetime totals and cost savings are exposed. POST
+`/api/energy/correct_output` atomically updates/creates minute buckets (24-hour
+maximum), preserving other energy columns and marking Go corrections so reruns
+do not erase them. GET/POST `/api/devices/capacity` preserve overrides through
+polls and import reruns. Live samples now include normalized battery_pct/input_w/
+output_w/solar_w keys for forecast consumers.
+
+Store.List uses stable (ts,id) cursor pagination in 1000-record pages; limit=0
+means all rows. Lifetime/history callers no longer impose a 100k cap. A synthetic
+100,005-row equal-timestamp test verifies traversal and explicit limits above
+100k. Synthetic database/HTTP tests verify Wh reconciliation, mutable-source
+idempotence, correction/re-import precedence, multi-pack SOC, preserved capacity,
+weather/model/advisor/assistant relationships, attachment bytes, daily/history/
+correction contracts and unchanged source database/attachment bytes.
+
+This replaces the history/import algorithms, not all of energy_db.py's forecast,
+controller/advisor helpers or assistant_store.py's future attachment/tool APIs.
+Those Python modules still have callers and are retained for step 11.

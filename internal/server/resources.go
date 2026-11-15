@@ -138,7 +138,7 @@ func (s *Server) conversations(w http.ResponseWriter, r *http.Request, b map[str
 					rows = rows[:50]
 				}
 				for _, row := range rows {
-					messages, err := s.Store.List("messages", str(row, "id"), 0, 100000)
+					messages, err := s.Store.List("messages", str(row, "id"), 0, 0)
 					if err != nil {
 						storageError(w, err)
 						return true
@@ -193,7 +193,7 @@ func (s *Server) conversations(w http.ResponseWriter, r *http.Request, b map[str
 			return true
 		}
 		for _, collection := range []string{"messages", "tool_runs", "attachments"} {
-			rows, err := s.Store.List(collection, id, 0, 100000)
+			rows, err := s.Store.List(collection, id, 0, 0)
 			if err != nil {
 				storageError(w, err)
 				return true

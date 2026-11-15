@@ -61,7 +61,7 @@ func (s *Store) PredictionAccuracy(sn string, o AccuracyOptions) ([]map[string]a
 		o.Limit = 500
 	}
 	low := max(o.Now-int64(o.MaxAgeDays)*86400, o.SinceMadeAt)
-	predictions, e := s.List("predictions", sn, float64(low), 100000)
+	predictions, e := s.List("predictions", sn, float64(low), 0)
 	if e != nil {
 		return nil, e
 	}
@@ -145,7 +145,14 @@ func socAt(samples, packs []map[string]any, target, mainCapacity, packCapacity f
 	if closest == nil {
 		return actual, true
 	}
-	arr, _ := closest["packs"].([]any)
+	arr := []any{}
+	for _, snapshot := range packs {
+		if forecast.Number(snapshot, "ts") == forecast.Number(closest, "ts") {
+			if items, ok := snapshot["packs"].([]any); ok {
+				arr = append(arr, items...)
+			}
+		}
+	}
 	weighted, capacity := actual*mainCapacity, mainCapacity
 	for _, item := range arr {
 		p, ok := item.(map[string]any)
@@ -183,7 +190,7 @@ func (s *Store) UpsertDailySummary(sn, date string, now float64, fields map[stri
 	})
 }
 func (s *Store) DailySummary(sn string, now int64, days int) ([]map[string]any, error) {
-	rows, e := s.List("forecast_models", sn, 0, 100000)
+	rows, e := s.List("forecast_models", sn, 0, 0)
 	if e != nil {
 		return nil, e
 	}

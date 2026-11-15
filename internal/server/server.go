@@ -357,6 +357,9 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if s.resources(w, r, b) {
 		return
 	}
+	if s.energyMutation(w, r, b) {
+		return
+	}
 	if s.energy(w, r) {
 		return
 	}
@@ -495,6 +498,13 @@ func (s *Server) pollOnce(ctx context.Context) {
 	if d, ok := p["device"].(map[string]any); ok {
 		sn := str(d, "device_sn")
 		if sn != "" {
+			if previous, err := s.Store.Get("devices", sn); err == nil {
+				for _, key := range []string{"capacity_wh_override", "_capacity_corrected"} {
+					if value, ok := previous[key]; ok {
+						snap[key] = value
+					}
+				}
+			}
 			if e := s.Store.Put("devices", sn, sn, snap); e != nil {
 				s.Store.App.Logger().Error("persist device", "error", e)
 			}
@@ -508,6 +518,10 @@ func (s *Server) pollOnce(ctx context.Context) {
 				row := map[string]any{"ts": float64(time.Now().Unix()), "device_sn": sn}
 				for k, v := range t {
 					row[k] = v
+				}
+				row["battery_pct"] = t["battery_percent"]
+				for dst, src := range map[string]string{"input_w": "input_power_w", "output_w": "output_power_w", "solar_w": "solar_input_w"} {
+					row[dst] = t[src]
 				}
 				if e := s.Store.Put("samples", store.ID(), sn, row); e != nil {
 					s.Store.App.Logger().Error("persist telemetry", "error", e)
