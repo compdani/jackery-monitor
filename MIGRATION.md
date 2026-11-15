@@ -1051,3 +1051,16 @@ inference remains item 3. Step 7 is not complete.
 Validation passed: go build ./..., go vet ./..., go test ./..., and the
 CGO-free linux/arm64 build. Temporary-store tests also verify encrypted key
 roundtrip, wrong-key rejection and idempotent removal. No legacy keys touched.
+
+## Step 7 — solar-array plane inference
+
+Added NOAA solar position, GHI-to-POA transposition, hourly maximum-production
+pairing, hemisphere-aware geometry grid search, correlation confidence and
+kWp regression/peak blending. Plane validation and PocketBase per-device saves
+inherit imported flat legacy or _default values without modifying the imported
+record. Solar position, empty-history and east-facing inference reference tests
+are ported. Application endpoints remain item 4.
+Validation passed: go build ./..., go vet ./..., go test ./..., and
+CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build ./.... Temporary-store tests port
+per-device isolation and legacy-flat-default inheritance assertions; no Python
+or legacy files changed. Step 7 item 4 remains outstanding.
