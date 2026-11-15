@@ -112,9 +112,12 @@ func (e *ecoflowHTTP) Do(r *http.Request) (*http.Response, error) {
 
 type fakeSession struct{ subs atomic.Int32 }
 
-func (f *fakeSession) Subscribe(s []ecoflow.Subscription) error { f.subs.Add(int32(len(s))); return nil }
-func (f *fakeSession) Publish(string, byte, []byte) error       { return nil }
-func (f *fakeSession) Stop()                                    {}
+func (f *fakeSession) Subscribe(s []ecoflow.Subscription) error {
+	f.subs.Add(int32(len(s)))
+	return nil
+}
+func (f *fakeSession) Publish(string, byte, []byte) error { return nil }
+func (f *fakeSession) Stop()                              {}
 
 type fakeMQTT struct{ starts atomic.Int32 }
 

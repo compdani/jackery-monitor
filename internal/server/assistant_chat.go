@@ -557,7 +557,9 @@ func (s *Server) chatTurn(ctx context.Context, conv string, b map[string]any) (m
 	if err != nil {
 		return nil, err
 	}
-	sort.SliceStable(rows, func(i, j int) bool { return forecast.Number(rows[i], "created_at") < forecast.Number(rows[j], "created_at") })
+	sort.SliceStable(rows, func(i, j int) bool {
+		return forecast.Number(rows[i], "created_at") < forecast.Number(rows[j], "created_at")
+	})
 	history := []assistant.Turn{}
 	for _, r := range rows {
 		history = append(history, assistant.Turn{Role: str(r, "role"), Content: str(r, "content")})

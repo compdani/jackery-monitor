@@ -70,6 +70,9 @@ type Server struct {
 	advisor          advisorRuntime
 	// CFAccess verifies Cloudflare Access assertions when configured.
 	CFAccess *CFAccess
+	backups  backupRuntime
+	// RestoreBackup replaces PocketBase's restore-and-restart in tests.
+	RestoreBackup func(context.Context, string) error
 }
 
 func (s *Server) Register(e *core.ServeEvent) {
@@ -293,6 +296,9 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if !strings.HasPrefix(r.URL.Path, "/api/") && r.URL.Path != "/ws" {
 		s.static(w, r)
+		return
+	}
+	if s.setupRestore(w, r) {
 		return
 	}
 	if s.user(r) == nil {

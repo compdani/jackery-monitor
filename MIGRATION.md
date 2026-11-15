@@ -1269,3 +1269,44 @@ Step-11 deletion candidates after runtime cutover: assistant_agent.py,
 assistant_routes.py, assistant_store.py, claude_advisor.py, advisor_routes.py,
 claude_narrator.py, cf_access.py, anthropic_prefs.py, anthropic_creds.py,
 openai_creds.py, openai_compat.py (plus the matching server.py routes).
+
+## Step 10 — local backups (complete, 2026-11-15)
+
+**Step 10 is complete** for the Pi-only scope; no remote/NAS transport was
+re-added (those routes still return 410). `BackupLoop` checks every minute
+and runs one backup per local day at `backup_schedule_hour` (settings changes
+apply live). Manual and scheduled runs share `runBackup`: a PocketBase archive
+`jackery-YYYYMMDD-HHMMSS.zip`, then retention to `backup_keep_count`, then a
+status record with the last 20 runs and `last_ok_ts` (`/api/backup/status`
+now reports `configured: true`, `local: true`, `remote: null`). Retention only
+prunes app-created `jackery-*.zip` archives; manually placed archives and
+PocketBase auto-backups are never deleted (conservative choice).
+
+Pre-auth setup restore: `/api/backup/setup_restore/{test,snapshots,restore}`
+are served before authentication only while no account exists (403
+`already_set_up` afterwards, matching `_require_no_user`). They list and
+restore archives already present in `<pb_data>/backups` (copy one there via
+USB/scp); nothing can be uploaded pre-auth. Restore validates the archive
+name and existence, then uses PocketBase's restore-and-restart. Key-inclusive
+recovery: with the default key location inside the PocketBase data
+directory, the at-rest key travels inside the archive; when
+`JACKERY_AT_REST_KEY_FILE` points outside it (e.g. the legacy Compose path),
+that key file must be backed up separately. The Svelte setup page has no
+restore button yet; the API is ready for it (UI follow-up, not a blocker).
+
+Tests cover retention with foreign archives, status history, once-per-day
+scheduling, manual restore validation and the pre-auth gate before and after
+setup (restore uses an injected fake so tests never restart the process).
+
+Step-11 deletion candidates: backup.py, backup_creds.py, backup_discover.py
+(remote parts were already retired).
+
+## Status after steps 7–10 (2026-11-15)
+
+Steps 1–10 are complete for the Raspberry Pi scope. Remaining before
+deleting Python (step 11, separate): real hardware/cloud/browser validation on
+the Pi, Docker image execution, the optional setup-page restore button, and
+removing the Python runtime. The documented deliberate differences (advisor
+bundle rendering, OpenAI chat-completions for reviews, on-demand row_soc
+counters, Cloudflare Access account mapping, local-only retention scope)
+are conservative choices that can be revisited by the owner.

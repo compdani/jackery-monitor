@@ -64,6 +64,7 @@ func main() {
 		go s.EcoFlowLoop(ctx)
 		go s.BMSLoop(ctx)
 		go s.AdvisorLoop(ctx)
+		go s.BackupLoop(ctx)
 		go s.RunNativeRealtime(ctx)
 		go s.Poll(ctx, 10*time.Second)
 		go s.PollTesla(ctx)

@@ -198,7 +198,9 @@ func (s *Server) suggestions(st *store.Store, sn, status string, limit int) ([]m
 		}
 		out = append(out, r)
 	}
-	sort.SliceStable(out, func(i, j int) bool { return forecast.Number(out[i], "created_at") > forecast.Number(out[j], "created_at") })
+	sort.SliceStable(out, func(i, j int) bool {
+		return forecast.Number(out[i], "created_at") > forecast.Number(out[j], "created_at")
+	})
 	if limit > 0 && len(out) > limit {
 		out = out[:limit]
 	}
@@ -693,7 +695,9 @@ func (s *Server) advisorRoutes(w http.ResponseWriter, r *http.Request) bool {
 				out = append(out, r)
 			}
 		}
-		sort.SliceStable(out, func(i, j int) bool { return forecast.Number(out[i], "applied_at") > forecast.Number(out[j], "applied_at") })
+		sort.SliceStable(out, func(i, j int) bool {
+			return forecast.Number(out[i], "applied_at") > forecast.Number(out[j], "applied_at")
+		})
 		jsonOut(w, 200, map[string]any{"device_sn": nilEmpty(sn), "changes": out[:min(50, len(out))]})
 	default:
 		return false
