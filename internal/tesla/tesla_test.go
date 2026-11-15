@@ -216,6 +216,46 @@ func TestNavigateRESTSendsOrdersAndStopsOnFailure(t *testing.T) {
 	}
 }
 
+func TestSendGPSPausesBetweenStopsAndSendOne(t *testing.T) {
+	var at []time.Time
+	h := &fakeHTTP{handle: func(r *http.Request) (int, string) {
+		at = append(at, time.Now())
+		return 200, `{"response":{"result":true,"reason":""}}`
+	}}
+	c := testClient(h, TransportREST)
+	c.StopDelay = 40 * time.Millisecond
+	if _, err := c.Navigate(context.Background(), []Stop{{Lat: 1, Lng: 1}, {Lat: 2, Lng: 2}, {Lat: 3, Lng: 3}}); err != nil {
+		t.Fatal(err)
+	}
+	if len(at) != 3 || at[1].Sub(at[0]) < 40*time.Millisecond || at[2].Sub(at[1]) < 40*time.Millisecond {
+		t.Fatalf("no pause between stops: %v", at)
+	}
+	res, err := c.SendOne(context.Background(), Stop{Lat: 5, Lng: 5}, OrderPrepend)
+	if err != nil || !res.OK || res.Order != 1 {
+		t.Fatalf("send one %+v %v", res, err)
+	}
+	var body map[string]any
+	_ = json.Unmarshal([]byte(h.bodies[3]), &body)
+	if body["order"] != 1.0 || body["lat"] != 5.0 {
+		t.Fatalf("body %v", body)
+	}
+	// A cancelled context stops the pause and reports the stop as failed.
+	ctx, cancel := context.WithCancel(context.Background())
+	c.StopDelay = time.Hour
+	go func() { time.Sleep(20 * time.Millisecond); cancel() }()
+	res2, _ := c.Navigate(ctx, []Stop{{Lat: 1, Lng: 1}, {Lat: 2, Lng: 2}})
+	if len(res2) != 2 || !res2[0].OK || res2[1].OK {
+		t.Fatalf("cancel results %+v", res2)
+	}
+	for _, p := range []string{"", "append", "prepend", "x"} {
+		o, err := OrderForPlacement(p)
+		want := map[string]int32{"": 2, "append": 2, "prepend": 1}[p]
+		if (p == "x") != (err != nil) || (err == nil && o != want) {
+			t.Errorf("placement %q -> %d %v", p, o, err)
+		}
+	}
+}
+
 func geocodeFake(t *testing.T, fleet func(*http.Request) (int, string)) *fakeHTTP {
 	return &fakeHTTP{handle: func(r *http.Request) (int, string) {
 		if strings.HasPrefix(r.URL.String(), GeocodeURL) {

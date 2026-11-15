@@ -14,6 +14,12 @@ import (
 	"strings"
 )
 
+// Pause between per-stop GPS commands.
+const (
+	DefaultStopDelaySeconds = 10
+	MaxStopDelaySeconds     = 60
+)
+
 // MaxStops is the most navigation stops sent in one batch. The car's
 // navigation does not show more, so this is a hard limit.
 const MaxStops = 8
@@ -74,6 +80,9 @@ type Config struct {
 	NavTransport string `json:"nav_transport,omitempty"`
 	NavMethod    string `json:"nav_method,omitempty"`
 	NavOrderMode string `json:"nav_order_mode,omitempty"`
+	// NavStopDelaySeconds is the pause between per-stop GPS commands; the
+	// car drops stops sent back to back. Default 10.
+	NavStopDelaySeconds int `json:"nav_stop_delay_seconds,omitempty"`
 	// GoogleAPIKey (Geocoding API) turns stop coordinates into the place IDs
 	// that navigation_waypoints_request needs. Secret, like ClientSecret.
 	GoogleAPIKey string `json:"google_api_key,omitempty"`
@@ -111,6 +120,9 @@ func (c Config) WithDefaults() Config {
 	}
 	if c.NavOrderMode == "" {
 		c.NavOrderMode = OrderEnum
+	}
+	if c.NavStopDelaySeconds <= 0 {
+		c.NavStopDelaySeconds = DefaultStopDelaySeconds
 	}
 	if c.ChargeEfficiency <= 0 {
 		c.ChargeEfficiency = 0.9
@@ -152,6 +164,9 @@ func (c Config) Validate() error {
 	}
 	if c.NavOrderMode != OrderEnum && c.NavOrderMode != OrderPosition && c.NavOrderMode != OrderOneThree {
 		return errors.New("nav_order_mode must be enum, position or one_three")
+	}
+	if c.NavStopDelaySeconds > MaxStopDelaySeconds {
+		return fmt.Errorf("nav_stop_delay_seconds must be at most %d", MaxStopDelaySeconds)
 	}
 	if c.ChargeEfficiency > 1 {
 		return errors.New("charge_efficiency must be in (0, 1]")

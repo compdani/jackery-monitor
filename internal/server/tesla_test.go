@@ -178,7 +178,7 @@ func TestTeslaOAuthAndNavigateREST(t *testing.T) {
 	}
 
 	fake.commands = nil
-	w = request(h, "POST", "/api/tesla/navigate", `{"method":"gps","stops":[{"lat":30.1,"lng":-97.1},{"lat":30.2,"lng":-97.2},{"lat":30.3,"lng":-97.3}]}`, token)
+	w = request(h, "POST", "/api/tesla/navigate", `{"method":"gps","stop_delay_seconds":0,"stops":[{"lat":30.1,"lng":-97.1},{"lat":30.2,"lng":-97.2},{"lat":30.3,"lng":-97.3}]}`, token)
 	if w.Code != 200 {
 		t.Fatalf("navigate %d %s", w.Code, w.Body)
 	}
@@ -192,11 +192,46 @@ func TestTeslaOAuthAndNavigateREST(t *testing.T) {
 	}
 	// Per-request override of the order semantics.
 	fake.commands = nil
-	request(h, "POST", "/api/tesla/navigate", `{"method":"gps","stops":[{"lat":30.1,"lng":-97.1},{"lat":30.2,"lng":-97.2}],"order_mode":"position"}`, token)
+	request(h, "POST", "/api/tesla/navigate", `{"method":"gps","stop_delay_seconds":0,"stops":[{"lat":30.1,"lng":-97.1},{"lat":30.2,"lng":-97.2}],"order_mode":"position"}`, token)
 	if fake.commands[0]["order"] != 1.0 || fake.commands[1]["order"] != 2.0 {
 		t.Fatalf("position orders %v", fake.commands)
 	}
 	if w := request(h, "GET", "/api/tesla/navigate/last", "", token); !strings.Contains(w.Body.String(), `"status":"done"`) {
+		t.Fatalf("last job %s", w.Body)
+	}
+}
+
+func TestTeslaNavigateOne(t *testing.T) {
+	_, h, token, fake := teslaSetup(t)
+	connectTesla(t, h, token)
+	if w := request(h, "GET", "/api/tesla/status", "", token); !strings.Contains(w.Body.String(), `"nav_stop_delay_seconds":10`) {
+		t.Fatalf("default delay missing: %s", w.Body)
+	}
+	for _, tc := range []struct {
+		body  string
+		order float64
+	}{
+		{`{"lat":30.1,"lng":-97.1}`, 2},
+		{`{"lat":30.1,"lng":-97.1,"position":"append"}`, 2},
+		{`{"lat":30.1,"lng":-97.1,"position":"prepend"}`, 1},
+		{`{"lat":30.1,"lng":-97.1,"position":"prepend","order":3}`, 3},
+	} {
+		fake.commands = nil
+		w := request(h, "POST", "/api/tesla/navigate/one", tc.body, token)
+		if w.Code != 200 || len(fake.commands) != 1 || fake.commands[0]["order"] != tc.order || fake.commands[0]["lat"] != 30.1 {
+			t.Fatalf("%s: %d %s %v", tc.body, w.Code, w.Body, fake.commands)
+		}
+	}
+	if w := request(h, "POST", "/api/tesla/navigate/one", `{"lat":30.1,"lng":-97.1,"position":"middle"}`, token); w.Code != 400 {
+		t.Fatalf("bad position accepted: %d", w.Code)
+	}
+	if w := request(h, "POST", "/api/tesla/navigate/one", `{"lat":0,"lng":0}`, token); w.Code != 400 {
+		t.Fatalf("0,0 accepted: %d", w.Code)
+	}
+	if w := request(h, "POST", "/api/tesla/navigate", `{"stop_delay_seconds":61,"stops":[{"lat":30.1,"lng":-97.1}]}`, token); w.Code != 400 {
+		t.Fatalf("delay 61 accepted: %d", w.Code)
+	}
+	if w := request(h, "GET", "/api/tesla/navigate/last", "", token); !strings.Contains(w.Body.String(), `"position":"prepend"`) {
 		t.Fatalf("last job %s", w.Body)
 	}
 }

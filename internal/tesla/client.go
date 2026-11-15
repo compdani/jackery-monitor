@@ -47,7 +47,9 @@ type Client struct {
 	// handshake round trip. Optional.
 	Sessions *cache.SessionCache
 	// Places resolves stops to Google place IDs for MethodWaypoints.
-	Places    *PlaceResolver
+	Places *PlaceResolver
+	// StopDelay is the pause between per-stop GPS commands (zero: none).
+	StopDelay time.Duration
 	UserAgent string
 	Now       func() time.Time
 	// PollInterval is how often Wake checks whether the car came online.
@@ -283,10 +285,42 @@ func (c *Client) navigateWaypoints(ctx context.Context, stops []Stop) ([]StopRes
 }
 
 func (c *Client) navigateGPS(ctx context.Context, stops []Stop) ([]StopResult, error) {
+	orders := make([]int32, len(stops))
+	for i := range stops {
+		orders[i] = OrderFor(c.Config.NavOrderMode, i)
+	}
+	return c.sendGPS(ctx, stops, orders)
+}
+
+// SendOne sends a single stop with an explicit order value, e.g. to append
+// it to or prepend it before the trip already on the car. The car must be
+// awake.
+func (c *Client) SendOne(ctx context.Context, s Stop, order int32) (StopResult, error) {
+	if err := ValidateStops([]Stop{s}); err != nil {
+		return StopResult{}, err
+	}
+	res, err := c.sendGPS(ctx, []Stop{s}, []int32{order})
+	if len(res) == 0 {
+		return StopResult{Order: order}, err
+	}
+	return res[0], err
+}
+
+// sendGPS sends one navigation_gps_request per stop, StopDelay apart,
+// stopping at the first failure.
+func (c *Client) sendGPS(ctx context.Context, stops []Stop, orders []int32) ([]StopResult, error) {
 	results := make([]StopResult, 0, len(stops))
 	sendAll := func(send func(Stop, int32) error) {
 		for i, s := range stops {
-			order := OrderFor(c.Config.NavOrderMode, i)
+			if i > 0 && c.StopDelay > 0 {
+				select {
+				case <-ctx.Done():
+					results = append(results, StopResult{Index: i, Order: orders[i], Error: ctx.Err().Error()})
+					return
+				case <-time.After(c.StopDelay):
+				}
+			}
+			order := orders[i]
 			res := StopResult{Index: i, Order: order}
 			if err := send(s, order); err != nil {
 				res.Error = err.Error()

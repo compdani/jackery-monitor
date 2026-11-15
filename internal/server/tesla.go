@@ -385,6 +385,8 @@ func (s *Server) teslaRoutes(w http.ResponseWriter, r *http.Request, b map[strin
 		jsonOut(w, 200, map[string]any{"ok": true, "state": "online"})
 	case "POST /navigate":
 		s.teslaNavigate(w, r, b)
+	case "POST /navigate/one":
+		s.teslaNavigateOne(w, r, b)
 	case "GET /navigate/last":
 		s.tesla.mu.Lock()
 		job := s.tesla.job
@@ -597,8 +599,7 @@ func (s *Server) teslaNavigate(w http.ResponseWriter, r *http.Request, b map[str
 	}
 	// Per-request overrides make it possible to compare transports and
 	// order semantics on the car without changing the saved config.
-	transport, err := optString(b, "transport", tesla.TransportSigned, tesla.TransportREST)
-	if err != nil {
+	if cfg, err = teslaNavOverrides(cfg, b); err != nil {
 		fail(w, 400, err.Error())
 		return
 	}
@@ -615,19 +616,96 @@ func (s *Server) teslaNavigate(w http.ResponseWriter, r *http.Request, b map[str
 	if method != "" {
 		cfg.NavMethod = method
 	}
-	if transport != "" {
-		cfg.NavTransport = transport
-	}
 	if order != "" {
 		cfg.NavOrderMode = order
 	}
+	opts := map[string]string{"method": cfg.NavMethod, "transport": cfg.NavTransport, "order_mode": cfg.NavOrderMode}
+	if cfg.NavMethod != tesla.MethodWaypoints {
+		opts["stop_delay_seconds"] = strconv.Itoa(max(cfg.NavStopDelaySeconds, 0))
+	}
+	s.teslaRunJob(w, b, cfg, req.Stops, opts, func(ctx context.Context, c *tesla.Client) ([]tesla.StopResult, error) {
+		return c.Navigate(ctx, req.Stops)
+	})
+}
+
+// teslaNavigateOne sends a single stop placed before (prepend) or after
+// (append) the trip already on the car, leaving the rest of the trip alone.
+func (s *Server) teslaNavigateOne(w http.ResponseWriter, r *http.Request, b map[string]any) {
+	cfg, err := s.teslaConfig()
+	if err != nil {
+		fail(w, 409, "tesla not configured")
+		return
+	}
+	var stop tesla.Stop
+	if err := fromMap(b, &stop); err != nil {
+		fail(w, 400, "invalid stop")
+		return
+	}
+	if err := stop.Validate(); err != nil {
+		fail(w, 400, err.Error())
+		return
+	}
+	placement := str(b, "position")
+	order, err := tesla.OrderForPlacement(placement)
+	if err != nil {
+		fail(w, 400, err.Error())
+		return
+	}
+	if placement == "" {
+		placement = tesla.PlaceAppend
+	}
+	// Raw order value, for trying other numbering on the car.
+	if v, ok := b["order"].(float64); ok {
+		if v < 0 || v > 255 || v != float64(int32(v)) {
+			fail(w, 400, "order must be a small whole number")
+			return
+		}
+		order = int32(v)
+	}
+	if cfg, err = teslaNavOverrides(cfg, b); err != nil {
+		fail(w, 400, err.Error())
+		return
+	}
+	opts := map[string]string{"method": "single", "position": placement, "transport": cfg.NavTransport}
+	s.teslaRunJob(w, b, cfg, []tesla.Stop{stop}, opts, func(ctx context.Context, c *tesla.Client) ([]tesla.StopResult, error) {
+		res, err := c.SendOne(ctx, stop, order)
+		return []tesla.StopResult{res}, err
+	})
+}
+
+// teslaNavOverrides applies the per-request transport and stop delay.
+func teslaNavOverrides(cfg tesla.Config, b map[string]any) (tesla.Config, error) {
+	transport, err := optString(b, "transport", tesla.TransportSigned, tesla.TransportREST)
+	if err != nil {
+		return cfg, err
+	}
+	if transport != "" {
+		cfg.NavTransport = transport
+	}
+	if v, ok := b["stop_delay_seconds"]; ok && v != nil {
+		f, ok := v.(float64)
+		if !ok || f < 0 || f > tesla.MaxStopDelaySeconds || f != float64(int(f)) {
+			return cfg, fmt.Errorf("stop_delay_seconds must be a whole number from 0 to %d", tesla.MaxStopDelaySeconds)
+		}
+		// 0 is allowed here (no pause), unlike the saved setting.
+		cfg.NavStopDelaySeconds = int(f)
+		if f == 0 {
+			cfg.NavStopDelaySeconds = -1
+		}
+	}
+	return cfg, nil
+}
+
+// teslaRunJob wakes the car and runs send as the current navigation job,
+// in the background when the body has "wait": false.
+func (s *Server) teslaRunJob(w http.ResponseWriter, b map[string]any, cfg tesla.Config, stops []tesla.Stop, opts map[string]string, send func(context.Context, *tesla.Client) ([]tesla.StopResult, error)) {
 	wait := true
 	if v, ok := b["wait"].(bool); ok {
 		wait = v
 	}
 	buf := make([]byte, 6)
 	_, _ = rand.Read(buf)
-	job := &teslaJob{ID: base64.RawURLEncoding.EncodeToString(buf), Status: "running", Started: time.Now().Unix(), Stops: req.Stops, Options: map[string]string{"method": cfg.NavMethod, "transport": cfg.NavTransport, "order_mode": cfg.NavOrderMode}}
+	job := &teslaJob{ID: base64.RawURLEncoding.EncodeToString(buf), Status: "running", Started: time.Now().Unix(), Stops: stops, Options: opts}
 	if !s.tesla.cmdMu.TryLock() {
 		fail(w, 409, "another navigation batch is being sent")
 		return
@@ -635,13 +713,14 @@ func (s *Server) teslaNavigate(w http.ResponseWriter, r *http.Request, b map[str
 	s.tesla.mu.Lock()
 	s.tesla.job = job
 	s.tesla.mu.Unlock()
+	delay := time.Duration(max(cfg.NavStopDelaySeconds, 0)) * time.Second
 	run := func() {
 		defer s.tesla.cmdMu.Unlock()
 		// Not tied to the HTTP request: the phone can return to Flex while
-		// the car wakes.
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		// the car wakes. Allow for the pauses between stops.
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute+time.Duration(len(stops))*delay)
 		defer cancel()
-		results, err := s.teslaSendStops(ctx, cfg, req.Stops)
+		results, err := s.teslaSend(ctx, cfg, delay, send)
 		s.tesla.mu.Lock()
 		job.Results, job.Finished = results, time.Now().Unix()
 		job.Status = "done"
@@ -677,18 +756,19 @@ func (s *Server) teslaNavigate(w http.ResponseWriter, r *http.Request, b map[str
 	jsonOut(w, status, out)
 }
 
-func (s *Server) teslaSendStops(ctx context.Context, cfg tesla.Config, stops []tesla.Stop) ([]tesla.StopResult, error) {
+func (s *Server) teslaSend(ctx context.Context, cfg tesla.Config, delay time.Duration, send func(context.Context, *tesla.Client) ([]tesla.StopResult, error)) ([]tesla.StopResult, error) {
 	c, err := s.teslaClient(cfg, cfg.NavTransport == tesla.TransportSigned)
 	if err != nil {
 		return nil, err
 	}
+	c.StopDelay = delay
 	wctx, cancel := context.WithTimeout(ctx, 75*time.Second)
 	err = c.Wake(wctx)
 	cancel()
 	if err != nil {
 		return nil, err
 	}
-	results, err := c.Navigate(ctx, stops)
+	results, err := send(ctx, c)
 	if c.Sessions != nil {
 		s.saveTeslaSessionCache(c.Sessions)
 	}
@@ -740,6 +820,7 @@ func (s *Server) teslaStatus() map[string]any {
 		out["nav_transport"] = cfg.NavTransport
 		out["nav_order_mode"] = cfg.NavOrderMode
 		out["nav_method"] = cfg.NavMethod
+		out["nav_stop_delay_seconds"] = cfg.NavStopDelaySeconds
 		out["has_google_api_key"] = cfg.GoogleAPIKey != ""
 		out["polling_disabled"] = cfg.PollingDisabled
 	}

@@ -27,7 +27,7 @@ The field numbers come from the community `tesla-protocol` definitions, and the 
 | `enum` (default) | 0 replace, then 2 append |
 | `position` | 1, 2, 3, … |
 
-`POST /api/tesla/navigate` accepts `transport` and `order_mode` (`enum` = 0,2,2…, `position` = 1,2,3…, `one_three` = 1,3,3…) overrides for testing on the car.
+`POST /api/tesla/navigate` accepts `transport` and `order_mode` (`enum` = 0,2,2…, `position` = 1,2,3…, `one_three` = 1,3,3…) overrides for testing on the car, and `stop_delay_seconds` (0–60; default from the saved `nav_stop_delay_seconds`, 10) for the pause between per-stop GPS commands.
 
 ## One-time setup
 
@@ -59,6 +59,7 @@ All require the app session or bearer token, except the public key and the OAuth
 | `GET /api/tesla/oauth/start` | Authorize URL (`?redirect=1` redirects) |
 | `POST /api/tesla/oauth/forget` | Delete owner tokens |
 | `POST /api/tesla/wake` | Wake the car and wait until online |
+| `POST /api/tesla/navigate/one` | One stop added to the car's current trip: `{"lat","lng","position":"append"\|"prepend", "wait"}` (append = order 2, prepend = order 1; `"order":n` sends a raw value). Same job record as `/navigate`. |
 | `POST /api/tesla/navigate` | `{"stops":[{"lat","lng"}…≤8], "wait":true, "transport", "order_mode"}`. Stops at the first failed stop. With `"wait":false` it returns 202; poll `GET /api/tesla/navigate/last`. |
 | `GET /api/tesla/charging/sessions` | Sessions with kWh and cost (`?limit=`) |
 | `POST /api/tesla/charging/poll` | Poll now |

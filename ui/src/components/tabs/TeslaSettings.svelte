@@ -14,6 +14,7 @@
     nav_transport?: string;
     nav_method?: string;
     nav_order_mode?: string;
+    nav_stop_delay_seconds?: number;
     google_api_key?: string;
     has_google_api_key?: boolean;
     charge_efficiency?: number;
@@ -341,6 +342,15 @@
         </div>
       </div>
       <div class="settings-row">
+        <label class="settings-label" for="t-delay">
+          <span class="settings-label-text">Seconds between stops</span>
+          <span class="settings-hint">Pause between GPS commands; the car drops stops sent too fast. The app can override it.</span>
+        </label>
+        <div class="settings-control">
+          <input id="t-delay" type="number" min="1" max="60" step="1" bind:value={cfg.nav_stop_delay_seconds} />
+        </div>
+      </div>
+      <div class="settings-row">
         <label class="settings-label" for="t-eff">
           <span class="settings-label-text">Charging efficiency</span>
           <span class="settings-hint">Battery kWh ÷ wall kWh, used to price home charging.</span>
@@ -400,7 +410,9 @@
       <span class="hint">{job.status} · {fmtTime(job.started)}</span>
     </div>
     <p class="hint" style="margin:6px 0 8px">
-      {job.options?.method ?? 'gps'} · {job.options?.transport} · order {job.options?.order_mode}
+      {job.options?.method ?? 'gps'} · {job.options?.transport}
+      {#if job.options?.position}· {job.options.position}{:else}· order {job.options?.order_mode}{/if}
+      {#if job.options?.stop_delay_seconds}· {job.options.stop_delay_seconds}s apart{/if}
       {#if job.error}<br />{job.error}{/if}
     </p>
     {#each job.results ?? [] as r (r.index)}

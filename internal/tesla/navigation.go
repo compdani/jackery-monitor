@@ -49,6 +49,23 @@ const (
 	OrderAppend  int32 = 2
 )
 
+// Single-stop placement in the car's existing trip (RemoteNavTripOrder_E).
+const (
+	PlaceAppend  = "append"
+	PlacePrepend = "prepend"
+)
+
+// OrderForPlacement maps a single-stop placement to its order value.
+func OrderForPlacement(p string) (int32, error) {
+	switch p {
+	case "", PlaceAppend:
+		return OrderAppend, nil
+	case PlacePrepend:
+		return OrderPrepend, nil
+	}
+	return 0, fmt.Errorf("position must be %s or %s", PlaceAppend, PlacePrepend)
+}
+
 // OrderFor returns the `order` value for the stop at index i (0-based).
 func OrderFor(mode string, i int) int32 {
 	switch mode {
