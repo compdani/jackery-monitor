@@ -296,6 +296,14 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
+		if r.Method == "GET" {
+			b = map[string]any{}
+			for k, values := range r.URL.Query() {
+				if len(values) > 0 {
+					b[k] = values[len(values)-1]
+				}
+			}
+		}
 		out, e := s.Bridge.Call(r.Context(), method, b)
 		if e != nil {
 			fail(w, 502, "bridge: "+e.Error())
@@ -413,14 +421,15 @@ func (s *Server) Poll(ctx context.Context, interval time.Duration) {
 	if interval <= 0 {
 		interval = 10 * time.Second
 	}
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
+	timer := time.NewTimer(interval)
+	defer timer.Stop()
 	for {
 		s.pollOnce(ctx)
+		timer.Reset(s.pollInterval(interval))
 		select {
 		case <-ctx.Done():
 			return
-		case <-ticker.C:
+		case <-timer.C:
 		}
 	}
 }

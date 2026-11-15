@@ -57,7 +57,7 @@ func (s *Server) energy(w http.ResponseWriter, r *http.Request) bool {
 		}
 		bucket, _ := strconv.Atoi(r.URL.Query().Get("bucket_s"))
 		if bucket != 900 && bucket != 1800 && bucket != 3600 {
-			bucket = 3600
+			bucket = 900
 		}
 		bucket = max(bucket, int(math.Ceil(float64(hours*3600)/1500/900))*900)
 		points := map[int64]map[string]any{}

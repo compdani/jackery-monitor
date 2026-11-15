@@ -16,13 +16,9 @@ func (s *Server) resources(w http.ResponseWriter, r *http.Request, b map[string]
 	key := ""
 	switch path {
 	case "/api/settings":
-		key = "settings"
+		return s.settingsRoute(w, r, b)
 	case "/api/device_prefs":
-		collection = "device_prefs"
-		key = r.URL.Query().Get("device_sn")
-		if key == "" {
-			key = str(b, "device_sn")
-		}
+		return s.devicePrefs(w, r, b)
 	case "/api/cost/plan":
 		key = "cost_plan"
 	case "/api/forecast/load_schedule":
@@ -42,7 +38,11 @@ func (s *Server) resources(w http.ResponseWriter, r *http.Request, b map[string]
 			} else if e != nil {
 				storageError(w, e)
 			} else {
-				jsonOut(w, 200, v)
+				if path == "/api/cost/plan" {
+					jsonOut(w, 200, map[string]any{"plan": v, "presets": costPresets()})
+				} else {
+					jsonOut(w, 200, v)
+				}
 			}
 			return true
 		}
@@ -58,7 +58,11 @@ func (s *Server) resources(w http.ResponseWriter, r *http.Request, b map[string]
 		if e := s.Store.SaveSecret(s.Key, "location", b); e != nil {
 			storageError(w, e)
 		} else {
-			jsonOut(w, 200, b)
+			if path == "/api/cost/plan" {
+				jsonOut(w, 200, map[string]any{"plan": b})
+			} else {
+				jsonOut(w, 200, b)
+			}
 		}
 		return true
 	default:
@@ -83,7 +87,11 @@ func (s *Server) resources(w http.ResponseWriter, r *http.Request, b map[string]
 		if e != nil {
 			storageError(w, e)
 		} else {
-			jsonOut(w, 200, v)
+			if path == "/api/cost/plan" {
+				jsonOut(w, 200, map[string]any{"plan": v, "presets": costPresets()})
+			} else {
+				jsonOut(w, 200, v)
+			}
 		}
 		return true
 	}
@@ -99,7 +107,11 @@ func (s *Server) resources(w http.ResponseWriter, r *http.Request, b map[string]
 		if e := s.Store.Put(collection, key, "", b); e != nil {
 			storageError(w, e)
 		} else {
-			jsonOut(w, 200, b)
+			if path == "/api/cost/plan" {
+				jsonOut(w, 200, map[string]any{"plan": b})
+			} else {
+				jsonOut(w, 200, b)
+			}
 		}
 		return true
 	}

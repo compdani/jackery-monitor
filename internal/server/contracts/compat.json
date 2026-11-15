@@ -1,0 +1,27 @@
+{
+  "openai": {
+    "label": "OpenAI",
+    "base_url": null,
+    "hint": "api.openai.com \u2014 official OpenAI keys (sk-\u2026)"
+  },
+  "openrouter": {
+    "label": "OpenRouter",
+    "base_url": "https://openrouter.ai/api/v1",
+    "hint": "openrouter.ai \u2014 one key for many models (sk-or-\u2026)"
+  },
+  "groq": {
+    "label": "Groq",
+    "base_url": "https://api.groq.com/openai/v1",
+    "hint": "api.groq.com \u2014 fast inference (gsk_\u2026)"
+  },
+  "ollama": {
+    "label": "Ollama",
+    "base_url": "http://host.docker.internal:11434/v1",
+    "hint": "Local Ollama \u2014 base URL usually ends in /v1"
+  },
+  "custom": {
+    "label": "Custom",
+    "base_url": null,
+    "hint": "Any OpenAI-compatible endpoint \u2014 set Base URL below"
+  }
+}
