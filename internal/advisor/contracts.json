@@ -1,0 +1,191 @@
+{
+ "default_model": "claude-opus-4-7",
+ "max_tokens": 32000,
+ "max_turns": 20,
+ "narrator_system": "You explain solar-battery automation decisions in 1-2 plain English sentences for a homeowner. No jargon, no preamble. Lead with the action and the reason. Mention the relevant numbers (predicted SOC, target, deficit) only when they clarify the decision.",
+ "query_tools": [
+  {
+   "description": "Time-bucketed power flow + SOC samples. Returns one row per bucket: ts (ISO), soc, in_w_avg (integrated W during the bucket = true average power), out_w_avg, solar_w_avg, ac_input_w_avg, plus _instant fields (last sample seen, useful for spotting spikes the average smooths out).",
+   "input_schema": {
+    "properties": {
+     "bucket_s": {
+      "description": "60=1min, 300=5min, 900=15min, 3600=1h, 86400=daily",
+      "enum": [
+       60,
+       300,
+       900,
+       3600,
+       86400
+      ],
+      "type": "integer"
+     },
+     "end_iso": {
+      "type": "string"
+     },
+     "start_iso": {
+      "description": "ISO 8601 UTC. e.g. '2026-04-29T06:00:00'",
+      "type": "string"
+     }
+    },
+    "required": [
+     "start_iso",
+     "end_iso",
+     "bucket_s"
+    ],
+    "type": "object"
+   },
+   "name": "query_samples"
+  },
+  {
+   "description": "Predicted-vs-actual SOC pairs for past forecast targets. Each row: made_at (when prediction was made), target (when it was for), lead_time_h, predicted_soc, actual_soc, error pp.",
+   "input_schema": {
+    "properties": {
+     "end_iso": {
+      "type": "string"
+     },
+     "max_lead_h": {
+      "description": "Optional: only include predictions with lead time \u2264 this",
+      "type": "integer"
+     },
+     "start_iso": {
+      "description": "Filter: target time >= this",
+      "type": "string"
+     }
+    },
+    "required": [
+     "start_iso",
+     "end_iso"
+    ],
+    "type": "object"
+   },
+   "name": "query_predictions"
+  },
+  {
+   "description": "Smart-charge decision history joined to actual sunrise SOC. Each row: decided_at, action (on/off/skip), mode, predicted_sunrise_soc_pct, actual_sunrise_soc_pct, target_sunrise_soc_pct, reason.",
+   "input_schema": {
+    "properties": {
+     "end_iso": {
+      "type": "string"
+     },
+     "start_iso": {
+      "type": "string"
+     }
+    },
+    "required": [
+     "start_iso",
+     "end_iso"
+    ],
+    "type": "object"
+   },
+   "name": "query_decisions"
+  },
+  {
+   "description": "Hourly weather observations (Open-Meteo). Each row: hour (interval END), ghi_w_m2 (mean of preceding hour), cloud_cover_pct (instantaneous at hour).",
+   "input_schema": {
+    "properties": {
+     "end_iso": {
+      "type": "string"
+     },
+     "start_iso": {
+      "type": "string"
+     }
+    },
+    "required": [
+     "start_iso",
+     "end_iso"
+    ],
+    "type": "object"
+   },
+   "name": "query_weather"
+  },
+  {
+   "description": "Latest per-expansion-battery snapshot (5000 Plus + packs). Each row: pack_sn, soc_pct, input_w, output_w, internal_temp_c, error_code. Compare simultaneous SOCs against balance_spread_trigger_pp in the starter context.",
+   "input_schema": {
+    "properties": {},
+    "type": "object"
+   },
+   "name": "query_battery_packs"
+  }
+ ],
+ "review_tool": {
+  "description": "Submit your final review. Call this exactly once when you have a diagnosis.",
+  "input_schema": {
+   "properties": {
+    "anomalies": {
+     "items": {
+      "properties": {
+       "description": {
+        "type": "string"
+       },
+       "severity": {
+        "enum": [
+         "info",
+         "warn"
+        ],
+        "type": "string"
+       }
+      },
+      "required": [
+       "description",
+       "severity"
+      ],
+      "type": "object"
+     },
+     "type": "array"
+    },
+    "config_suggestions": {
+     "items": {
+      "properties": {
+       "confidence": {
+        "enum": [
+         "low",
+         "medium",
+         "high"
+        ],
+        "type": "string"
+       },
+       "current_value": {
+        "type": "number"
+       },
+       "proposed_value": {
+        "type": "number"
+       },
+       "reasoning": {
+        "type": "string"
+       },
+       "target": {
+        "enum": [
+         "smart_charge.max_charge_w",
+         "smart_charge.target_sunrise_soc_pct",
+         "smart_charge.max_on_duration_minutes"
+        ],
+        "type": "string"
+       }
+      },
+      "required": [
+       "target",
+       "current_value",
+       "proposed_value",
+       "reasoning",
+       "confidence"
+      ],
+      "type": "object"
+     },
+     "type": "array"
+    },
+    "summary": {
+     "description": "1-3 sentence plain-English overview of what the data shows.",
+     "type": "string"
+    }
+   },
+   "required": [
+    "summary",
+    "config_suggestions",
+    "anomalies"
+   ],
+   "type": "object"
+  },
+  "name": "submit_algorithm_review"
+ },
+ "system": "You are a careful, honest algorithm advisor for a residential solar-battery dashboard. The user runs a deterministic forecaster + smart-charge controller against real telemetry; you review yesterday's results to suggest tunable improvements.\n\nHow to investigate:\n - You have query_* tools to fetch any window of data at any resolution. Use them \u2014 the starter context is intentionally a summary, not the full dataset. Drill into anomalies, predicted-vs-actual gaps, and overnight drain patterns.\n - Combine queries: when prediction error is high at a specific target hour, query the actual samples + weather for that window to diagnose the cause (load model wrong? solar regression off? brief spike vs sustained drain?).\n - Reconcile SOC drain with reported power. SOC change x capacity should match the integrated power delta. Big mismatches = measurement gap (inverter overhead, SOC drift, unmeasured loads).\n - Open-Meteo hourly GHI at timestamp T is the mean for (T-1h,T], while query_samples buckets start at T. Compare GHI at T with on-site solar in the PRECEDING hour. Cloud cover is an instantaneous value at T; do not treat it as that hour's average.\n - For expansion packs, compare the simultaneous max-minus-min SOC spread to the configured balance_spread_trigger_pp. With zero error codes, a below-trigger spread that is stable or improving is normal monitoring context, not an anomaly. Flag a spread only when it reaches the trigger, worsens substantially, or comes with pack errors.\n\nHard rules for output:\n - Only suggest changes to parameters in the submit tool's enum. Code/model bugs go in `anomalies` with severity 'warn'.\n - Each suggestion: numeric current_value + numeric proposed_value + reasoning citing specific data + confidence (high/medium/low).\n - High confidence = systematic, multi-day, clear cause. Medium = plausible signal but few datapoints. Low = speculative.\n - Returning zero suggestions is FINE if the system is tracking well. Say so in `summary`.\n - target_sunrise_soc_pct must be in [15, 60].\n - When done, call submit_algorithm_review. Don't keep querying indefinitely; commit to a diagnosis once the data supports one.\n"
+}

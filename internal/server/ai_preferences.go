@@ -32,6 +32,16 @@ func (s *Server) aiPreferences(w http.ResponseWriter, r *http.Request, b map[str
 		prefs["provider"] = active["provider"]
 	}
 	if r.Method == "POST" {
+		known := false
+		for k, v := range b {
+			if _, ok := prefs[k]; ok && v != nil {
+				known = true
+			}
+		}
+		if !providerOnly && !known {
+			fail(w, 400, "at least one preference field required")
+			return true
+		}
 		if providerOnly && str(b, "provider") != "openai" && str(b, "provider") != "anthropic" {
 			fail(w, 400, "invalid provider")
 			return true

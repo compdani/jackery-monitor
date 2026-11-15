@@ -37,7 +37,7 @@ func TestSmartNarrationOptionalAndProviderAware(t *testing.T) {
 				if body[key] != 200.0 {
 					t.Fatal(body)
 				}
-				return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(`{"content":[{"text":"Charging now."}],"choices":[{"message":{"content":"Charging now."}}]}`))}, nil
+				return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(`{"content":[{"type":"text","text":"Charging now."}],"choices":[{"message":{"content":"Charging now."}}]}`))}, nil
 			})}
 			cfg := automation.NormalizeSmart(map[string]any{"claude_enabled": true})
 			p := &automation.ChargePlan{Action: "on"}

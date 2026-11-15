@@ -2,6 +2,7 @@ package server
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -33,9 +34,23 @@ func TestMigrationSecretEndpoints(t *testing.T) {
 	var setup map[string]any
 	json.Unmarshal(w.Body.Bytes(), &setup)
 	token := setup["token"].(string)
+	status := 200
+	s.AIHTTP = &http.Client{Transport: narrationTransport(func(r *http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: status, Body: io.NopCloser(strings.NewReader(`{"content":[{"type":"text","text":"o"}],"choices":[{"message":{"content":"o"}}]}`))}, nil
+	})}
 	for _, provider := range []string{"openai", "anthropic"} {
 		path := "/api/" + provider + "/key"
-		if w = request(h, "POST", path, `{"api_key":"SENSITIVE"}`, token); w.Code != 200 {
+		prefix := map[string]string{"openai": "sk-", "anthropic": "sk-ant-"}[provider]
+		// Keys are validated (prefix, then a one-token call) before saving.
+		if w = request(h, "POST", path, `{"api_key":"SENSITIVE"}`, token); w.Code != 400 {
+			t.Fatal(w.Code, w.Body.String())
+		}
+		status = 401
+		if w = request(h, "POST", path, `{"api_key":"`+prefix+`SENSITIVE"}`, token); w.Code != 400 || !strings.Contains(w.Body.String(), "key validation failed") {
+			t.Fatal(w.Code, w.Body.String())
+		}
+		status = 200
+		if w = request(h, "POST", path, `{"api_key":"`+prefix+`SENSITIVE"}`, token); w.Code != 200 {
 			t.Fatal(w.Code, w.Body.String())
 		}
 		w = request(h, "GET", path, "", token)

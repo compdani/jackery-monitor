@@ -65,6 +65,9 @@ type Server struct {
 	EcoFlowHTTP   ecoflow.HTTPDoer
 	EcoFlowMQTT   ecoflow.MQTTTransport
 	BLEAdapter    ble.Adapter
+	// AnthropicBaseURL redirects Anthropic calls to a fixture in tests.
+	AnthropicBaseURL string
+	advisor          advisorRuntime
 }
 
 func (s *Server) Register(e *core.ServeEvent) {
@@ -310,6 +313,10 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.bmsInit().sessions.Handler().ServeHTTP(w, r)
 		return
 	}
+	if p == "/api/assistant/attachments" && r.Method == "POST" {
+		s.uploadAttachment(w, r)
+		return
+	}
 	var b map[string]any
 	if r.Method == "POST" || r.Method == "PUT" {
 		var e error
@@ -457,6 +464,12 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if s.energy(w, r) {
+		return
+	}
+	if s.advisorRoutes(w, r) {
+		return
+	}
+	if s.assistantRoutes(w, r, b) {
 		return
 	}
 	if s.aiRoutes(w, r, b) {

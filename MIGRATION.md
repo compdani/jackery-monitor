@@ -1188,3 +1188,58 @@ ecoflow_client.py, ecoflow_creds.py, ecoflow_delta3.py, ecoflow_devices.py,
 ecoflow_reconnect.py, bms_ble.py, bms_devices.py, jbd_bms.py, ble_inspector.py,
 ble_routes.py, plus the retired siseli_local capture package (keep any pure
 decoder still imported by the retained Python runtime until step 11).
+
+## Step 9a — assistant tools, narrator and advisor (2026-11-15)
+
+- `internal/assistant.Agent` runs a bounded multi-turn tool loop against
+  Anthropic Messages (thinking/tool_use blocks echoed unchanged) or an
+  OpenAI-compatible chat-completions endpoint. Tool results are JSON-encoded
+  and truncated (20 kB assistant, 80 kB advisor). Tool schemas, the write/read
+  sets and the MIME allowlist are exported verbatim from assistant_agent.py
+  into `internal/assistant/contracts/tools.json`.
+- Assistant chat ports run_chat_turn: system prompt with tab/context, auto
+  title, history, 6-turn cap; write tools become `pending` tool runs (turn
+  ends) unless autopilot, in which case they execute and are recorded as
+  `applied`. `fit_device_param` with apply=false runs immediately. Approve
+  executes the stored call (error → run status `error`, HTTP 400); deny marks
+  `denied`; non-pending runs return 400. All 27 tools dispatch to Go services
+  and results pass through the ported secret redaction. The chat model is the
+  provider's advisor-role model, as in Python.
+- Attachments: multipart upload with the 10 MiB limit and MIME allowlist,
+  content-addressed private storage under `<pb_data>/assistant_attachments`,
+  binding to the user message, image/PDF blocks and text excerpts on the
+  newest turn, download and delete. Files are removed only when unreferenced
+  and never for imported (legacy) attachments.
+- Provider prefs: POST `/api/anthropic/prefs` requires at least one known
+  field; key POSTs validate the prefix and a one-token call before saving
+  (Python's validate_key). Narration ports claude_narrator (system prompt,
+  `_plan_to_prompt`, 200 tokens, 512-character cap, failures are no-ops).
+- Advisor: prompt, query tools and the submit_algorithm_review schema are
+  exported from claude_advisor.py (`internal/advisor/contracts.json`) with
+  `tunables.json` embedded. Reviews use adaptive thinking with the saved
+  effort and the optional 1M-context header, persist validated config
+  suggestions and anomalies after the 7-day pending expiry in one
+  transaction, and keep Python's integer ids. Query tools (samples,
+  predictions, decisions, weather, packs) port the bucket clamp, lookback,
+  window validation and 500-row caps. `/api/algorithm/*` routes cover list,
+  202 background review_now with polling, preview, changes, dismiss and
+  apply. Apply re-validates whitelist/range/scope and writes the smart-charge
+  config, audit change and status in one transaction. `AdvisorLoop` runs one
+  review per device per day at `advisor_trigger_hour` local time.
+
+Deliberate differences (conservative; no owner decision required):
+- The advisor starter bundle carries the same facts but is rendered as JSON
+  rather than Python's prose formatter, and omits the git-log "recent code
+  changes" section (no repository on the Pi).
+- OpenAI-provider reviews use chat completions with function tools instead
+  of the Responses API, so OpenAI-compatible gateways keep working; reasoning
+  effort is not sent on that path.
+- Streaming is not used; Go has no SDK timeout restriction and requests are
+  bounded by context.
+
+Tests use scripted fixture providers only: tool approval/denial/autopilot,
+thinking-block echo, attachments, redaction and gating
+(tests/test_assistant_read_tools.py, test_assistant_store.py), query_samples
+validation and bucket clamp (test_advisor_query_samples.py), review
+persistence/whitelist filtering, apply/dismiss/audit, background jobs, daily
+scheduling, the narrator prompt and OpenAI tool calls.
