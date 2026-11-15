@@ -36,21 +36,21 @@ func TestSmartReferencePlans(t *testing.T) {
 		}
 	}
 }
-func TestSolarReferenceActions(t *testing.T) {
+func TestSolarReferencePlans(t *testing.T) {
 	b, e := os.ReadFile("testdata/solar_charge.json")
 	if e != nil {
 		t.Fatal(e)
 	}
 	var cases []struct {
 		Input    SolarInput
-		Expected ChargePlan
+		Expected SolarChargePlan
 	}
 	if e = json.Unmarshal(b, &cases); e != nil {
 		t.Fatal(e)
 	}
 	for i, c := range cases {
 		p := SolarPlan(c.Input)
-		if p.Action != c.Expected.Action || p.Mode != c.Expected.Mode {
+		if !reflect.DeepEqual(p, c.Expected) {
 			t.Errorf("case %d got %+v want %+v", i, p, c.Expected)
 		}
 	}

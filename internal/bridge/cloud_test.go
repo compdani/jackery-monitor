@@ -78,13 +78,16 @@ func TestCloudLoginPollingAndContested(t *testing.T) {
 	}))
 	defer h.Close()
 	c := &Cloud{Email: "test@example.com", Password: "secret", BaseURL: h.URL}
-	n := &Native{Cloud: c}
+	n := &Native{Cloud: c, PollInterval: func() time.Duration { return 0 }}
 	got, e := n.Call(context.Background(), "poll", nil)
 	if e != nil {
 		t.Fatal(e)
 	}
 	if object(got["device"])["device_type"] != "box" || object(got["telemetry"])["battery_percent"] != 26. {
 		t.Fatal(got)
+	}
+	if ts, ok := got["last_update_ts"].(float64); !ok || ts <= 0 {
+		t.Fatal("native observation has no timestamp", got)
 	}
 	contested = true
 	if _, e = n.Call(context.Background(), "poll", nil); !errors.Is(e, ErrSessionContested) {
@@ -100,4 +103,15 @@ func TestCloudLoginPollingAndContested(t *testing.T) {
 func ioJSON(w http.ResponseWriter, s string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.Write([]byte(s))
+}
+
+func TestCloudMissingSOCDoesNotBecomeCriticalZero(t *testing.T) {
+	for _, raw := range []any{nil, "invalid", true, -1, 101} {
+		if got := CloudTelemetry(map[string]any{"rb": raw})["battery_percent"]; got != nil {
+			t.Fatalf("%v became %v", raw, got)
+		}
+	}
+	if got := CloudTelemetry(map[string]any{"rb": 0})["battery_percent"]; got != float64(0) {
+		t.Fatal("real zero lost", got)
+	}
 }

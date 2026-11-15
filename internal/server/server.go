@@ -12,27 +12,67 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/coder/websocket"
+	"github.com/compdani/jackery-monitor/internal/automation"
+	"github.com/compdani/jackery-monitor/internal/ble"
 	"github.com/compdani/jackery-monitor/internal/bridge"
+	"github.com/compdani/jackery-monitor/internal/ecoflow"
+	"github.com/compdani/jackery-monitor/internal/forecast"
+	"github.com/compdani/jackery-monitor/internal/kasa"
+	"github.com/compdani/jackery-monitor/internal/siseli"
 	"github.com/compdani/jackery-monitor/internal/store"
 	"github.com/pocketbase/pocketbase/core"
 )
 
 type Server struct {
-	Store       *store.Store
-	Bridge      bridge.Client
-	PublicDir   string
-	Key         []byte
-	assistant   assistantRuntime
-	controllers controllerRuntime
-	setupMu     sync.Mutex
-	mu          sync.RWMutex
-	snapshot    map[string]any
-	tesla       teslaRuntime
+	actions       actionArbiter
+	watchdog      watchdogRuntime
+	f7            f7Runtime
+	SmartPlug     SmartPlug
+	SmartForecast SmartForecastSource
+	RescueSwitch  automation.Switch
+	rescue        rescueRuntime
+	solarStarted  map[string]bool
+	solar         smartRuntime
+	smart         smartRuntime
+	AIHTTP        *http.Client
+	Store         *store.Store
+	Bridge        bridge.Client
+	PublicDir     string
+	Key           []byte
+	assistant     assistantRuntime
+	controllers   controllerRuntime
+	setupMu       sync.Mutex
+	mu            sync.RWMutex
+	snapshot      map[string]any
+	tesla         teslaRuntime
+	// Weather and SolarForecast are injectable for fixture HTTP tests.
+	Weather       *forecast.WeatherClient
+	SolarForecast *forecast.SolarClient
+	forecasts     forecastRuntime
+	// KasaBackend replaces the native LAN transport in tests.
+	KasaBackend kasa.Backend
+	fleet       fleetRuntime
+	// Fleet transports are injectable so tests never reach real accounts or radios.
+	SiseliHTTP    siseli.HTTPDoer
+	SiseliBaseURL string
+	EcoFlowHTTP   ecoflow.HTTPDoer
+	EcoFlowMQTT   ecoflow.MQTTTransport
+	BLEAdapter    ble.Adapter
+	// AnthropicBaseURL redirects Anthropic calls to a fixture in tests.
+	AnthropicBaseURL string
+	advisor          advisorRuntime
+	// CFAccess verifies Cloudflare Access assertions when configured.
+	CFAccess *CFAccess
+	backups  backupRuntime
+	// RestoreBackup replaces PocketBase's restore-and-restart in tests.
+	RestoreBackup func(context.Context, string) error
 }
 
 func (s *Server) Register(e *core.ServeEvent) {
@@ -167,7 +207,30 @@ func (s *Server) auth(w http.ResponseWriter, r *http.Request) bool {
 			s.session(w, u)
 		} else {
 			u, e := s.Store.App.FindFirstRecordByData("users", "username", name)
-			if e != nil || !u.ValidatePassword(pass) {
+			valid := e == nil && u.ValidatePassword(pass)
+			if e == nil && !valid {
+				legacy, err := s.Store.Secret(s.Key, "legacy_user:"+u.Id)
+				if err == nil && u.ValidatePassword(str(legacy, "_transition_password")) && store.VerifyLegacyPassword(pass, str(legacy, "password_hash")) {
+					err = s.Store.App.RunInTransaction(func(app core.App) error {
+						user, err := app.FindRecordById("users", u.Id)
+						if err != nil {
+							return err
+						}
+						user.SetPassword(pass)
+						if err = app.Save(user); err != nil {
+							return err
+						}
+						return (&store.Store{App: app}).Delete("credentials", "legacy_user:"+u.Id)
+					})
+					if err != nil {
+						fail(w, 500, "password migration failed; retry login")
+						return true
+					}
+					u, e = s.Store.App.FindRecordById("users", u.Id)
+					valid = e == nil
+				}
+			}
+			if !valid {
 				fail(w, 401, "invalid credentials")
 				return true
 			}
@@ -227,11 +290,15 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if s.teslaPublic(w, r) {
 		return
 	}
+	s.cfAccessSession(w, r)
 	if s.auth(w, r) {
 		return
 	}
 	if !strings.HasPrefix(r.URL.Path, "/api/") && r.URL.Path != "/ws" {
 		s.static(w, r)
+		return
+	}
+	if s.setupRestore(w, r) {
 		return
 	}
 	if s.user(r) == nil {
@@ -250,6 +317,15 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	p := r.URL.Path
+	if strings.HasPrefix(p, "/api/ble/") {
+		// The inspector handler owns its request bodies and status codes.
+		s.bmsInit().sessions.Handler().ServeHTTP(w, r)
+		return
+	}
+	if p == "/api/assistant/attachments" && r.Method == "POST" {
+		s.uploadAttachment(w, r)
+		return
+	}
 	var b map[string]any
 	if r.Method == "POST" || r.Method == "PUT" {
 		var e error
@@ -273,10 +349,10 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		jsonOut(w, 200, map[string]any{"ok": true, "view_device_id": id})
 		return
 	}
-	rpc := map[string]string{"/api/reconnect": "connect", "/api/set_output": "set_output", "/api/pause_polling": "pause_polling", "/api/resume_polling": "resume_polling", "/api/select_device": "select_device", "/api/auth/status": "auth_status", "/api/auth/credentials": "set_credentials", "/api/auth/forget": "clear_credentials", "/api/events": "get_events"}
+	rpc := map[string]string{"/api/reconnect": "connect", "/api/set_output": "set_output", "/api/pause_polling": "pause_polling", "/api/resume_polling": "resume_polling", "/api/select_device": "select_device", "/api/auth/status": "auth_status", "/api/auth/credentials": "set_credentials", "/api/auth/forget": "clear_credentials", "/api/events": "get_events", "/api/debug/raw_props": "get_raw_props", "/api/devices/probe_results": "probe_results", "/api/devices/probe_now": "cloud_probe", "/api/debug/cloud_probe": "cloud_probe"}
 	if method, ok := rpc[p]; ok {
 		expected := "POST"
-		if p == "/api/auth/status" || p == "/api/events" {
+		if p == "/api/auth/status" || p == "/api/events" || strings.HasPrefix(p, "/api/debug/") || p == "/api/devices/probe_results" {
 			expected = "GET"
 		}
 		if r.Method != expected {
@@ -296,6 +372,27 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
+		if b == nil {
+			b = map[string]any{}
+		}
+		{
+			for k, values := range r.URL.Query() {
+				if _, exists := b[k]; !exists && len(values) > 0 {
+					b[k] = values[len(values)-1]
+				}
+			}
+		}
+		if p == "/api/set_output" && str(b, "port") == "ac" && b["on"] == false {
+			sn := str(b, "device_sn")
+			if sn == "" {
+				s.mu.RLock()
+				d, _ := s.snapshot["device"].(map[string]any)
+				sn = str(d, "device_sn")
+				s.mu.RUnlock()
+			}
+			done := s.watchdogUserOff(sn)
+			defer done()
+		}
 		out, e := s.Bridge.Call(r.Context(), method, b)
 		if e != nil {
 			fail(w, 502, "bridge: "+e.Error())
@@ -304,13 +401,63 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if out == nil {
 			out = map[string]any{"ok": true}
 		}
+		if p == "/api/events" {
+			since, _ := strconv.ParseFloat(str(b, "since"), 64)
+			events, err := s.f7Events(since)
+			if err != nil {
+				storageError(w, err)
+				return
+			}
+			switch rows := out["events"].(type) {
+			case []map[string]any:
+				events = append(events, rows...)
+			case []any:
+				for _, v := range rows {
+					if e, ok := v.(map[string]any); ok {
+						events = append(events, e)
+					}
+				}
+			}
+			sort.SliceStable(events, func(i, j int) bool { return forecast.Number(events[i], "ts") < forecast.Number(events[j], "ts") })
+			limit, _ := strconv.Atoi(str(b, "limit"))
+			if limit <= 0 {
+				limit = 100
+			}
+			limit = min(limit, 500)
+			out["events"] = events[max(0, len(events)-limit):]
+		}
+
 		jsonOut(w, 200, out)
 		return
 	}
 	if s.teslaRoutes(w, r, b) {
 		return
 	}
+	if s.solarChargeRoutes(w, r, b) {
+		return
+	}
+	if s.smartChargeRoutes(w, r, b) {
+		return
+	}
+	if s.rescueRoutes(w, r, b) {
+		return
+	}
+	if s.f7Routes(w, r, b) {
+		return
+	}
+	if s.watchdogRoutes(w, r, b) {
+		return
+	}
+	if s.siseliRoutes(w, r, b) || s.ecoflowRoutes(w, r, b) || s.bmsRoutes(w, r, b) {
+		return
+	}
+	if s.kasaRoutes(w, r, b) {
+		return
+	}
 	if s.automationRoutes(w, r, b) {
+		return
+	}
+	if s.forecastRoutes(w, r, b) {
 		return
 	}
 	if s.predictionRoutes(w, r) {
@@ -319,7 +466,19 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if s.resources(w, r, b) {
 		return
 	}
+	if s.packRoutes(w, r) {
+		return
+	}
+	if s.energyMutation(w, r, b) {
+		return
+	}
 	if s.energy(w, r) {
+		return
+	}
+	if s.advisorRoutes(w, r) {
+		return
+	}
+	if s.assistantRoutes(w, r, b) {
 		return
 	}
 	if s.aiRoutes(w, r, b) {
@@ -362,6 +521,9 @@ func (s *Server) status(r *http.Request) map[string]any {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	out := map[string]any{"connection_status": "disconnected", "connection_error": nil, "device": nil, "telemetry": nil, "last_update_ts": nil, "history": []any{}, "battery_packs": []any{}, "backend": "bridge", "mock_mode": false, "cloud": map[string]any{}, "energy": nil, "low_battery_threshold": 20}
+	if _, native := s.Bridge.(*bridge.Native); native {
+		out["backend"] = "native"
+	}
 	for k, v := range s.snapshot {
 		out[k] = v
 	}
@@ -396,6 +558,9 @@ func (s *Server) status(r *http.Request) map[string]any {
 				}
 			}
 			cloud["selected_device_id"] = view
+			if device, ok := cached["device"].(map[string]any); ok && str(device, "device_id") != "" {
+				cloud["selected_device_id"] = device["device_id"]
+			}
 			out["cloud"] = cloud
 			for _, k := range []string{"device", "telemetry", "last_update_ts", "battery_packs"} {
 				if v, ok := cached[k]; ok {
@@ -404,6 +569,13 @@ func (s *Server) status(r *http.Request) map[string]any {
 			}
 		}
 	}
+	if values, _, err := s.settingValues(); err == nil {
+		out["low_battery_threshold"] = values["low_battery_threshold"]
+	}
+	if d, ok := out["device"].(map[string]any); ok {
+		out["device"] = s.deviceAlias(d)
+	}
+	s.mergeFleetStatus(out)
 	return out
 }
 func (s *Server) Poll(ctx context.Context, interval time.Duration) {
@@ -413,18 +585,24 @@ func (s *Server) Poll(ctx context.Context, interval time.Duration) {
 	if interval <= 0 {
 		interval = 10 * time.Second
 	}
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
+	timer := time.NewTimer(interval)
+	defer timer.Stop()
 	for {
 		s.pollOnce(ctx)
+		timer.Reset(s.pollInterval(interval))
 		select {
 		case <-ctx.Done():
 			return
-		case <-ticker.C:
+		case <-timer.C:
 		}
 	}
 }
 func (s *Server) pollOnce(ctx context.Context) {
+	var p map[string]any
+	defer func() { s.rescueTick(ctx, float64(time.Now().UnixNano())/1e9, p) }()
+	if s.Bridge == nil {
+		return
+	}
 	p, e := s.Bridge.Call(ctx, "poll", nil)
 	if e != nil {
 		s.mu.Lock()
@@ -432,31 +610,86 @@ func (s *Server) pollOnce(ctx context.Context) {
 		s.mu.Unlock()
 		return
 	}
-	snap := map[string]any{"connection_status": "connected", "connection_error": nil, "last_update_ts": float64(time.Now().Unix())}
-	for _, k := range []string{"device", "telemetry", "cloud", "source", "battery_packs"} {
-		snap[k] = p[k]
+	s.acceptSnapshot(ctx, p)
+}
+func (s *Server) acceptSnapshot(ctx context.Context, p map[string]any) {
+	snap := map[string]any{"connection_status": "connected", "connection_error": nil, "last_update_ts": p["last_update_ts"]}
+	for _, k := range []string{"device", "telemetry", "cloud", "source", "battery_packs", "connection_status", "connection_error"} {
+		if v, ok := p[k]; ok {
+			snap[k] = v
+		}
 	}
 	s.mu.Lock()
 	s.snapshot = snap
 	s.mu.Unlock()
+	fleet, _ := p["cloud"].(map[string]any)
+	entries, _ := fleet["devices_telemetry"].(map[string]any)
+	if len(entries) > 0 {
+		for _, raw := range entries {
+			entry, ok := raw.(map[string]any)
+			if !ok {
+				continue
+			}
+			snapshot := map[string]any{"device": entry["device"], "telemetry": entry["telemetry"], "last_update_ts": entry["ts"], "battery_packs": entry["battery_packs"], "pack_ts": entry["pack_ts"]}
+			s.persistObservation(ctx, snapshot)
+		}
+	} else {
+		s.persistObservation(ctx, p)
+	}
+}
+func (s *Server) persistObservation(ctx context.Context, p map[string]any) {
+	stamp, _ := p["last_update_ts"].(float64)
+	if stamp <= 0 {
+		return
+	}
+	snap := map[string]any{"device": p["device"], "telemetry": p["telemetry"], "last_update_ts": stamp, "battery_packs": p["battery_packs"]}
 	if d, ok := p["device"].(map[string]any); ok {
 		sn := str(d, "device_sn")
 		if sn != "" {
+			if previous, err := s.Store.Get("devices", sn); err == nil {
+				oldDevice, _ := previous["device"].(map[string]any)
+				merged := map[string]any{}
+				for key, value := range oldDevice {
+					merged[key] = value
+				}
+				for key, value := range d {
+					merged[key] = value
+				}
+				merged["last_seen"] = stamp
+				snap["device"] = merged
+
+				for _, key := range []string{"capacity_wh_override", "_capacity_corrected"} {
+					if value, ok := previous[key]; ok {
+						snap[key] = value
+					}
+				}
+			}
 			if e := s.Store.Put("devices", sn, sn, snap); e != nil {
 				s.Store.App.Logger().Error("persist device", "error", e)
 			}
 			if t, ok := p["telemetry"].(map[string]any); ok {
-				if packs, ok := p["battery_packs"].([]any); ok && len(packs) > 0 {
-					if e := s.Store.Put("battery_packs", store.ID(), sn, map[string]any{"ts": float64(time.Now().Unix()), "packs": packs}); e != nil {
+				if packs, ok := p["battery_packs"].([]any); ok {
+					packStamp, _ := p["pack_ts"].(float64)
+					if packStamp <= 0 {
+						packStamp = stamp
+					}
+					if e := s.Store.Put("battery_packs", fmt.Sprintf("packs:%s:%.6f", sn, packStamp), sn, map[string]any{"ts": packStamp, "packs": packs}); e != nil {
 						s.Store.App.Logger().Error("persist battery packs", "error", e)
 					}
 				}
+				s.watchdogTick(ctx, sn, t, d["model_code"], stamp)
+				s.f7Tick(ctx, sn, t)
 				s.evaluateRules(ctx, sn, t)
-				row := map[string]any{"ts": float64(time.Now().Unix()), "device_sn": sn}
+				row := map[string]any{"ts": stamp, "device_sn": sn}
 				for k, v := range t {
 					row[k] = v
 				}
-				if e := s.Store.Put("samples", store.ID(), sn, row); e != nil {
+				row["solar_charge_diverted_w"] = s.solarTelemetry(ctx, sn, t, stamp)
+				row["battery_pct"] = t["battery_percent"]
+				for dst, src := range map[string]string{"input_w": "input_power_w", "output_w": "output_power_w", "solar_w": "solar_input_w"} {
+					row[dst] = t[src]
+				}
+				if e := s.Store.Put("samples", fmt.Sprintf("observation:%s:%.6f", sn, stamp), sn, row); e != nil {
 					s.Store.App.Logger().Error("persist telemetry", "error", e)
 				}
 			}

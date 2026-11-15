@@ -2,17 +2,15 @@ package main
 
 import (
 	"context"
-	"fmt"
+	"github.com/compdani/jackery-monitor/internal/ble/blehw"
 	"github.com/compdani/jackery-monitor/internal/bridge"
 	"github.com/compdani/jackery-monitor/internal/server"
 	"github.com/compdani/jackery-monitor/internal/store"
 	_ "github.com/compdani/jackery-monitor/migrations"
 	"github.com/pocketbase/pocketbase"
 	"github.com/pocketbase/pocketbase/core"
-	"github.com/spf13/cobra"
 	"log"
 	"os"
-	"path/filepath"
 	"time"
 )
 
@@ -24,25 +22,10 @@ func env(key, fallback string) string {
 }
 func main() {
 	app := pocketbase.New()
-	app.RootCmd.AddCommand(&cobra.Command{Use: "import-legacy DATABASE", Short: "Archive a legacy SQLite database into PocketBase collections (source stays read-only)", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
-		if err := app.Bootstrap(); err != nil {
-			return err
-		}
-		defer app.ResetBootstrapState()
-		if err := app.RunAllMigrations(); err != nil {
-			return err
-		}
-		path, err := filepath.Abs(args[0])
-		if err != nil {
-			return err
-		}
-		counts, err := (&store.Store{App: app}).ImportLegacy(cmd.Context(), path)
-		if err != nil {
-			return err
-		}
-		fmt.Println(counts)
-		return nil
-	}})
+	app.RootCmd.AddCommand(importConfigCommand(app))
+	app.RootCmd.AddCommand(importHistoryCommand(app))
+	app.RootCmd.AddCommand(diagnoseCommand(app))
+
 	app.OnServe().BindFunc(func(e *core.ServeEvent) error {
 		key, err := store.LoadKey(env("JACKERY_AT_REST_KEY_FILE", app.DataDir()+"/.jackery-creds.key"))
 		if err != nil {
@@ -58,12 +41,31 @@ func main() {
 			}
 		}
 		s := &server.Server{Store: &store.Store{App: app}, Key: key, PublicDir: public, Bridge: &bridge.RPC{Address: env("BRIDGE_URL", "127.0.0.1:8766")}}
-		if env("BACKEND", "bridge") == "native" {
+		s.BLEAdapter = blehw.New()
+		s.CFAccess = server.CFAccessFromEnv()
+		if env("BACKEND", "native") == "native" {
 			s.UseNativeCloud()
 		}
 		s.Register(e)
 		ctx, cancel := context.WithCancel(context.Background())
-		app.OnTerminate().BindFunc(func(e *core.TerminateEvent) error { cancel(); return e.Next() })
+		app.OnTerminate().BindFunc(func(e *core.TerminateEvent) error {
+			cancel()
+			if closer, ok := s.Bridge.(interface{ Close() }); ok {
+				closer.Close()
+			}
+			return e.Next()
+		})
+		go s.RescueLoop(ctx)
+		go s.SmartChargeLoop(ctx)
+		go s.SolarChargeLoop(ctx)
+		go s.ForecastRecorderLoop(ctx)
+		go s.KasaReconcileLoop(ctx)
+		go s.SiseliLoop(ctx)
+		go s.EcoFlowLoop(ctx)
+		go s.BMSLoop(ctx)
+		go s.AdvisorLoop(ctx)
+		go s.BackupLoop(ctx)
+		go s.RunNativeRealtime(ctx)
 		go s.Poll(ctx, 10*time.Second)
 		go s.PollTesla(ctx)
 		return e.Next()

@@ -100,3 +100,8 @@ go build ./internal/ble/... ./internal/ecoflow/... ./internal/kasa/... ./interna
 go vet ./internal/ble/... ./internal/ecoflow/... ./internal/kasa/... ./internal/siseli/...
 go test -race ./internal/ble/... ./internal/ecoflow/... ./internal/kasa/... ./internal/siseli/...
 ```
+
+Owner decision (2026-11-15): Siseli local packet capture, Scapy/ARP interception
+in `siseli_local/core.py`, and the capture runner are **retired, delete in step
+11, no Go port**. This supersedes the capture-supervision gaps above. The
+cloud/portal adapter and pure decoders it needs remain supported.

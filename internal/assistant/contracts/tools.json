@@ -1,0 +1,514 @@
+{
+ "mime": [
+  "application/pdf",
+  "image/gif",
+  "image/jpeg",
+  "image/png",
+  "image/webp",
+  "text/csv",
+  "text/markdown",
+  "text/plain"
+ ],
+ "read": [
+  "get_charge_status",
+  "get_cost_plan",
+  "get_daily_summary",
+  "get_device_params",
+  "get_energy_daily",
+  "get_energy_totals",
+  "get_events",
+  "get_forecast",
+  "get_load_schedule",
+  "get_location",
+  "get_solar_array",
+  "get_tab_snapshot",
+  "get_telemetry",
+  "list_automation_rules",
+  "list_suggestions",
+  "query_battery_packs",
+  "query_decisions",
+  "query_predictions",
+  "query_samples",
+  "query_weather"
+ ],
+ "tools": [
+  {
+   "description": "Read-only snapshot of current device telemetry / KPIs.",
+   "input_schema": {
+    "additionalProperties": false,
+    "properties": {},
+    "type": "object"
+   },
+   "name": "get_tab_snapshot"
+  },
+  {
+   "description": "Read-only SOC/solar/load forecast for the active device (~7 days). Prefer `daily` rollups (solar_wh, load_wh, surplus_wh, start/end/min SOC) and `ev_divert` (surplus hours/sessions that can support car_load_w) for week-ahead EV charging advice. Use `load_schedule` for already-planned windows. `forecast_sample` is a thinned hourly curve. `charge_ceiling_pct` is the learned multi-pack SOC plateau; `solar_calibration.actual_over_predicted` diagnoses whether the solar coefficient over/under-predicts on clear-sky hours.",
+   "input_schema": {
+    "properties": {
+     "device_sn": {
+      "type": "string"
+     }
+    },
+    "type": "object"
+   },
+   "name": "get_forecast"
+  },
+  {
+   "description": "Calendar/historical load schedule plus learned_profile (14d hourly fit) when available.",
+   "input_schema": {
+    "properties": {
+     "device_sn": {
+      "type": "string"
+     }
+    },
+    "type": "object"
+   },
+   "name": "get_load_schedule"
+  },
+  {
+   "description": "Today / 7d / 30d / lifetime energy totals.",
+   "input_schema": {
+    "properties": {
+     "device_sn": {
+      "type": "string"
+     }
+    },
+    "type": "object"
+   },
+   "name": "get_energy_totals"
+  },
+  {
+   "description": "List pending algorithm advisor suggestions (actionable items).",
+   "input_schema": {
+    "properties": {
+     "device_sn": {
+      "type": "string"
+     }
+    },
+    "type": "object"
+   },
+   "name": "list_suggestions"
+  },
+  {
+   "description": "Latest telemetry for the viewed device.",
+   "input_schema": {
+    "properties": {},
+    "type": "object"
+   },
+   "name": "get_telemetry"
+  },
+  {
+   "description": "Smart-charge and solar-charge config plus live status (recent decisions, diverted Wh, observed max charge).",
+   "input_schema": {
+    "properties": {
+     "device_sn": {
+      "type": "string"
+     }
+    },
+    "type": "object"
+   },
+   "name": "get_charge_status"
+  },
+  {
+   "description": "Time-bucketed power flow + SOC samples. Returns rows with soc and average/instant watts (in/out/solar/ac).",
+   "input_schema": {
+    "properties": {
+     "bucket_s": {
+      "enum": [
+       60,
+       300,
+       900,
+       3600,
+       86400
+      ],
+      "type": "integer"
+     },
+     "device_sn": {
+      "type": "string"
+     },
+     "end_iso": {
+      "type": "string"
+     },
+     "start_iso": {
+      "description": "ISO 8601 UTC start",
+      "type": "string"
+     }
+    },
+    "required": [
+     "start_iso",
+     "end_iso",
+     "bucket_s"
+    ],
+    "type": "object"
+   },
+   "name": "query_samples"
+  },
+  {
+   "description": "Hourly weather observations: ghi_w_m2 and cloud_cover_pct.",
+   "input_schema": {
+    "properties": {
+     "device_sn": {
+      "type": "string"
+     },
+     "end_iso": {
+      "type": "string"
+     },
+     "start_iso": {
+      "type": "string"
+     }
+    },
+    "required": [
+     "start_iso",
+     "end_iso"
+    ],
+    "type": "object"
+   },
+   "name": "query_weather"
+  },
+  {
+   "description": "Predicted-vs-actual SOC pairs from forecast accuracy log.",
+   "input_schema": {
+    "properties": {
+     "device_sn": {
+      "type": "string"
+     },
+     "end_iso": {
+      "type": "string"
+     },
+     "max_lead_h": {
+      "type": "integer"
+     },
+     "start_iso": {
+      "type": "string"
+     }
+    },
+    "required": [
+     "start_iso",
+     "end_iso"
+    ],
+    "type": "object"
+   },
+   "name": "query_predictions"
+  },
+  {
+   "description": "Smart-charge decision history with predicted/actual sunrise SOC.",
+   "input_schema": {
+    "properties": {
+     "device_sn": {
+      "type": "string"
+     },
+     "end_iso": {
+      "type": "string"
+     },
+     "start_iso": {
+      "type": "string"
+     }
+    },
+    "required": [
+     "start_iso",
+     "end_iso"
+    ],
+    "type": "object"
+   },
+   "name": "query_decisions"
+  },
+  {
+   "description": "Latest per-expansion-battery SOC / power / errors.",
+   "input_schema": {
+    "properties": {
+     "device_sn": {
+      "type": "string"
+     }
+    },
+    "type": "object"
+   },
+   "name": "query_battery_packs"
+  },
+  {
+   "description": "Resolved learned parameters (solar_coefficient, parasitic_w, capacity, etc.) with source and confidence.",
+   "input_schema": {
+    "properties": {
+     "device_sn": {
+      "type": "string"
+     }
+    },
+    "type": "object"
+   },
+   "name": "get_device_params"
+  },
+  {
+   "description": "Per-local-day energy rollups (input/output/solar Wh).",
+   "input_schema": {
+    "properties": {
+     "days": {
+      "description": "1\u2013365, default 90",
+      "type": "integer"
+     },
+     "device_sn": {
+      "type": "string"
+     }
+    },
+    "type": "object"
+   },
+   "name": "get_energy_daily"
+  },
+  {
+   "description": "Daily sunset/sunrise predicted vs actual SOC accuracy rows.",
+   "input_schema": {
+    "properties": {
+     "days": {
+      "description": "1\u201390, default 7",
+      "type": "integer"
+     },
+     "device_sn": {
+      "type": "string"
+     }
+    },
+    "type": "object"
+   },
+   "name": "get_daily_summary"
+  },
+  {
+   "description": "Electricity cost plan (rates / TOU) \u2014 no secrets.",
+   "input_schema": {
+    "properties": {},
+    "type": "object"
+   },
+   "name": "get_cost_plan"
+  },
+  {
+   "description": "Device location: latitude, longitude, label, timezone offset. No credentials.",
+   "input_schema": {
+    "properties": {},
+    "type": "object"
+   },
+   "name": "get_location"
+  },
+  {
+   "description": "Configured solar array plane (tilt/azimuth/size).",
+   "input_schema": {
+    "properties": {
+     "device_sn": {
+      "type": "string"
+     }
+    },
+    "type": "object"
+   },
+   "name": "get_solar_array"
+  },
+  {
+   "description": "Automation rules (conditions/actions) without secrets.",
+   "input_schema": {
+    "properties": {},
+    "type": "object"
+   },
+   "name": "list_automation_rules"
+  },
+  {
+   "description": "Recent bridge/poll/server log events (secrets redacted).",
+   "input_schema": {
+    "properties": {
+     "limit": {
+      "type": "integer"
+     },
+     "since": {
+      "type": "number"
+     }
+    },
+    "type": "object"
+   },
+   "name": "get_events"
+  },
+  {
+   "description": "Fit a learned parameter over a custom lookback and optionally save it as a sticky user override. Use lookback_hours=24 for 'last day', 168 for a week, etc. (clamped 6\u20261080). apply=false (default) is preview-only: runs immediately and returns the fitted value \u2014 use this to answer 'what would be a better coefficient?' without saving. apply=true persists until the user Resets the param and requires Approve unless Autopilot is on. Keys: solar_coefficient, parasitic_w, inverter_overhead_pct, charge_efficiency, max_charge_w. Not for battery_capacity_wh.",
+   "input_schema": {
+    "properties": {
+     "apply": {
+      "description": "true = save as user override",
+      "type": "boolean"
+     },
+     "device_sn": {
+      "type": "string"
+     },
+     "key": {
+      "enum": [
+       "solar_coefficient",
+       "parasitic_w",
+       "inverter_overhead_pct",
+       "charge_efficiency",
+       "max_charge_w"
+      ],
+      "type": "string"
+     },
+     "lookback_hours": {
+      "description": "e.g. 24 for last day; default 336 (14d)",
+      "type": "integer"
+     }
+    },
+    "required": [
+     "key"
+    ],
+    "type": "object"
+   },
+   "name": "fit_device_param"
+  },
+  {
+   "description": "Create or update a calendar load event (once or weekly).",
+   "input_schema": {
+    "properties": {
+     "date": {
+      "type": "string"
+     },
+     "device_sn": {
+      "type": "string"
+     },
+     "end": {
+      "type": "string"
+     },
+     "id": {
+      "type": "string"
+     },
+     "kind": {
+      "enum": [
+       "once",
+       "weekly"
+      ],
+      "type": "string"
+     },
+     "label": {
+      "type": "string"
+     },
+     "start": {
+      "type": "string"
+     },
+     "watts": {
+      "type": "number"
+     },
+     "weekdays": {
+      "items": {
+       "type": "integer"
+      },
+      "type": "array"
+     }
+    },
+    "required": [
+     "start",
+     "end",
+     "watts",
+     "kind"
+    ],
+    "type": "object"
+   },
+   "name": "schedule_upsert"
+  },
+  {
+   "description": "Delete a calendar load event by id.",
+   "input_schema": {
+    "properties": {
+     "device_sn": {
+      "type": "string"
+     },
+     "id": {
+      "type": "string"
+     }
+    },
+    "required": [
+     "id"
+    ],
+    "type": "object"
+   },
+   "name": "schedule_delete"
+  },
+  {
+   "description": "Update smart-charge config (enabled, max_charge_w, target_sunrise_soc_pct, max_on_duration_minutes).",
+   "input_schema": {
+    "properties": {
+     "device_sn": {
+      "type": "string"
+     },
+     "enabled": {
+      "type": "boolean"
+     },
+     "max_charge_w": {
+      "type": "number"
+     },
+     "max_on_duration_minutes": {
+      "type": "number"
+     },
+     "target_sunrise_soc_pct": {
+      "type": "number"
+     }
+    },
+    "type": "object"
+   },
+   "name": "smart_charge_set"
+  },
+  {
+   "description": "Update solar-charge config (enabled and related fields).",
+   "input_schema": {
+    "properties": {
+     "device_sn": {
+      "type": "string"
+     },
+     "enabled": {
+      "type": "boolean"
+     }
+    },
+    "type": "object"
+   },
+   "name": "solar_charge_set"
+  },
+  {
+   "description": "Toggle an output port (ac, dc, usb, car).",
+   "input_schema": {
+    "properties": {
+     "device_sn": {
+      "type": "string"
+     },
+     "on": {
+      "type": "boolean"
+     },
+     "port": {
+      "enum": [
+       "ac",
+       "dc",
+       "usb",
+       "car"
+      ],
+      "type": "string"
+     }
+    },
+    "required": [
+     "port",
+     "on"
+    ],
+    "type": "object"
+   },
+   "name": "set_output"
+  },
+  {
+   "description": "Apply a pending algorithm suggestion by id.",
+   "input_schema": {
+    "properties": {
+     "id": {
+      "type": "integer"
+     }
+    },
+    "required": [
+     "id"
+    ],
+    "type": "object"
+   },
+   "name": "apply_suggestion"
+  }
+ ],
+ "write": [
+  "apply_suggestion",
+  "fit_device_param",
+  "schedule_delete",
+  "schedule_upsert",
+  "set_output",
+  "smart_charge_set",
+  "solar_charge_set"
+ ]
+}

@@ -1,15 +1,5 @@
-# Solar Pow Monitor — container image (cloud-only build).
-#
-# Same image runs either the web server or the cloud bridge — the compose
-# file picks which entrypoint to use per service.
-#
-#   - server.py  : FastAPI dashboard + WebSocket fan-out (port 8000)
-#   - bridge.py  : Cloud poller, JSON-RPC over TCP (port 8766)
-#
-# Compose profiles:
-#   mac        - dashboard only; bridge runs on the macOS host
-#   mock       - no hardware/cloud, synthetic telemetry (UI dev)
-#   synology   - dashboard + bridge, both in containers (Linux/NAS)
+# Solar Pow Monitor — native Go server with built Svelte UI.
+# The explicit legacy target remains available for rollback during migration.
 
 # ---------- Stage 1: build the SvelteKit SPA into web/next ----------
 FROM node:22-bookworm-slim AS ui-build
@@ -94,6 +84,7 @@ FROM golang:1.27-bookworm AS go-build
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
+COPY *.go models.json ./
 COPY cmd ./cmd
 COPY internal ./internal
 COPY migrations ./migrations

@@ -1,44 +1,9 @@
-# Transitional Go/PocketBase HTTP server + reference Python cloud bridge.
+# Native Go/PocketBase HTTP server (legacy config import still required).
 # Build: docker compose -f docker-compose.build.yml up -d --build
 # API coverage and rollback instructions: MIGRATION.md
 
 services:
-  # Cloud bridge — holds Jackery credentials, polls the Jackery cloud,
-  # exposes JSON-RPC on TCP 8766 (internal docker network only, NOT to the LAN).
-  jackery-bridge:
-    build:
-      context: .
-      target: legacy
-    image: jackery-monitor-bridge:local
-    container_name: jackery-bridge
-    restart: unless-stopped
-    command: ["python", "bridge.py"]
-    environment:
-      BRIDGE_HOST: 0.0.0.0
-      BRIDGE_PORT: "8766"
-      CLOUD_POLL_INTERVAL_S: "15"
-      # Leave JACKERY_EMAIL/JACKERY_PASSWORD blank in .env to use the UI sign-in flow
-      # (credentials encrypted to /data). Set them only to pin via env (CI etc).
-      JACKERY_EMAIL: "${JACKERY_EMAIL:-}"
-      JACKERY_PASSWORD: "${JACKERY_PASSWORD:-}"
-      JACKERY_REGION: "${JACKERY_REGION:-US}"
-      JACKERY_CREDS_FILE: /data/jackery-creds.json
-    # Bind 8766 only to the host loopback so the host-networked
-    # jackery-monitor container can reach it at 127.0.0.1:8766. Not
-    # published to the LAN — nothing else should talk to the bridge.
-    ports:
-      - "127.0.0.1:8766:8766"
-    volumes:
-      - jackery-data:/data
-    healthcheck:
-      test: ["CMD", "python", "-c", "import socket; s=socket.socket(); s.settimeout(2); s.connect(('127.0.0.1',8766)); s.close()"]
-      interval: 10s
-      timeout: 3s
-      retries: 5
-      start_period: 5s
-
-  # Go/PocketBase dashboard — host networking so backup auto-discovery can
-  # sweep the LAN directly. See docker-compose.yml for the full notes.
+  # Native Go dashboard on Raspberry Pi (64-bit Linux).
   jackery-monitor:
     build:
       context: .
@@ -47,30 +12,21 @@ services:
     container_name: jackery-monitor
     restart: unless-stopped
     command: ["serve", "--http=0.0.0.0:${JACKERY_HTTP_PORT:-8123}", "--dir=/data/pb_data"]
-    depends_on:
-      jackery-bridge:
-        condition: service_healthy
     network_mode: host
     environment:
-      BACKEND: bridge
-      BRIDGE_URL: 127.0.0.1:8766
-      POLL_INTERVAL_S: "10"
-      JACKERY_DB: /data/energy.db
-      PORT: "${JACKERY_HTTP_PORT:-8123}"
+      BACKEND: native
+      JACKERY_MQTT_CA_FILE: "${JACKERY_MQTT_CA_FILE:-}"
+      JACKERY_CF_ACCESS_TEAM: "${JACKERY_CF_ACCESS_TEAM:-}"
+      JACKERY_CF_ACCESS_AUD: "${JACKERY_CF_ACCESS_AUD:-}"
+      JACKERY_CF_ACCESS_EMAILS: "${JACKERY_CF_ACCESS_EMAILS:-}"
+      JACKERY_MQTT_BROKER: "${JACKERY_MQTT_BROKER:-ssl://emqx.jackeryapp.com:8883}"
+      # Preserve the legacy encryption key; config import is still required.
+      JACKERY_AT_REST_KEY_FILE: /data/.jackery-creds.key
     volumes:
       - jackery-data:/data
-      # Host BlueZ D-Bus so bleak can talk to a USB BLE adapter on the NAS.
-      # bluetoothd must be running on DSM; if scan returns nothing, enable
-      # host Bluetooth for the dongle and enter the BMS MAC manually.
+      # Host BlueZ D-Bus so the Go adapter can use the Pi's Bluetooth adapter.
+      # bluetoothd must be running on the Pi host.
       - /var/run/dbus:/var/run/dbus:ro
-      # Live-bind the web UI so editing files in /docker/jackery-monitor/web/
-      # takes effect immediately (just hard-reload the browser, no rebuild).
-      # Comment this out if you want the image to be self-contained.
-      - ./web:/app/web
-    # NET_ADMIN + NET_RAW: optional local Siseli ARP sniff. See docker-compose.yml.
-    cap_add:
-      - NET_ADMIN
-      - NET_RAW
 
 volumes:
   jackery-data:

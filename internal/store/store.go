@@ -71,20 +71,43 @@ func (s *Store) List(collection, device string, since float64, limit int) ([]map
 	if device != "" {
 		filter += " && device_sn = {:device}"
 	}
-	if limit <= 0 || limit > 100000 {
-		limit = 100000
-	}
-	rows, e := s.App.FindRecordsByFilter(collection, filter, "ts", limit, 0, params)
-	if e != nil {
-		return nil, e
-	}
-	out := make([]map[string]any, 0, len(rows))
-	for _, r := range rows {
-		p, e := payload(r)
-		if e != nil {
-			return nil, e
+	out := []map[string]any{}
+	var cursorTS float64
+	cursorID := ""
+	for {
+		pageFilter := filter
+		bound := dbx.Params{}
+		for k, v := range params {
+			bound[k] = v
 		}
-		out = append(out, p)
+		if cursorID != "" {
+			pageFilter += " && (ts > {:cursorTS} || (ts = {:cursorTS} && id > {:cursorID}))"
+			bound["cursorTS"] = cursorTS
+			bound["cursorID"] = cursorID
+		}
+		size := 1000
+		if limit > 0 {
+			size = min(size, limit-len(out))
+			if size <= 0 {
+				break
+			}
+		}
+		rows, err := s.App.FindRecordsByFilter(collection, pageFilter, "ts,id", size, 0, bound)
+		if err != nil {
+			return nil, err
+		}
+		for _, r := range rows {
+			p, err := payload(r)
+			if err != nil {
+				return nil, err
+			}
+			out = append(out, p)
+			cursorTS = r.GetFloat("ts")
+			cursorID = r.Id
+		}
+		if len(rows) < size {
+			break
+		}
 	}
 	return out, nil
 }

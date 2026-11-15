@@ -133,8 +133,8 @@ It connects through the **Jackery cloud account** (the same one the official app
   pair with Cloudflare Access for internet-exposed deployments.
 - **Real-time updates** — MQTT subscribe to the device push topic gives you
   ~500ms-fresh telemetry instead of HTTP polling rate.
-- **Auto-deploy** — `git push` triggers a Watchtower-driven container update
-  on the NAS within a minute or two. No manual restarts.
+- **Single container** — one static Go binary (PocketBase, web UI and all
+  device integrations) runs on the Raspberry Pi.
 
 ---
 
@@ -205,17 +205,15 @@ want it elsewhere.
 
 ### Updating
 
-The compose file ships with a Watchtower service (`nickfedor/watchtower`,
-a maintained drop-in for the unmaintained `containrrr/watchtower` image)
-that polls GHCR every 60s and recreates the labelled containers when a
-new `:latest` is published. Upstream Watchtower hardcodes Docker API
-1.25 and crash-loops on engines that require 1.40+ (Synology Container
-Manager, Docker 25+). So `git push` → image rebuild → ~60-90s → NAS is
-up to date.
+On the Pi, pull and rebuild:
 
-To update the **compose file itself** (env, services, ports), copy the
-new `docker-compose.yml` to your NAS via File Station and recreate the
-project. Watchtower cannot apply compose changes on its own.
+```sh
+git pull
+docker compose up -d --build
+```
+
+Data lives in the `jackery-data` volume and survives rebuilds. See
+`docs/RASPBERRY_PI.md`.
 
 ## Quick start — macOS dev
 
@@ -517,9 +515,8 @@ inverter publish every 10 seconds. If capture stops, ARP is restored and
 Live watts fall back to the HTTP poll. UniFi and similar ARP inspection
 can block the spoof.
 
-The host-networked dashboard container needs `NET_ADMIN` and `NET_RAW`
-(set in `docker-compose.yml`). Set the inverter IP and the router IP on
-the Siseli card. The decoder is vendored from
+Local capture is retired in the Go build; Siseli data comes from the
+cloud portal only. The decoder is vendored from
 [fadmaz/siseli-ha](https://github.com/fadmaz/siseli-ha) 2.6.25 under
 `siseli_local/` (MIT); see `siseli_local/NOTICE`.
 
@@ -565,8 +562,8 @@ jackery-monitor/
 │   └── icon.svg              PWA / favicon icon
 ├── mobile/                   Expo (iOS + Android) client
 │
-├── docker-compose.yml        Synology / Linux prod (GHCR pull + Watchtower)
-├── docker-compose.build.yml  Build locally on the NAS instead of pulling
+├── docker-compose.yml        Raspberry Pi prod (single container, local build)
+├── docker-compose.build.yml  Same, without pull_policy pinning
 ├── docker-compose.dev.yml    macOS host-bridge + mock profiles
 ├── Dockerfile
 ├── requirements.txt

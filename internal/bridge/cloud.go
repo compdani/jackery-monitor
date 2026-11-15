@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"crypto/aes"
-	"crypto/cipher"
 	"crypto/md5"
 	"crypto/rand"
 	"crypto/rsa"
@@ -25,6 +24,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -57,6 +57,10 @@ type Cloud struct {
 	BaseURL                            string
 	HTTP                               *http.Client
 	// TLSConfig allows the operator to supply the Jackery broker CA.
+	Broker                 string
+	MQTTFactory            func(*mqtt.ClientOptions) mqtt.Client
+	pushes                 chan Push
+	droppedPushes          atomic.Uint64
 	TLSConfig              *tls.Config
 	token, userID, mqttKey string
 	mqtt                   mqtt.Client
@@ -294,23 +298,10 @@ func (c *Cloud) Command(ctx context.Context, sn, port string, on bool) (map[stri
 			return nil, err
 		}
 	}
-	if c.mqtt == nil {
-		key, err := base64.StdEncoding.DecodeString(c.mqttKey)
-		if err != nil || len(key) != 32 || c.userID == "" {
-			return nil, errors.New("Jackery MQTT credentials missing or invalid")
-		}
-		user := c.userID + "@" + c.macID
-		b := pad([]byte(user))
-		block, _ := aes.NewCipher(key)
-		cipher.NewCBCEncrypter(block, key[:16]).CryptBlocks(b, b)
-		opts := mqtt.NewClientOptions().AddBroker("ssl://emqx.jackeryapp.com:8883").SetClientID(c.userID + "@APP").SetUsername(user).SetPassword(base64.StdEncoding.EncodeToString(b)).SetConnectTimeout(10 * time.Second).SetTLSConfig(c.TLSConfig)
-		client := mqtt.NewClient(opts)
-		if err = waitMQTT(ctx, client.Connect()); err != nil {
-			client.Disconnect(0)
-			return nil, err
-		}
-		c.mqtt = client
+	if err := c.ensureMQTT(ctx); err != nil {
+		return nil, err
 	}
+
 	ts := time.Now().UnixMilli()
 	v := 0
 	if on {
@@ -337,6 +328,12 @@ func CloudTelemetry(p map[string]any) map[string]any {
 	i := func(k string) float64 { return math.Trunc(f(k)) }
 	round := func(v float64) float64 { return math.RoundToEven(v*10) / 10 }
 	out := map[string]any{"battery_percent": i("rb"), "battery_temp_c": round(f("bt") / 10), "input_power_w": i("ip"), "output_power_w": i("op"), "ac_input_w": i("acip"), "car_input_w": i("cip"), "solar_input_w": math.Max(0, i("ip")-i("acip")-i("cip")), "ac_output_v": round(f("acov") / 10), "ac_output_v_l1": round(f("acov1") / 10), "ac_output_hz": round(f("acohz")), "ac_on": i("oac") != 0, "dc_on": i("odc") != 0, "usb_on": i("odcu") != 0, "car_on": i("odcc") != 0, "ups_on": true, "super_charge_on": i("sfc") != 0, "error_code": i("ec"), "utc_offset_seconds": nil}
+	// A missing/malformed SOC is unknown, never a zero-percent observation:
+	// the rescue watchdog must not arm on numeric conversion defaults.
+	soc, err := strconv.ParseFloat(fmt.Sprint(p["rb"]), 64)
+	if err != nil || math.IsNaN(soc) || math.IsInf(soc, 0) || soc < 0 || soc > 100 {
+		out["battery_percent"] = nil
+	}
 	if p["ups"] != nil {
 		out["ups_on"] = i("ups") != 0
 	}

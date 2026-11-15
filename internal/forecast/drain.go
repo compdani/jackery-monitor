@@ -210,3 +210,40 @@ func Readiness(history []Row, capacity float64) Row {
 	}
 	return Row{"ready": ready, "reason": reason, "have_hours": round(span, 1), "needed_hours": 24, "have_idle_windows": n, "needed_idle_windows": 5, "low_confidence_overhead_fit": n < 5}
 }
+
+// DischargeRun exposes one clean multi-hour discharge run for diagnostics.
+type DischargeRun struct{ LoadW, DrainW, Hours float64 }
+
+// CleanDischargeRuns returns the runs fit_drain_model's narrow-load fallback
+// uses. requireSystem mirrors the strict multi-pack system_soc mode.
+func CleanDischargeRuns(rows []Row, capacity float64, requireSystem bool) []DischargeRun {
+	out := []DischargeRun{}
+	for _, r := range cleanDischargeRuns(sortedHistory(rows), capacity, requireSystem) {
+		out = append(out, DischargeRun{r.load, r.drain, r.hours})
+	}
+	return out
+}
+
+// LengthWeightedMedian ports forecaster._length_weighted_median.
+func LengthWeightedMedian(values, weights []float64) *float64 {
+	idx := make([]int, len(values))
+	total := 0.0
+	for i := range values {
+		idx[i] = i
+		total += weights[i]
+	}
+	if len(values) == 0 || total <= 0 {
+		return nil
+	}
+	sort.SliceStable(idx, func(a, b int) bool { return values[idx[a]] < values[idx[b]] })
+	cum := 0.0
+	for _, i := range idx {
+		cum += weights[i]
+		if cum >= total/2 {
+			v := values[i]
+			return &v
+		}
+	}
+	v := values[idx[len(idx)-1]]
+	return &v
+}

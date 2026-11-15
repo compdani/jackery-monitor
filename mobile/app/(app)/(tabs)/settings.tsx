@@ -218,11 +218,6 @@ function Rates() {
 }
 
 function Backup() {
-  const [transport, setTransport] = useState("smb");
-  const [host, setHost] = useState("");
-  const [share, setShare] = useState("");
-  const [user, setUser] = useState("");
-  const [password, setPassword] = useState("");
   const [status, setStatus] = useState<string>("");
   const [snaps, setSnaps] = useState<string[]>([]);
 
@@ -248,34 +243,7 @@ function Backup() {
   return (
     <>
       <Card>
-        <Title>Backup destination</Title>
-        <Segmented
-          value={transport}
-          onChange={setTransport}
-          options={[
-            { id: "smb", label: "SMB" },
-            { id: "rsync_ssh", label: "rsync SSH" },
-            { id: "rsyncd", label: "rsyncd" },
-          ]}
-        />
-        <Field label="Host" value={host} onChangeText={setHost} />
-        <Field label="Share / module" value={share} onChangeText={setShare} />
-        <Field label="Username" value={user} onChangeText={setUser} />
-        <Field label="Password" value={password} onChangeText={setPassword} secureTextEntry />
-        <Btn
-          title="Save"
-          onPress={() =>
-            void endpoints.saveBackupCreds({
-              transport,
-              host,
-              share,
-              username: user,
-              password,
-            })
-          }
-        />
-        <Btn title="Test" kind="ghost" onPress={() => void endpoints.backupTest().then((j) => setStatus(JSON.stringify(j)))} />
-        <Btn title="Discover SMB" kind="ghost" onPress={() => void endpoints.backupDiscover().then((j) => setStatus(JSON.stringify(j).slice(0, 500)))} />
+        <Title>Local PocketBase backups</Title>
         <Btn title="Run now" onPress={() => void endpoints.backupRun().then(load)} />
         <Hint>{status.slice(0, 500)}</Hint>
       </Card>

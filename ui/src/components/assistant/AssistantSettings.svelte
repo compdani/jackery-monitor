@@ -15,6 +15,7 @@
     solar_charge_set: 'Solar charge settings',
     set_output: 'Toggle output ports',
     apply_suggestion: 'Apply algorithm suggestion',
+    fit_device_param: 'Fit device parameter',
   };
 
   function onPrefChange(name: WriteToolName, e: Event) {
