@@ -10,6 +10,21 @@ on:
   workflow_dispatch:
 
 jobs:
+  container:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+      - name: Validate native deployment manifests
+        run: |
+          docker compose -f docker-compose.yml config --quiet
+          docker compose -f docker-compose.build.yml config --quiet
+      - name: Build native runtime (including embedded assets)
+        run: docker build --target go-runtime -t jackery-monitor-ci .
+      - name: Check offline runtime dependencies
+        run: |
+          docker run --rm --entrypoint /bin/sh jackery-monitor-ci -ec 'command -v smbclient; command -v rsync; command -v ssh; test -s /app/pb_public/index.html; /app/jackery --help'
+
   go:
     runs-on: ubuntu-latest
     timeout-minutes: 15

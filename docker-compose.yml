@@ -1,46 +1,8 @@
-# Transitional Go/PocketBase HTTP server + reference Python cloud bridge.
+# Native Go/PocketBase HTTP server (legacy config import still required).
 # Build: docker compose -f docker-compose.yml up -d --build
 # API coverage and rollback instructions: MIGRATION.md
 
 services:
-  # Cloud bridge — holds Jackery credentials, polls the Jackery cloud,
-  # exposes JSON-RPC on TCP 8766 (internal docker network only, NOT to the LAN).
-  jackery-bridge:
-    build:
-      context: .
-      target: legacy
-    image: jackery-monitor-bridge:local
-    pull_policy: never
-    container_name: jackery-bridge
-    restart: unless-stopped
-    command: ["python", "bridge.py"]
-    environment:
-      BRIDGE_HOST: 0.0.0.0
-      BRIDGE_PORT: "8766"
-      CLOUD_POLL_INTERVAL_S: "15"
-      # Credentials: leave JACKERY_EMAIL/JACKERY_PASSWORD blank in .env and
-      # sign in via the dashboard UI (saved encrypted to /data). Setting them
-      # here pins them and disables the UI sign-in/sign-out flow.
-      JACKERY_EMAIL: "${JACKERY_EMAIL:-}"
-      JACKERY_PASSWORD: "${JACKERY_PASSWORD:-}"
-      JACKERY_REGION: "${JACKERY_REGION:-US}"
-      JACKERY_CREDS_FILE: /data/jackery-creds.json
-    # Bind 8766 only to the host loopback so the host-networked
-    # jackery-monitor container can reach it at 127.0.0.1:8766. Not
-    # published to the LAN — nothing else should talk to the bridge.
-    ports:
-      - "127.0.0.1:8766:8766"
-    volumes:
-      - jackery-data:/data
-    labels:
-      - com.centurylinklabs.watchtower.enable=true
-    healthcheck:
-      test: ["CMD", "python", "-c", "import socket; s=socket.socket(); s.settimeout(2); s.connect(('127.0.0.1',8766)); s.close()"]
-      interval: 10s
-      timeout: 3s
-      retries: 5
-      start_period: 5s
-
   # Go/PocketBase dashboard — host networking so the backup auto-discovery
   # feature can sweep the LAN for SMB hosts (the docker bridge would
   # otherwise hide the LAN behind NAT). Reachable on the LAN at
@@ -54,9 +16,6 @@ services:
     container_name: jackery-monitor
     restart: unless-stopped
     command: ["serve", "--http=0.0.0.0:${JACKERY_HTTP_PORT:-8123}", "--dir=/data/pb_data"]
-    depends_on:
-      jackery-bridge:
-        condition: service_healthy
     # Host networking: container shares the Synology's network namespace.
     # No more ports: mapping — the app binds directly to the host's
     # JACKERY_HTTP_PORT. Required for backup_discover.py to enumerate
@@ -64,27 +23,9 @@ services:
     # of the docker bridge subnet (172.x.0.0/16).
     network_mode: host
     environment:
-      BACKEND: bridge
-      # Host networking means "jackery-bridge" hostname is no longer
-      # resolvable. The bridge container publishes 8766 to 127.0.0.1
-      # so we reach it via loopback.
-      BRIDGE_URL: 127.0.0.1:8766
-      POLL_INTERVAL_S: "10"
-      JACKERY_DB: /data/energy.db
-      # uvicorn reads PORT from env. With host networking we bind
-      # directly to JACKERY_HTTP_PORT (default 8123) on the host — no
-      # docker port mapping in the way.
-      PORT: "${JACKERY_HTTP_PORT:-8123}"
-      # Cloudflare Access (Google SSO) edge auth. Empty defaults = inert
-      # (app keeps its own password). Set these in .env to let a
-      # Cloudflare-Access-authenticated request skip the app password;
-      # the password stays as the LAN-direct fallback. See cf_access.py.
-      #   TEAM = your <team>.cloudflareaccess.com subdomain
-      #   AUD  = the Access application's Audience tag
-      #   EMAILS = optional comma-separated allowlist (policy is primary)
-      JACKERY_CF_ACCESS_TEAM: "${JACKERY_CF_ACCESS_TEAM:-}"
-      JACKERY_CF_ACCESS_AUD: "${JACKERY_CF_ACCESS_AUD:-}"
-      JACKERY_CF_ACCESS_EMAILS: "${JACKERY_CF_ACCESS_EMAILS:-}"
+      BACKEND: native
+      # Preserve the legacy encryption key; config import is still required.
+      JACKERY_AT_REST_KEY_FILE: /data/.jackery-creds.key
     volumes:
       - jackery-data:/data
       # Host BlueZ D-Bus so bleak can talk to a USB BLE adapter on the NAS.
@@ -101,7 +42,7 @@ services:
     labels:
       - com.centurylinklabs.watchtower.enable=true
 
-  # Auto-update the two services above when a new :latest image is published
+  # Auto-update the monitor above when a new :latest image is published
   # to GHCR (by .github/workflows/docker-publish.yml on push to main).
   # Polls every 60s; only touches containers with the watchtower.enable label.
   # nickfedor/watchtower is the maintained drop-in for containrrr/watchtower,

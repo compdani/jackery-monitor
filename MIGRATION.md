@@ -1,7 +1,7 @@
 # Go + PocketBase migration status
 
 This is a **partial implementation**, not a completed replacement for the
-Python backend. Python source remains intact. No commits were created.
+Python backend. Python source remains intact.
 The device libraries remain separate from the core through adapters in
 `internal/devices`. This continuation does not modify their implementation.
 
@@ -42,11 +42,16 @@ The device libraries remain separate from the core through adapters in
   endpoint must remain on a trusted network/loopback: it has no wire auth.
   bridge.Client, bridge.Device, and bridge.Switch are integration
   interfaces; hardware packages are not imported into the core.
-- Docker's final target is go-runtime; legacy retains Python for the
-  bridge and rollback. Default/build Compose files build separate Go and
-  Python images. Development profiles explicitly use legacy.
-  The default bridge deployment still requires Python. `BACKEND=native` selects
-  the new in-process Jackery client; it is opt-in and has not been hardware-tested.
+- Docker's final target is go-runtime, including the embedded root model catalog
+  and smbclient/rsync/SSH transport binaries. Default/build Compose run only
+  the native Go server; `BACKEND=native` is also the binary default.
+  `BACKEND=bridge` with `BRIDGE_URL` remains an explicit rollback option,
+  and the legacy Docker target/development profiles remain available.
+  Native mode has not been hardware-tested and still lacks the operational
+  features described below. Existing JSON credentials/configuration are not
+  automatically imported: do not assume switching images migrates data.
+  Compose points at `/data/.jackery-creds.key` to preserve the legacy key;
+  set JACKERY_AT_REST_KEY_FILE to the actual existing key location if different.
 
 ## Collection schemas
 
