@@ -78,3 +78,68 @@ func TestSmartConfigHTTP(t *testing.T) {
 		t.Fatal(result)
 	}
 }
+
+type smartPlugFake struct {
+	rescueSwitchFake
+	on    bool
+	reads int
+}
+
+func (f *smartPlugFake) Power(context.Context, string) (bool, error) { f.reads++; return f.on, nil }
+func TestSmartLiveFallbackReconcilesAndDryRunDoesNotWrite(t *testing.T) {
+	s, _ := testServer(t)
+	f := &smartPlugFake{on: true}
+	s.SmartPlug = f
+	cfg := map[string]any{"mode": "active", "kasa_device_host": "fake"}
+	if e := s.Store.Put("settings", "smart_charge", "", map[string]any{"by_device": map[string]any{"sn": cfg}}); e != nil {
+		t.Fatal(e)
+	}
+	if e := s.Store.Put("settings", "smart_charge_state:sn", "sn", map[string]any{"pending": true}); e != nil {
+		t.Fatal(e)
+	}
+	p, e := s.evaluateSmart(context.Background(), "sn", 1700000000, false)
+	if e != nil || p == nil || p.Action != "off" || f.reads != 0 {
+		t.Fatal(p, e, f.reads)
+	}
+	rows, e := s.smartHistory("sn")
+	if e != nil || len(rows) != 0 {
+		t.Fatal(rows, e)
+	}
+	p, e = s.evaluateSmart(context.Background(), "sn", 1700000000, true)
+	if e != nil || p.Action != "off" || f.reads != 1 || len(f.hosts) != 1 {
+		t.Fatal(p, e, f)
+	}
+	rows, e = s.smartHistory("sn")
+	if e != nil || len(rows) != 1 || rows[0]["executed"] != true {
+		t.Fatal(rows, e)
+	}
+}
+func TestSmartStatusAndReadOnlyEvaluateHTTP(t *testing.T) {
+	s, h := testServer(t)
+	s.SmartPlug = &smartPlugFake{}
+	w := request(h, "POST", "/api/auth/setup", `{"username":"admin","password":"secure-pass"}`, "")
+	var auth map[string]any
+	_ = json.Unmarshal(w.Body.Bytes(), &auth)
+	token := auth["token"].(string)
+	request(h, "POST", "/api/smart_charge/config?device_sn=sn", `{"mode":"test"}`, token)
+	for _, path := range []string{"status", "analytics", "backtest"} {
+		w = request(h, "GET", "/api/smart_charge/"+path+"?device_sn=sn", "", token)
+		if w.Code != 200 {
+			t.Fatal(path, w.Code, w.Body.String())
+		}
+	}
+	w = request(h, "POST", "/api/smart_charge/evaluate_now?device_sn=sn", `{}`, token)
+	if w.Code != 200 {
+		t.Fatal(w.Code, w.Body.String())
+	}
+	rows, e := s.smartHistory("sn")
+	if e != nil || len(rows) != 0 {
+		t.Fatal(rows, e)
+	}
+}
+
+func (f *smartPlugFake) SetPower(_ context.Context, host string, on bool) error {
+	f.hosts = append(f.hosts, host)
+	f.on = on
+	return nil
+}

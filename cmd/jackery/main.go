@@ -53,6 +53,7 @@ func main() {
 			return e.Next()
 		})
 		go s.RescueLoop(ctx)
+		go s.SmartChargeLoop(ctx)
 		go s.RunNativeRealtime(ctx)
 		go s.Poll(ctx, 10*time.Second)
 		go s.PollTesla(ctx)

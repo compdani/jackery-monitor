@@ -13,7 +13,10 @@ import (
 	"github.com/pocketbase/pocketbase/core"
 )
 
-type smartRuntime struct{ mu sync.Mutex }
+type smartRuntime struct {
+	mu       sync.Mutex
+	evaluate sync.Mutex
+}
 
 func (s *Server) smartConfig(sn string) (automation.SmartSettings, error) {
 	raw, err := s.Store.Get("settings", "smart_charge")
@@ -64,6 +67,9 @@ func (s *Server) runSmart(ctx context.Context, sn string, cfg automation.SmartSe
 }
 
 func (s *Server) smartChargeRoutes(w http.ResponseWriter, r *http.Request, b map[string]any) bool {
+	if s.smartLiveRoutes(w, r) {
+		return true
+	}
 	path := r.URL.Path
 	if path != "/api/smart_charge/config" {
 		return false

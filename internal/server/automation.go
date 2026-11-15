@@ -52,6 +52,9 @@ func (s *Server) evaluateRules(ctx context.Context, sn string, tele map[string]a
 		if json.Unmarshal(b, &rule) != nil {
 			continue
 		}
+		if s.smartOwnsHost(rule.Host) {
+			continue
+		}
 		fired, e := s.controllers.engine.Evaluate(ctx, rule, sn, soc)
 		if fired || e != nil {
 			record := map[string]any{"rule_id": rule.ID, "device_sn": sn, "soc": soc, "fired": fired}

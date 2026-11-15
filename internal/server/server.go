@@ -24,20 +24,22 @@ import (
 )
 
 type Server struct {
-	RescueSwitch automation.Switch
-	rescue       rescueRuntime
-	smart        smartRuntime
-	AIHTTP       *http.Client
-	Store        *store.Store
-	Bridge       bridge.Client
-	PublicDir    string
-	Key          []byte
-	assistant    assistantRuntime
-	controllers  controllerRuntime
-	setupMu      sync.Mutex
-	mu           sync.RWMutex
-	snapshot     map[string]any
-	tesla        teslaRuntime
+	SmartPlug     SmartPlug
+	SmartForecast SmartForecastSource
+	RescueSwitch  automation.Switch
+	rescue        rescueRuntime
+	smart         smartRuntime
+	AIHTTP        *http.Client
+	Store         *store.Store
+	Bridge        bridge.Client
+	PublicDir     string
+	Key           []byte
+	assistant     assistantRuntime
+	controllers   controllerRuntime
+	setupMu       sync.Mutex
+	mu            sync.RWMutex
+	snapshot      map[string]any
+	tesla         teslaRuntime
 }
 
 func (s *Server) Register(e *core.ServeEvent) {

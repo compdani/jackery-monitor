@@ -786,3 +786,62 @@ Validation passed: `go build ./...`, `go vet ./...`, `go test ./...`, and
 `CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build ./...`. Only synthetic temporary
 PocketBase data and fake switches were used. No legacy data, keys, accounts or
 hardware were accessed. No Python was removed.
+
+## Owner decision — Siseli packet capture retired
+
+Siseli local packet capture is retired on the Raspberry Pi. `siseli_local/core.py`
+(Scapy/ARP interception), its capture runner, capture restart supervision and
+server capture controls are **retired, delete in step 11, no Go port**. No NAS
+is part of this deployment. Siseli cloud/portal integration remains in scope.
+Keep pure payload/register decoders used by that cloud path; retirement does
+not authorize removing shared decoding code. No Python is deleted here.
+
+## Step 6b — running smart-charge controller
+
+Smart-charge now has an independent cancellable five-minute server loop over
+saved per-device configs, with legacy selected-device fallback. It builds both
+AC-floor and counterfactual forecasts through `internal/forecast`, reads hourly
+energy history and capacity overrides, and accepts an injectable weather source.
+The default source reads persisted weather forecasts: until the weather service
+is wired, missing weather/history/fresh SOC yields an explicit OFF fallback.
+No invented weather or SOC is used to enable charging.
+
+Active execution reads the configured plug before reconciling durable pending
+intent and executing through the existing persisted intent/audit seam. A failed
+read leaves pending intent intact. Reconciliation preserves continuous-ON time;
+failed commands do not advance command state. Active smart configs reserve their
+plug against ordinary SOC rules; emergency rescue retains its ON override.
+Test/off modes never read or command a plug. Read-only evaluate never writes
+history or actuates. Existing continuous-ON duration protection remains.
+
+Authenticated status, evaluate_now, decision_details, analytics and backtest
+routes now use the UI paths. Status returns persisted history and the existing
+observed-charge-rate fit; replay uses the existing time-truncated Go replay.
+Decision detail returns persisted forecast/weather/sample traces. Forecast
+snapshots are recorded on scheduled ready evaluations. The smart planner's
+captured Python assertions remain covered by complete-plan fixture comparisons;
+normalization/execution and route tests add synthetic supervisor coverage.
+
+Limits still requiring migration follow-up: optional AI narration returns null;
+resolved_params in decision details remains empty pending step 7's parameter
+resolution service. Daily summary refresh remains a separate forecasting task.
+Weather is a clean provider seam with persisted-data fallback, not a newly wired
+network weather service. Physical plug/cloud behavior has not been validated.
+
+Solar-charge supervisor was not started. Remaining 6b: solar, inverter watchdog
+and F7 supervisors, solar normalization/pack-spread/overload persistence and
+remaining assertions, persisted rule edges, bulk disable/history, and broader
+cross-controller ownership/sequence handling. Smart-charge operational scheduling,
+forecast fallback, reconciliation, actuation and history are wired; these limits
+mean full Python smart-charge server feature parity is not claimed.
+
+Step-11 deletion candidates now include smart_charge.py's configuration/planner
+logic after runtime cutover, alongside previously listed diagnostic and rescue
+replacements. No Python file is safe to remove from the still-retained Python
+server today. Retired capture pieces can be removed at step 11; shared pure
+Siseli decoders must stay if the portal path imports them.
+
+Validation for this increment passed: `go build ./...`, `go vet ./...`,
+`go test ./...`, and `CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build ./...`.
+New tests use temporary PocketBase stores and fake plugs only. No real hardware,
+accounts, legacy data or encryption keys were accessed. No Python was deleted.
