@@ -91,7 +91,7 @@ COPY migrations ./migrations
 RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /jackery ./cmd/jackery
 
 FROM debian:bookworm-slim AS go-runtime
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates tzdata smbclient rsync openssh-client \
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates tzdata \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY --from=go-build /jackery /app/jackery

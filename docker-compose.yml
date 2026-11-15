@@ -3,10 +3,7 @@
 # API coverage and rollback instructions: MIGRATION.md
 
 services:
-  # Go/PocketBase dashboard — host networking so the backup auto-discovery
-  # feature can sweep the LAN for SMB hosts (the docker bridge would
-  # otherwise hide the LAN behind NAT). Reachable on the LAN at
-  # http://<nas-ip>:${JACKERY_HTTP_PORT}.
+  # Native Go dashboard on Raspberry Pi (64-bit Linux).
   jackery-monitor:
     build:
       context: .
@@ -16,11 +13,7 @@ services:
     container_name: jackery-monitor
     restart: unless-stopped
     command: ["serve", "--http=0.0.0.0:${JACKERY_HTTP_PORT:-8123}", "--dir=/data/pb_data"]
-    # Host networking: container shares the Synology's network namespace.
-    # No more ports: mapping — the app binds directly to the host's
-    # JACKERY_HTTP_PORT. Required for backup_discover.py to enumerate
-    # SMB hosts on the real LAN subnet (e.g. 192.168.1.0/24) instead
-    # of the docker bridge subnet (172.x.0.0/16).
+    # Host networking and D-Bus expose the host BlueZ adapter.
     network_mode: host
     environment:
       BACKEND: native
@@ -28,7 +21,7 @@ services:
       JACKERY_AT_REST_KEY_FILE: /data/.jackery-creds.key
     volumes:
       - jackery-data:/data
-      # Host BlueZ D-Bus so bleak can talk to a USB BLE adapter on the NAS.
+      # Host BlueZ D-Bus so the Go adapter can talk to a USB BLE adapter on the Pi.
       # bluetoothd must be running on DSM; if scan returns nothing, enable
       # host Bluetooth for the dongle and enter the BMS MAC manually.
       - /var/run/dbus:/var/run/dbus:ro

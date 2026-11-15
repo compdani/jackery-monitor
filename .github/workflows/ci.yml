@@ -23,7 +23,7 @@ jobs:
         run: docker build --target go-runtime -t jackery-monitor-ci .
       - name: Check offline runtime dependencies
         run: |
-          docker run --rm --entrypoint /bin/sh jackery-monitor-ci -ec 'command -v smbclient; command -v rsync; command -v ssh; test -s /app/pb_public/index.html; /app/jackery --help'
+          docker run --rm --entrypoint /bin/sh jackery-monitor-ci -ec 'test -s /app/pb_public/index.html; /app/jackery --help'
 
   go:
     runs-on: ubuntu-latest
@@ -35,6 +35,8 @@ jobs:
           go-version-file: go.mod
           cache: true
       - run: go build ./...
+      - name: Cross-build Raspberry Pi server and BlueZ adapter
+        run: GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build ./...
       - run: go vet ./...
       - run: go test -race ./...
 

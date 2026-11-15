@@ -43,7 +43,7 @@ The device libraries remain separate from the core through adapters in
   bridge.Client, bridge.Device, and bridge.Switch are integration
   interfaces; hardware packages are not imported into the core.
 - Docker's final target is go-runtime, including the embedded root model catalog
-  and smbclient/rsync/SSH transport binaries. Default/build Compose run only
+  (no remote-backup transport binaries). Default/build Compose run only
   the native Go server; `BACKEND=native` is also the binary default.
   `BACKEND=bridge` with `BRIDGE_URL` remains an explicit rollback option,
   and the legacy Docker target/development profiles remain available.
@@ -392,3 +392,38 @@ Still required for the user's requested scope:
 Validation completed: `go build ./...`, `go vet ./...`, `go test ./...`, and
 `go test -race` for store, server, bridge, forecast, automation, assistant,
 advisor, backup and devices. No real device or NAS was contacted by the tests.
+
+## Pi-only deployment scope (owner update)
+
+The deployment target is Raspberry Pi, linux/arm64; there is no NAS.
+Remote SMB/rsync/SSH transfers, discovery, share listing and remote retention
+are retired by owner decision. Their Go HTTP entry points return 410, and
+backup creation ignores saved legacy remote credentials. Remote restore is
+rejected. Existing credential records and legacy files are retained untouched.
+The settings backup panel now calls only local create/list/restore routes.
+Python backup_discover.py, backup_creds.py and remote portions of backup.py
+may be removed at final Python cleanup; they are no longer port requirements.
+Local scheduling, retention, setup restore and encryption-key recovery remain
+required. The old Synology deploy script is retired; see docs/RASPBERRY_PI.md.
+BlueZ adapter builds are checked for linux/arm64 without cgo, but server BLE
+fleet/inspector wiring and owner hardware validation remain outstanding.
+
+### Verification of this deployment increment
+
+- `go build ./...`, `go vet ./...`, `go test ./...`: pass.
+- `GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build ./...`: pass,
+  including the BlueZ adapter package.
+- Web UI `npm run check` and `npm run build`: pass.
+- Mobile `npm run typecheck`: pass.
+- Offline HTTP tests verify retired remote routes return 410, saved remote
+  secrets are preserved, and local create/list works even with remote
+  credentials present.
+- Container execution is not verified locally: Docker reports
+  “apiserver is not running and not registered with launchd”. CI now builds
+  the runtime image and checks its CLI and public assets.
+
+This increment completes deployment source changes only. API contract parity
+(step 2), import/reconciliation, lifecycle/supervisors, forecasting, remaining
+fleets, assistant/advisor and local backup completion still block Python
+removal. No Python source or tests were deleted. No hardware, cloud accounts,
+or remote storage were contacted.

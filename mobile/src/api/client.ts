@@ -379,29 +379,11 @@ export const endpoints = {
   deleteOpenaiKey: () => api("/api/openai/key", { method: "DELETE" }),
   openaiModels: () => api("/api/openai/models"),
 
-  backupCreds: () => api("/api/backup/credentials"),
-  saveBackupCreds: (body: unknown) =>
-    api("/api/backup/credentials", { method: "POST", body }),
-  deleteBackupCreds: () => api("/api/backup/credentials", { method: "DELETE" }),
-  backupTest: (body?: unknown) =>
-    api("/api/backup/test", { method: "POST", body: body ?? {} }),
-  backupDiscover: () => api("/api/backup/discover"),
-  backupListShares: (body: unknown) =>
-    api("/api/backup/list-shares", { method: "POST", body }),
-  backupListRsync: (body: unknown) =>
-    api("/api/backup/list-rsync-modules", { method: "POST", body }),
   backupStatus: () => api("/api/backup/status"),
   backupRun: () => api("/api/backup/run", { method: "POST" }),
   backupSnapshots: () => api("/api/backup/snapshots"),
   backupRestore: (body: unknown) =>
     api("/api/backup/restore", { method: "POST", body }),
-  setupRestoreTest: (body: unknown) =>
-    api("/api/backup/setup_restore/test", { method: "POST", auth: false, body }),
-  setupRestoreSnapshots: (body: unknown) =>
-    api("/api/backup/setup_restore/snapshots", { method: "POST", auth: false, body }),
-  setupRestore: (body: unknown) =>
-    api("/api/backup/setup_restore/restore", { method: "POST", auth: false, body }),
-
   siseliCreds: () => api<SiseliCreds>("/api/siseli/credentials"),
   saveSiseliCreds: (body: {
     user_id: string;

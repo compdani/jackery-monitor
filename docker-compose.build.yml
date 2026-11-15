@@ -3,8 +3,7 @@
 # API coverage and rollback instructions: MIGRATION.md
 
 services:
-  # Go/PocketBase dashboard — host networking so backup auto-discovery can
-  # sweep the LAN directly. See docker-compose.yml for the full notes.
+  # Native Go dashboard on Raspberry Pi (64-bit Linux).
   jackery-monitor:
     build:
       context: .
@@ -20,7 +19,7 @@ services:
       JACKERY_AT_REST_KEY_FILE: /data/.jackery-creds.key
     volumes:
       - jackery-data:/data
-      # Host BlueZ D-Bus so bleak can talk to a USB BLE adapter on the NAS.
+      # Host BlueZ D-Bus so the Go adapter can talk to a USB BLE adapter on the Pi.
       # bluetoothd must be running on DSM; if scan returns nothing, enable
       # host Bluetooth for the dongle and enter the BMS MAC manually.
       - /var/run/dbus:/var/run/dbus:ro
