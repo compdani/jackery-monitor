@@ -52,7 +52,7 @@ func (s *Server) evaluateRules(ctx context.Context, sn string, tele map[string]a
 		if json.Unmarshal(b, &rule) != nil {
 			continue
 		}
-		if s.smartOwnsHost(rule.Host) {
+		if s.smartOwnsHost(rule.Host) || s.solarOwnsHost(rule.Host) {
 			continue
 		}
 		fired, e := s.controllers.engine.Evaluate(ctx, rule, sn, soc)

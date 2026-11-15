@@ -441,3 +441,8 @@ func (s *Server) smartOwnsHost(host string) bool {
 	}
 	return false
 }
+
+func (p nativeSmartPlug) Watts(ctx context.Context, host string) (*float64, error) {
+	info, e := p.Client.Status(ctx, host)
+	return info.PowerW, e
+}

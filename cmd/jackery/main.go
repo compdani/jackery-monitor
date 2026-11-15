@@ -54,6 +54,7 @@ func main() {
 		})
 		go s.RescueLoop(ctx)
 		go s.SmartChargeLoop(ctx)
+		go s.SolarChargeLoop(ctx)
 		go s.RunNativeRealtime(ctx)
 		go s.Poll(ctx, 10*time.Second)
 		go s.PollTesla(ctx)

@@ -28,6 +28,8 @@ type Server struct {
 	SmartForecast SmartForecastSource
 	RescueSwitch  automation.Switch
 	rescue        rescueRuntime
+	solarStarted  map[string]bool
+	solar         smartRuntime
 	smart         smartRuntime
 	AIHTTP        *http.Client
 	Store         *store.Store
@@ -350,6 +352,9 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if s.teslaRoutes(w, r, b) {
 		return
 	}
+	if s.solarChargeRoutes(w, r, b) {
+		return
+	}
 	if s.smartChargeRoutes(w, r, b) {
 		return
 	}
@@ -574,6 +579,7 @@ func (s *Server) persistObservation(ctx context.Context, p map[string]any) {
 				for k, v := range t {
 					row[k] = v
 				}
+				row["solar_charge_diverted_w"] = s.solarTelemetry(ctx, sn, t, stamp)
 				row["battery_pct"] = t["battery_percent"]
 				for dst, src := range map[string]string{"input_w": "input_power_w", "output_w": "output_power_w", "solar_w": "solar_input_w"} {
 					row[dst] = t[src]

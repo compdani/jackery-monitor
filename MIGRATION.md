@@ -845,3 +845,56 @@ Validation for this increment passed: `go build ./...`, `go vet ./...`,
 `go test ./...`, and `CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build ./...`.
 New tests use temporary PocketBase stores and fake plugs only. No real hardware,
 accounts, legacy data or encryption keys were accessed. No Python was deleted.
+
+## Step 6b — running solar-charge supervisor
+
+Solar-charge now runs independently every 30 seconds with bounded exponential
+backoff and cancellation. It shares smart-charge's injected weather/history
+assembly, builds baseline and diversion forecasts, uses the smart sunrise target,
+and checks device observation freshness rather than poll success. Missing
+forecast/telemetry cannot enable diversion. Balance windows, last main-unit full
+charge evidence, pack spread, load ceiling, grid-charge yield, min-hold and
+inverter cooldown gates are connected to the full-plan planner.
+
+Per-device runtime (including overload timestamp, verification baseline, learned
+load, balance-window opening and uncertain command intent) is persisted in
+PocketBase. Active startup forces diversion OFF; relay reads reconcile uncertain
+commands. Commands have ten-second deadlines; failed commands retain uncertain
+intent and do not advance successful relay state. No-load verification forces
+OFF and persists a retry cooldown. High-load telemetry ingestion trips the plug
+OFF between scheduled evaluations and stamps every high-load observation so the
+cooldown starts at the last overload. Ordinary rules yield solar-owned plugs;
+solar yields plugs owned by active smart-charge. General rescue/controller/rule
+arbitration remains a wider step-6b task.
+
+Authenticated config (including partial updates), status, read-only evaluate_now
+and bounded history endpoints use the UI's solar_charge paths and wrappers.
+Status includes local-day diverted Wh. Telemetry records measured diversion:
+fresh Kasa watts with a 5W noise floor, otherwise verified learned load only while
+the output delta remains at least half that load, otherwise zero. Instantaneous
+W and integrated Wh are clamped to output. No configured-load guess is counted
+as diverted energy. Native plugs expose their meter via an optional fakeable seam.
+
+Synthetic tests cover normalization, robust pack spread, all diverted-W reference
+paths plus the output clamp, authenticated config merge/status/history/evaluation,
+dry-run isolation, startup OFF, durable failed intent, relay reconciliation,
+no-load cooldown and telemetry overload persistence. The existing 52 complete
+solar-plan fixtures and balance/load/cooldown helper boundary tests remain green.
+All verification uses fakes, fixtures and temporary stores; no hardware, accounts,
+legacy data or keys were touched. No Python was removed.
+
+Operational controllers now include rescue, smart-charge and solar-charge.
+Remaining 6b: inverter watchdog and F7 supervisors, persisted ordinary-rule edges,
+bulk disable/history and broader action ownership/sequencing. Smart optional AI
+narration and resolved-parameter decision details still require the narration and
+parameter-resolution services; they were not expanded in this solar-only change.
+Persisted weather remains the fallback until the weather service is wired.
+Steps 7–10 and final cutover validation remain as previously documented.
+
+Solar_charge.py joins smart_charge.py and the rescue/diagnostic replacements as
+step-11 deletion candidates after runtime cutover. No Python file is safe to
+delete from the retained Python runtime today. Retired Siseli capture/core runner
+and capture supervision need no Go port; preserve shared cloud payload decoders.
+
+Validation: go build ./..., go vet ./..., go test ./..., and
+CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build ./... passed for this increment.
