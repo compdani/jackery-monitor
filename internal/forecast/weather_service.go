@@ -149,3 +149,11 @@ func (c *WeatherClient) ReverseGeocode(ctx context.Context, lat, lon float64) st
 	}
 	return ""
 }
+
+// ClearCache drops in-memory forecasts after a location change. Persisted
+// observations stay keyed by location and are never discarded.
+func (c *WeatherClient) ClearCache() {
+	c.mu.Lock()
+	c.cache = nil
+	c.mu.Unlock()
+}

@@ -65,3 +65,36 @@ func TestBuildPythonParity(t *testing.T) {
 		})
 	}
 }
+
+// Ported from tests/test_forecaster.py capacity catalog and diagnostic-source cases.
+func TestCatalogCapacitiesAndDiagnosticSources(t *testing.T) {
+	for model, want := range map[int]float64{13: 5040, 22: 5040, 2: 2042, 17: 1534, 21: 1512} {
+		if BatteryCapacity(model) != want {
+			t.Fatal(model, BatteryCapacity(model))
+		}
+	}
+	for model, want := range map[int]float64{2: 2042, 13: 5040, 22: 5040} {
+		if ExpansionCapacity(model) != want {
+			t.Fatal(model, ExpansionCapacity(model))
+		}
+	}
+	if ExpansionCapacity(99) != BatteryCapacity(99) {
+		t.Fatal(ExpansionCapacity(99), BatteryCapacity(99))
+	}
+	now := int64(1_800_000_000)
+	history := []Row{}
+	for i := 0; i < 15; i++ {
+		ts := float64(now - 60*3600 + int64(i)*3*3600)
+		for j, soc := range []float64{95, 93} {
+			history = append(history, Row{"ts": ts + float64(j)*3600, "battery_pct": soc, "output_w": 545.0, "output_wh": 545.0, "solar_w": 0.0, "solar_wh": 0.0, "ac_input_wh": 0.0, "ac_input_w": 0.0, "input_wh": 0.0, "input_w": 0.0})
+		}
+	}
+	weather := []Row{}
+	for i := 0; i < 48; i++ {
+		weather = append(weather, Row{"ts": float64(now + int64(i)*3600), "ghi_w_m2": 0.0, "cloud_cover_pct": 100.0})
+	}
+	res := Build(history, weather, 50, 30000, BuildOptions{Now: now, Horizon: 24})
+	if res["ready"] != true || Number(res, "output_w_p95") <= 0 || res["inverter_overhead_source"] != "fit" || res["charge_efficiency_source"] != "default" {
+		t.Fatal(res["ready"], res["output_w_p95"], res["inverter_overhead_source"], res["charge_efficiency_source"])
+	}
+}

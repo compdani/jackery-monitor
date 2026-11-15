@@ -1064,3 +1064,66 @@ Validation passed: go build ./..., go vet ./..., go test ./..., and
 CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build ./.... Temporary-store tests port
 per-device isolation and legacy-flat-default inheritance assertions; no Python
 or legacy files changed. Step 7 item 4 remains outstanding.
+
+## Step 7 — forecast application wiring (complete, 2026-11-15)
+
+**Step 7 is complete.** One `buildForecast` path (port of
+`_build_and_record_forecast`) serves `/api/forecast` and the hourly
+`ForecastRecorderLoop` (90 s initial delay, one-hour cadence, bounded backoff
+up to four hours, per-device error isolation). It resolves location, the live
+weather service with its persisted/stale/climatology fallbacks, pack-weighted
+14-day history, fresh system SOC (main SOC fallback 50), configured capacity,
+per-device Forecast.Solar plane and encrypted key, normalized load schedule,
+solar-charge car load and pack count. Ready forecasts are recorded (hour
+collapse) and update today's sunset/sunrise daily summary followed by the
+14-day actual backfill. Response keys match Python (error/configured
+sentinels, `forecast_solar`, `solar_array`, `forecast_solar_has_key`,
+`load_schedule`, `today_actual_solar_wh`, weather stale/synthetic flags);
+`_diag=1` adds the ported `idle_window_diag`. Successful live fetches merge
+Open-Meteo's offset/timezone into the encrypted location record.
+
+Endpoints now served with UI paths/wrappers: `/api/location` (GET label
+backfill via reverse geocoding, POST validation + cache bust),
+`/api/location/geocode`, `/api/forecast/solar_array` GET/POST and `/infer`
+(400 with Python's paired-hours detail), `/api/forecast/solar_key`
+GET/POST/DELETE, `/api/forecast/load_schedule` (full load_schedule.py
+normalization, learned profile, `copy_learned=1`), `/api/devices/params`
+GET/POST, `/refit`, `/fit` (lookback clamp 6 h–45 d, preview/apply-as-user),
+`/api/diagnostics/row_soc` and `/api/diagnostics/parasitic_fit_windows`.
+Smart-charge decision details use the same parameter resolver.
+
+Smart-charge and solar-charge consume the live weather service through the
+shared input assembly (Python's controllers use weather only, not
+Forecast.Solar). Without location or on service failure they still fall back
+to persisted forecasts, and missing weather/SOC still yields the explicit OFF
+fallback.
+
+Deliberate differences (conservative, no owner decision required):
+- Go user parameters live in `forecast_models` as `device_param:<sn>:<key>`.
+  Clearing writes a null tombstone that hides imported legacy `device_params`
+  rows without modifying them. Refit clears user overrides like Python.
+- `/api/diagnostics/row_soc` computes the system_soc/battery_pct/none counters
+  on demand over each device's 14-day window instead of Python's
+  process-global `_row_soc` counters; lifetime and last-fit windows coincide.
+- `debug_key=max_charge_w` reports counts and the fitted value; the Go fit
+  does not expose Python's per-sample candidate list (`samples` is empty).
+- The EcoFlow-linked charge-ceiling exemption (`_has_ecoflow_battery_link`)
+  and the Siseli forecast seed belong to step 8 fleet wiring; until then the
+  ceiling is applied to every device (Python's non-linked behavior).
+
+Tests (fixture HTTP only, no upstream calls): forecast build/record/daily
+summary/timezone persistence/cache reuse/stale fallback, recorder skip and
+per-device isolation, smart-charge consuming live weather, location/geocode/
+solar array/solar key contracts, load schedule normalization and learned copy,
+all tests/test_device_params_fit.py assertions, parameter overrides and the
+legacy tombstone, diagnostics shapes, the diagnose_idle_windows and capacity
+catalog/diagnostic-source cases from tests/test_forecaster.py, and the
+smart-charge analytics mode/reason/baseline case from tests/test_predictions.py
+(the other test_predictions.py cases were ported with the store earlier).
+Remaining test_forecaster.py coverage continues to come from the captured
+reference fixtures described above.
+
+Step-11 deletion candidates after runtime cutover: forecaster.py,
+forecast_tables.py, forecast_solar.py, weather_client.py, solar_array.py,
+location.py and load_schedule.py (plus their server.py routes). They are
+still imported by the retained Python server, so nothing is deleted now.

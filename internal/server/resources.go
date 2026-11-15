@@ -25,42 +25,10 @@ func (s *Server) resources(w http.ResponseWriter, r *http.Request, b map[string]
 		return s.devicePrefs(w, r, b)
 	case "/api/cost/plan":
 		key = "cost_plan"
-	case "/api/forecast/load_schedule":
-		key = "load_schedule:" + r.URL.Query().Get("device_sn")
-		if b != nil && str(b, "device_sn") != "" {
-			key = "load_schedule:" + str(b, "device_sn")
-		}
 	case "/api/anthropic/prefs":
 		return s.aiPreferences(w, r, b, false)
 	case "/api/ai/provider":
 		return s.aiPreferences(w, r, b, true)
-	case "/api/location":
-		if r.Method == "GET" {
-			v, e := s.Store.Secret(s.Key, "location")
-			if errors.Is(e, sql.ErrNoRows) {
-				jsonOut(w, 200, map[string]any{"latitude": nil, "longitude": nil})
-			} else if e != nil {
-				storageError(w, e)
-			} else {
-				jsonOut(w, 200, v)
-			}
-			return true
-		}
-		if r.Method != "POST" {
-			return false
-		}
-		lat, ok := b["latitude"].(float64)
-		lon, ok2 := b["longitude"].(float64)
-		if !ok || !ok2 || lat < -90 || lat > 90 || lon < -180 || lon > 180 || (lat == 0 && lon == 0) {
-			fail(w, 400, "invalid latitude/longitude")
-			return true
-		}
-		if e := s.Store.SaveSecret(s.Key, "location", b); e != nil {
-			storageError(w, e)
-		} else {
-			jsonOut(w, 200, b)
-		}
-		return true
 	default:
 		// Configuration of controllers remains disabled until the decision engines
 		// and actuator adapters are integrated; do not claim to enable automation.

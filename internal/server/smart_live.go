@@ -44,34 +44,50 @@ func rowsForecast(rows []map[string]any) []forecast.Row {
 	return out
 }
 func (s *Server) smartInputs(ctx context.Context, sn string, now int64) ([]forecast.Row, []forecast.Row, float64, *float64, int, error) {
-	minutes, err := s.Store.EnergyMinutes(sn, float64(now-14*86400))
+	history, capacity, soc, err := s.energyInputs(sn, now, 14*24)
 	if err != nil {
 		return nil, nil, 0, nil, 0, err
 	}
-	history := store.EnergyHistory(minutes, float64(now-14*86400), 3600)
-	cached, err := s.Store.Get("devices", sn)
-	if err != nil && !isMissing(err) {
-		return nil, nil, 0, nil, 0, err
+	var weather []forecast.Row
+	if s.SmartForecast != nil {
+		weather, err = s.SmartForecast.Weather(ctx, sn, now)
+	} else {
+		// Live weather service (with its own stale/observation fallbacks),
+		// then imported persisted forecasts when no location/service exists.
+		wx, e := s.weatherNow(ctx)
+		weather = wx.Hourly
+		if e != nil || len(weather) == 0 {
+			var rows []map[string]any
+			rows, err = s.Store.List("weather_forecasts", "", float64(now), 0)
+			weather = rowsForecast(rows)
+		}
 	}
-	dev, _ := cached["device"].(map[string]any)
-	model := int(forecast.Number(dev, "model_code"))
-	main, pack := forecast.BatteryCapacity(model), forecast.ExpansionCapacity(model)
-	capacity := main
-	if v := forecast.Number(cached, "capacity_wh_override"); v > 0 {
-		capacity = v
-	} else if v := forecast.Number(dev, "capacity_wh_override"); v > 0 {
-		capacity = v
+	loc, _ := s.Store.Secret(s.Key, "location")
+	offset := int(forecast.Number(loc, "utc_offset_seconds"))
+	sort.Slice(weather, func(i, j int) bool { return forecast.Number(weather[i], "ts") < forecast.Number(weather[j], "ts") })
+	return history, weather, capacity, soc, offset, err
+}
+
+// energyInputs returns pack-weighted hourly history over the lookback, the
+// resolved system capacity and the fresh (10-minute) system SOC when present.
+func (s *Server) energyInputs(sn string, now int64, lookbackHours int) ([]forecast.Row, float64, *float64, error) {
+	since := float64(now - int64(lookbackHours)*3600)
+	minutes, err := s.Store.EnergyMinutes(sn, min(since, float64(now-600)))
+	if err != nil {
+		return nil, 0, nil, err
 	}
-	if capacity <= 0 {
-		capacity = 2048
+	history := store.EnergyHistory(minutes, since, 3600)
+	main, pack, capacity, err := s.capacityHints(sn)
+	if err != nil {
+		return nil, 0, nil, err
 	}
 	if err = s.Store.DecorateHistorySOC(sn, history, main, pack); err != nil {
-		return nil, nil, 0, nil, 0, err
+		return nil, 0, nil, err
 	}
 	var soc *float64
 	fresh := store.EnergyHistory(minutes, float64(now-600), 60)
 	if err = s.Store.DecorateHistorySOC(sn, fresh, main, pack); err != nil {
-		return nil, nil, 0, nil, 0, err
+		return nil, 0, nil, err
 	}
 	for _, r := range fresh {
 		if forecast.Number(r, "ts") >= float64(now-600) && forecast.Number(r, "ts") <= float64(now) {
@@ -85,18 +101,29 @@ func (s *Server) smartInputs(ctx context.Context, sn string, now int64) ([]forec
 			}
 		}
 	}
-	loc, _ := s.Store.Secret(s.Key, "location")
-	offset := int(forecast.Number(loc, "utc_offset_seconds"))
-	var weather []forecast.Row
-	if s.SmartForecast != nil {
-		weather, err = s.SmartForecast.Weather(ctx, sn, now)
-	} else {
-		var rows []map[string]any
-		rows, err = s.Store.List("weather_forecasts", "", float64(now), 0)
-		weather = rowsForecast(rows)
+	return rowsForecast(history), capacity, soc, nil
+}
+
+// capacityHints resolves catalog main/pack capacities plus the configured
+// (override-aware) capacity used by forecasts and controllers.
+func (s *Server) capacityHints(sn string) (float64, float64, float64, error) {
+	cached, err := s.Store.Get("devices", sn)
+	if err != nil && !isMissing(err) {
+		return 0, 0, 0, err
 	}
-	sort.Slice(weather, func(i, j int) bool { return forecast.Number(weather[i], "ts") < forecast.Number(weather[j], "ts") })
-	return rowsForecast(history), weather, capacity, soc, offset, err
+	dev, _ := cached["device"].(map[string]any)
+	model := int(forecast.Number(dev, "model_code"))
+	main, pack := forecast.BatteryCapacity(model), forecast.ExpansionCapacity(model)
+	capacity := main
+	if v := forecast.Number(cached, "capacity_wh_override"); v > 0 {
+		capacity = v
+	} else if v := forecast.Number(dev, "capacity_wh_override"); v > 0 {
+		capacity = v
+	}
+	if capacity <= 0 {
+		capacity = 2048
+	}
+	return main, pack, capacity, nil
 }
 func (s *Server) evaluateSmart(ctx context.Context, sn string, now int64, record bool) (*automation.ChargePlan, error) {
 	s.smart.evaluate.Lock()

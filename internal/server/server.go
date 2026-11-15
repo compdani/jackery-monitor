@@ -48,6 +48,10 @@ type Server struct {
 	mu            sync.RWMutex
 	snapshot      map[string]any
 	tesla         teslaRuntime
+	// Weather and SolarForecast are injectable for fixture HTTP tests.
+	Weather       *forecast.WeatherClient
+	SolarForecast *forecast.SolarClient
+	forecasts     forecastRuntime
 }
 
 func (s *Server) Register(e *core.ServeEvent) {
@@ -411,6 +415,9 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if s.automationRoutes(w, r, b) {
+		return
+	}
+	if s.forecastRoutes(w, r, b) {
 		return
 	}
 	if s.predictionRoutes(w, r) {

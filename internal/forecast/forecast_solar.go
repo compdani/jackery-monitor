@@ -129,3 +129,11 @@ func (c *SolarClient) Fetch(ctx context.Context, lat, lon float64, tilt, azimuth
 	c.cache[site] = out
 	return out
 }
+
+// ClearCache drops site estimates after plane, key or location changes. The
+// shared rate-limit retry-at remains honored.
+func (c *SolarClient) ClearCache() {
+	c.mu.Lock()
+	c.cache = nil
+	c.mu.Unlock()
+}

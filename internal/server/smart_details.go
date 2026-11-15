@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"github.com/compdani/jackery-monitor/internal/assistant"
 	"github.com/compdani/jackery-monitor/internal/automation"
-	"github.com/compdani/jackery-monitor/internal/forecast"
 	"io"
 	"net/http"
 	"os"
@@ -100,83 +99,9 @@ func (s *Server) smartNarration(ctx context.Context, cfg automation.SmartSetting
 }
 
 func (s *Server) smartResolvedParams(ctx context.Context, sn string) []map[string]any {
-	metadata := map[string]map[string]any{}
-	_ = json.Unmarshal(deviceParamMetadata, &metadata)
-	h, w, capacity, _, offset, err := s.smartInputs(ctx, sn, time.Now().Unix())
+	rows, err := s.resolveDeviceParams(ctx, sn, 14*24)
 	if err != nil {
 		return []map[string]any{}
 	}
-	cached, _ := s.Store.Get("devices", sn)
-	dev, _ := cached["device"].(map[string]any)
-	packs := 0
-	packRows, _ := s.Store.List("battery_packs", sn, 0, 0)
-	if len(packRows) > 0 {
-		items, _ := packRows[len(packRows)-1]["packs"].([]any)
-		packs = len(items)
-	}
-	stored, _ := s.Store.List("forecast_models", sn, 0, 0)
-	if forecast.Number(cached, "capacity_wh_override") <= 0 && forecast.Number(dev, "capacity_wh_override") <= 0 {
-		capacity += float64(packs) * forecast.ExpansionCapacity(int(forecast.Number(dev, "model_code")))
-	}
-	for _, r := range stored {
-		if r["key"] == "battery_capacity_wh" && r["source"] == "user" && forecast.Number(r, "value") > 0 {
-			capacity = forecast.Number(r, "value")
-		}
-	}
-	parasitic, pct, dn := forecast.FitDrainModel(h, capacity, packs)
-	eff, en := forecast.FitChargeEfficiency(h, capacity, .9, 5)
-	solar, n := forecast.FitSolarCoefficient(h, w)
-	charge, cn := forecast.FitMaxCharge(h, w, offset, 100, 6, .95)
-	source := func(n int) string {
-		if n >= 5 {
-			return "fit"
-		}
-		return "default"
-	}
-	values := map[string]map[string]any{
-		"battery_capacity_wh":   {"value": capacity, "source": "catalog"},
-		"max_charge_w":          {"value": 800.0, "source": "default", "n_samples": cn},
-		"parasitic_w":           {"value": parasitic, "source": source(dn), "n_samples": dn},
-		"inverter_overhead_pct": {"value": pct, "source": source(dn), "n_samples": dn},
-		"charge_efficiency":     {"value": eff, "source": source(en), "n_samples": en},
-		"solar_coefficient":     {"value": solar, "source": source(n), "n_samples": n},
-	}
-	if n >= 2 {
-		values["solar_coefficient"]["source"] = "fit"
-	}
-	if forecast.Number(cached, "capacity_wh_override") > 0 || forecast.Number(dev, "capacity_wh_override") > 0 {
-		values["battery_capacity_wh"]["source"] = "user"
-	}
-	if forecast.Number(dev, "model_code") == 0 && values["battery_capacity_wh"]["source"] != "user" {
-		values["battery_capacity_wh"]["source"] = "default"
-	}
-	if charge != nil {
-		values["max_charge_w"]["value"], values["max_charge_w"]["source"] = *charge, "fit"
-	}
-	raw, _ := s.Store.Get("settings", "smart_charge")
-	if by, ok := raw["by_device"].(map[string]any); ok {
-		raw, _ = by[sn].(map[string]any)
-	}
-	if forecast.Number(raw, "max_charge_w") > 0 {
-		values["max_charge_w"] = map[string]any{"value": raw["max_charge_w"], "source": "user", "note": "from smart_charge config (Automation tab)"}
-	}
-	for _, r := range stored {
-		if r["_legacy_table"] == "device_params" && r["source"] == "user" && r["value"] != nil {
-			if _, ok := values[str(r, "key")]; ok {
-				values[str(r, "key")] = r
-			}
-		}
-	}
-	out := []map[string]any{}
-	for _, key := range []string{"battery_capacity_wh", "max_charge_w", "inverter_overhead_pct", "parasitic_w", "charge_efficiency", "solar_coefficient"} {
-		row := map[string]any{"key": key}
-		for k, v := range metadata[key] {
-			row[k] = v
-		}
-		for k, v := range values[key] {
-			row[k] = v
-		}
-		out = append(out, row)
-	}
-	return out
+	return rows
 }

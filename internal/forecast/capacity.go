@@ -35,3 +35,6 @@ func ExpansionCapacity(model int) float64 {
 	}
 	return BatteryCapacity(model)
 }
+
+// InCatalog reports whether model_code has a bundled models.json entry.
+func InCatalog(model int) bool { _, ok := modelCatalog.Models[strconv.Itoa(model)]; return ok }
