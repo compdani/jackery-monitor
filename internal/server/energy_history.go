@@ -52,7 +52,22 @@ func (s *Server) energyRead(w http.ResponseWriter, r *http.Request) bool {
 		jsonOut(w, 200, out)
 		return true
 	}
-	minutes, err := s.Store.EnergyMinutes(sn, 0)
+	// Bound history/daily reads before decoding samples; totals alone need lifetime data.
+	since := 0.0
+	if path == "/api/energy/history" {
+		hours, _ := strconv.Atoi(r.URL.Query().Get("hours"))
+		if hours == 0 {
+			hours = 24
+		}
+		since = now - float64(max(1, min(8760, hours)))*3600
+	} else if path == "/api/energy/daily" {
+		days, _ := strconv.Atoi(r.URL.Query().Get("days"))
+		if days == 0 {
+			days = 90
+		}
+		since = now - float64(max(1, min(365, days)))*86400
+	}
+	minutes, err := s.Store.EnergyMinutes(sn, since)
 	if err != nil {
 		storageError(w, err)
 		return true

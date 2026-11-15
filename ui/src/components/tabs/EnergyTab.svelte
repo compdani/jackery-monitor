@@ -60,7 +60,21 @@
   let busy = $state(false);
   let error = $state('');
 
-  const energy = $derived(live.status?.energy as Record<string, unknown> | undefined);
+  let totals = $state<Record<string, unknown> | undefined>();
+  const energy = $derived(totals ?? live.status?.energy as Record<string, unknown> | undefined);
+  let totalsRequest = 0;
+  async function loadTotals() {
+    const request = ++totalsRequest;
+    totals = undefined;
+    const sn = live.activeDeviceSn();
+    if (!sn) return;
+    try {
+      const result = await api<Record<string, unknown>>(`/energy/totals?device_sn=${encodeURIComponent(sn)}`);
+      if (request === totalsRequest) totals = result;
+    } catch (err) {
+      if (request === totalsRequest) error = err instanceof Error ? err.message : 'Could not load totals';
+    }
+  }
   const today = $derived((energy?.today ?? {}) as {
     output_wh?: number;
     input_wh?: number;
@@ -270,10 +284,12 @@
     seedCompare();
     loadHistory();
     loadDaily();
+    loadTotals();
     return live.onDeviceChange(() => {
       seedCompare();
       loadHistory();
       loadDaily();
+      loadTotals();
     });
   });
 

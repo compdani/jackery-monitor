@@ -71,9 +71,19 @@ export function connectWs(handlers: WsHandlers): () => void {
     };
   }
 
+  const unsubscribe = live.onDeviceChange(() => {
+    if (retry) clearTimeout(retry);
+    if (socket) {
+      socket.onclose = null;
+      socket.onmessage = null;
+      socket.close();
+    }
+    connect();
+  });
   connect();
 
   return () => {
+    unsubscribe();
     stopped = true;
     if (retry) clearTimeout(retry);
     try {

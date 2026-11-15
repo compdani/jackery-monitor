@@ -445,3 +445,46 @@ func (c *Client) FetchMonthlySummary(ctx context.Context, station string) (Value
 }
 
 func (c *Client) notifyTokens(creds Credentials) { defer func() { _ = recover() }(); c.callback(creds) }
+
+// FetchDailyProduction returns the portal's per-half-hour generated energy in kWh.
+// These are interval values, not a cumulative counter (they can decrease).
+func (c *Client) FetchDailyProduction(ctx context.Context, id, date string) ([]Values, error) {
+	v, err := c.request(ctx, "POST", "/apis/deviceOverView/generatedEnergy/daily", url.Values{"deviceId": {id}}, Values{"time": date})
+	if err != nil {
+		return nil, err
+	}
+	items, ok := v["data"].([]any)
+	if !ok {
+		return nil, fmt.Errorf("Siseli daily production: expected interval array")
+	}
+	rows := []Values{}
+	for _, item := range items {
+		row := object(item)
+		if row["isRealValue"] != true {
+			continue
+		}
+		stamp, err := time.ParseInLocation("2006-01-02 15:04:05", text(row["time"]), c.location())
+		if err != nil {
+			return nil, err
+		}
+		if stamp.Format("2006-01-02") != date {
+			return nil, fmt.Errorf("Siseli production date mismatch")
+		}
+		kwh, ok := Number(row["generatedEnergy"])
+		if !ok {
+			kwh, ok = Number(row["value"])
+		}
+		if !ok || kwh < 0 {
+			return nil, fmt.Errorf("invalid Siseli production energy")
+		}
+		rows = append(rows, Values{"ts": float64(stamp.Unix()), "interval_s": 1800.0, "solar_wh": kwh * 1000, "_energy_kind": "portal_solar"})
+	}
+	return rows, nil
+}
+
+// ProductionDates includes yesterday so delayed final intervals are reconciled
+// after midnight and after a monitor restart.
+func (c *Client) ProductionDates() []string {
+	now := c.now().In(c.location())
+	return []string{now.AddDate(0, 0, -1).Format("2006-01-02"), now.Format("2006-01-02")}
+}

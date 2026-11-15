@@ -522,7 +522,6 @@ func (s *Server) static(w http.ResponseWriter, r *http.Request) {
 }
 func (s *Server) status(r *http.Request) map[string]any {
 	s.mu.RLock()
-	defer s.mu.RUnlock()
 	out := map[string]any{"connection_status": "disconnected", "connection_error": nil, "device": nil, "telemetry": nil, "last_update_ts": nil, "history": []any{}, "battery_packs": []any{}, "backend": "bridge", "mock_mode": false, "cloud": map[string]any{}, "energy": nil, "low_battery_threshold": 20}
 	if _, native := s.Bridge.(*bridge.Native); native {
 		out["backend"] = "native"
@@ -530,6 +529,7 @@ func (s *Server) status(r *http.Request) map[string]any {
 	for k, v := range s.snapshot {
 		out[k] = v
 	}
+	s.mu.RUnlock()
 	view := r.URL.Query().Get("view_device_id")
 	if view == "" {
 		if c, e := r.Cookie("view_device_id"); e == nil {
@@ -554,6 +554,18 @@ func (s *Server) status(r *http.Request) map[string]any {
 			}
 		}
 		if cached != nil {
+			// The viewed cloud device has its own health, independent of the bridge.
+			if d, ok := cached["device"].(map[string]any); ok {
+				source := str(d, "source")
+				out["source"] = source
+				if source == "siseli" || source == "ecoflow" || strings.HasPrefix(str(d, "device_sn"), "siseli:") || strings.HasPrefix(str(d, "device_sn"), "ecoflow:") {
+					out["connection_status"] = "disconnected"
+					out["connection_error"] = nil
+					if ts, ok := cached["last_update_ts"].(float64); ok && ts > float64(time.Now().Unix())-600 {
+						out["connection_status"] = "connected"
+					}
+				}
+			}
 			cloud := map[string]any{}
 			if old, ok := out["cloud"].(map[string]any); ok {
 				for k, v := range old {

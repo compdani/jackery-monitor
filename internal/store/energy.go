@@ -13,13 +13,18 @@ import (
 // observations are integrated only with other raw observations, never with an
 // aggregate row or across an outage. Aggregate minutes win on overlap.
 func (s *Store) EnergyMinutes(sn string, since float64) ([]map[string]any, error) {
-	rows, err := s.List("samples", sn, math.Max(0, since-300), 0)
+	rows, err := s.List("samples", sn, math.Max(0, since-1800), 0)
 	if err != nil {
 		return nil, err
 	}
 	buckets := map[int64]map[string]any{}
 	raw := []map[string]any{}
+	portal := []map[string]any{}
 	for _, r := range rows {
+		if r["_energy_kind"] == "portal_solar" {
+			portal = append(portal, r)
+			continue
+		}
 		if r["bucket"] != nil || r["_energy_kind"] == "aggregate" {
 			b := int64(num(r["bucket"]))
 			if r["bucket"] == nil {
@@ -75,6 +80,25 @@ func (s *Store) EnergyMinutes(sn string, since float64) ([]map[string]any, error
 			row[dst] = num(row[dst]) + wh
 		}
 		row["solar_charge_diverted_wh"] = math.Min(num(row["solar_charge_diverted_wh"]), num(row["output_wh"]))
+	}
+	// Reported interval production replaces only solar energy. Keep measured
+	// battery charging, consumption and SOC independent. Split uniformly for
+	// chart resolution; the interval total remains the portal's exact value.
+	for _, p := range portal {
+		start := int64(num(p["ts"]))
+		seconds := int64(num(p["interval_s"]))
+		if seconds != 1800 {
+			continue
+		}
+		for b := start; b < start+seconds; b += 60 {
+			row := buckets[b]
+			if row == nil {
+				row = map[string]any{"ts": float64(b), "bucket": float64(b), "sample_count": 0.0}
+				buckets[b] = row
+			}
+			row["solar_wh"] = num(p["solar_wh"]) / 30
+			row["solar_energy_source"] = "siseli_portal"
+		}
 	}
 	out := []map[string]any{}
 	for b, row := range buckets {

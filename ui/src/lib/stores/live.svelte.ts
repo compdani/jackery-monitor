@@ -173,6 +173,7 @@ class LiveStore {
 
     try {
       await apiPost('/view/select_device', { device_id: deviceId });
+      await this.refreshStatus();
     } catch (err) {
       this.#pendingViewSwitch = null;
       this.setDeviceSwitching(false);

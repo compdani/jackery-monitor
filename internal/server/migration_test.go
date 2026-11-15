@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestViewReferenceFallbackAndIsolation(t *testing.T) {
@@ -112,5 +113,28 @@ func TestAssistantTurnPersistsHistory(t *testing.T) {
 	rows, e := s.Store.List("messages", "chat", 0, 100)
 	if e != nil || len(rows) != 4 {
 		t.Fatal(rows, e)
+	}
+}
+
+func TestViewedCloudHealthIndependentOfBridge(t *testing.T) {
+	s, _ := testServer(t)
+	s.snapshot = map[string]any{"connection_status": "disconnected", "connection_error": "bridge unavailable"}
+	for _, fresh := range []bool{true, false} {
+		ts := float64(time.Now().Unix())
+		if !fresh {
+			ts -= 3600
+		}
+		err := s.Store.Put("devices", "siseli:99", "siseli:99", map[string]any{"device": map[string]any{"device_id": "siseli:99", "device_sn": "siseli:99", "source": "siseli"}, "last_update_ts": ts})
+		if err != nil {
+			t.Fatal(err)
+		}
+		out := s.status(httptest.NewRequest("GET", "/api/status?view_device_id=siseli:99", nil))
+		want := "disconnected"
+		if fresh {
+			want = "connected"
+		}
+		if out["connection_status"] != want || out["connection_error"] != nil || out["source"] != "siseli" {
+			t.Fatal(out)
+		}
 	}
 }

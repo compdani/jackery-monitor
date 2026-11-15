@@ -189,3 +189,27 @@ func TestRefresh401AndCancellation(t *testing.T) {
 		t.Fatal(e)
 	}
 }
+
+func TestDailyProductionIntervals(t *testing.T) {
+	c := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != "POST" || r.URL.Path != "/apis/deviceOverView/generatedEnergy/daily" || r.URL.Query().Get("deviceId") != "525039200608948225" {
+			t.Error(r.Method, r.URL)
+		}
+		var b Values
+		if err := json.NewDecoder(r.Body).Decode(&b); err != nil || b["time"] != "2026-11-15" {
+			t.Error(b, err)
+		}
+		reply(w, `{"code":0,"data":[{"time":"2026-11-15 11:00:00","value":0.435,"generatedEnergy":0.435,"isRealValue":true},{"time":"2026-11-15 11:30:00","value":0.295,"generatedEnergy":0.295,"isRealValue":true},{"time":"2026-11-15 12:00:00","value":9,"isRealValue":false}]}`)
+	}, Credentials{AccessToken: "tok", TimeZone: "America/Chicago"})
+	rows, err := c.FetchDailyProduction(context.Background(), "525039200608948225", "2026-11-15")
+	if err != nil || len(rows) != 2 {
+		t.Fatal(rows, err)
+	}
+	if num(rows[0]["solar_wh"]) != 435 || num(rows[1]["solar_wh"]) != 295 || num(rows[1]["ts"])-num(rows[0]["ts"]) != 1800 {
+		t.Fatal(rows)
+	}
+	stamp := time.Unix(int64(num(rows[0]["ts"])), 0).UTC().Format(time.RFC3339)
+	if stamp != "2026-11-15T17:00:00Z" {
+		t.Fatal(stamp)
+	}
+}

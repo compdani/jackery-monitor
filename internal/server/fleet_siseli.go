@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"sync"
@@ -192,6 +193,20 @@ func (s *Server) siseliPollOnce(ctx context.Context) error {
 	settings, rawSettings := map[string][]siseli.Values{}, map[string]siseli.Values{}
 	for _, d := range devices {
 		pid, sn := str(d, "portal_device_id"), str(d, "device_sn")
+		// Reconcile reported production independently of the live power sample.
+		for _, date := range client.ProductionDates() {
+			rows, err := client.FetchDailyProduction(ctx, pid, date)
+			if err != nil {
+				s.Store.App.Logger().Warn("siseli production", "device", pid, "error", err)
+				continue
+			}
+			for _, row := range rows {
+				key := fmt.Sprintf("siseli-production:%s:%.0f", sn, row["ts"])
+				if err := s.Store.Put("samples", key, sn, row); err != nil {
+					s.Store.App.Logger().Error("persist siseli production", "error", err)
+				}
+			}
+		}
 		if v, e := client.GetDeviceSettings(ctx, pid); e == nil && v != nil {
 			rawSettings[sn], settings[sn] = v, siseli.NormalizeControls(v)
 		}
