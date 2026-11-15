@@ -24,6 +24,7 @@ import (
 )
 
 type Server struct {
+	watchdog      watchdogRuntime
 	SmartPlug     SmartPlug
 	SmartForecast SmartForecastSource
 	RescueSwitch  automation.Switch
@@ -338,6 +339,17 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 		}
+		if p == "/api/set_output" && str(b, "port") == "ac" && b["on"] == false {
+			sn := str(b, "device_sn")
+			if sn == "" {
+				s.mu.RLock()
+				d, _ := s.snapshot["device"].(map[string]any)
+				sn = str(d, "device_sn")
+				s.mu.RUnlock()
+			}
+			done := s.watchdogUserOff(sn)
+			defer done()
+		}
 		out, e := s.Bridge.Call(r.Context(), method, b)
 		if e != nil {
 			fail(w, 502, "bridge: "+e.Error())
@@ -359,6 +371,9 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if s.rescueRoutes(w, r, b) {
+		return
+	}
+	if s.watchdogRoutes(w, r, b) {
 		return
 	}
 	if s.automationRoutes(w, r, b) {
@@ -574,6 +589,7 @@ func (s *Server) persistObservation(ctx context.Context, p map[string]any) {
 						s.Store.App.Logger().Error("persist battery packs", "error", e)
 					}
 				}
+				s.watchdogTick(ctx, sn, t, d["model_code"], stamp)
 				s.evaluateRules(ctx, sn, t)
 				row := map[string]any{"ts": stamp, "device_sn": sn}
 				for k, v := range t {

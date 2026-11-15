@@ -898,3 +898,35 @@ and capture supervision need no Go port; preserve shared cloud payload decoders.
 
 Validation: go build ./..., go vet ./..., go test ./..., and
 CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build ./... passed for this increment.
+
+## Step 6b — inverter watchdog live integration (partial continuation)
+
+The native telemetry ingestion path now evaluates the existing collapse detector
+for each device/frame. The collapse floor uses normalized global settings.
+Per-device detector state, episode cycle budget, error latch and user-OFF
+timestamp survive restart. Config/status/dismiss use the UI paths and status
+shape; model codes 13/22 default enabled, with persisted per-device overrides.
+Siseli and EcoFlow are rejected by these control routes.
+
+Recovery uses the existing bridge set_output path: OFF, a cancellable two-second
+pause, then ON after checking current configuration, trip state and user intent.
+User AC OFF registers suppression before waiting on the bridge, cancels queued
+recovery and records suppression even when the user's command fails. Disable
+and dismiss also retract pending recovery. Commands have ten-second deadlines.
+Fake tests cover live collapse detection, durable episode/user state, cancelling
+ON during the pause, authenticated config/status/dismiss and response fields.
+The prior complete detector fixtures remain in use.
+
+This continuation does **not** finish step 6b or claim complete watchdog Python
+server parity. Remaining: F7 live supervisor/config/events; restart-safe rule
+edges, bulk disable/history/firings and shared controller arbitration; remaining
+Python supervisor/concurrency assertions (including bridge-lock queue races),
+legacy imported watchdog-override resolution, and optional smart narration /
+resolved parameters. Watchdog configuration currently uses dedicated settings
+records; imported historical device-parameter overrides are not yet consumed.
+No Python is newly declared safe to delete.
+
+Validation: go build ./..., go vet ./..., go test ./..., and CGO_ENABLED=0
+GOOS=linux GOARCH=arm64 go build ./... passed. Tests use fakes and temporary
+PocketBase stores. No real hardware, legacy data or keys were touched; no Python
+was deleted. No push, PR or merge was performed.
