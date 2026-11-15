@@ -1023,3 +1023,18 @@ transports were used. No legacy data, keys or Python were modified or deleted.
 No push, PR or merge. Weather-service wiring, later migration steps and real
 hardware/cutover validation remain outstanding; Siseli capture remains retired.
 Additional go test -race ./internal/server passed for the completed 6b changes.
+
+## Step 7 — weather service
+
+The Go weather client now persists location-scoped last-good forecasts and real
+past observations through a PocketBase adapter. On transport failure it serves
+stale memory, then the saved forecast with observations, then a seven-day
+per-local-hour upper-median climatology. Synthetic output is explicitly marked;
+predicted hours are never stored as observations. Open-Meteo timezone metadata,
+null-value normalization, bounded geocoding and optional reverse geocoding are
+implemented. Fixture HTTP tests port the weather failure/fallback and geocoding
+assertions. The service is not yet wired to application routes/controllers;
+that remains step 7 item 4. No live weather calls or legacy data/key access.
+Validation passed: go build ./..., go vet ./..., go test ./..., and
+CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build ./.... Temporary PocketBase tests
+verify forecast/observation separation and location isolation.

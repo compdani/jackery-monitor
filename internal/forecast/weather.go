@@ -14,17 +14,27 @@ import (
 )
 
 type Weather struct {
-	Hourly     []Row  `json:"hourly"`
-	FetchedAt  int64  `json:"fetched_at"`
-	Stale      bool   `json:"stale,omitempty"`
-	StaleError string `json:"stale_error,omitempty"`
-	Error      string `json:"error,omitempty"`
+	Hourly     []Row   `json:"hourly"`
+	FetchedAt  int64   `json:"fetched_at"`
+	Stale      bool    `json:"stale,omitempty"`
+	StaleError string  `json:"stale_error,omitempty"`
+	Error      string  `json:"error,omitempty"`
+	Lat        float64 `json:"lat"`
+	Lon        float64 `json:"lon"`
+	Offset     int     `json:"utc_offset_seconds"`
+	Timezone   string  `json:"timezone"`
+	Synthetic  bool    `json:"synthetic,omitempty"`
+	StaleAge   int64   `json:"stale_age_s,omitempty"`
 }
 type WeatherClient struct {
-	HTTP    *http.Client
-	BaseURL string
-	mu      sync.Mutex
-	cache   map[string]Weather
+	HTTP       *http.Client
+	BaseURL    string
+	GeocodeURL string
+	ReverseURL string
+	Store      WeatherStore
+	Offset     int
+	mu         sync.Mutex
+	cache      map[string]Weather
 }
 
 func ValidLocation(lat, lon float64) bool {
@@ -38,14 +48,14 @@ func (c *WeatherClient) Fetch(ctx context.Context, lat, lon float64) (Weather, e
 	c.mu.Lock()
 	cached, ok := c.cache[key]
 	c.mu.Unlock()
-	if ok && time.Now().Unix()-cached.FetchedAt < 1800 {
+	if ok && time.Now().Unix()-cached.FetchedAt < 3600 {
 		return cached, nil
 	}
 	endpoint := c.BaseURL
 	if endpoint == "" {
 		endpoint = "https://api.open-meteo.com/v1/forecast"
 	}
-	q := url.Values{"latitude": {strconv.FormatFloat(lat, 'f', -1, 64)}, "longitude": {strconv.FormatFloat(lon, 'f', -1, 64)}, "hourly": {"shortwave_radiation,cloud_cover"}, "past_days": {"14"}, "forecast_days": {"7"}, "timeformat": {"unixtime"}, "timezone": {"UTC"}}
+	q := url.Values{"latitude": {strconv.FormatFloat(lat, 'f', -1, 64)}, "longitude": {strconv.FormatFloat(lon, 'f', -1, 64)}, "hourly": {"shortwave_radiation,cloud_cover"}, "past_days": {"14"}, "forecast_days": {"7"}, "timeformat": {"unixtime"}, "timezone": {"auto"}}
 	req, e := http.NewRequestWithContext(ctx, "GET", endpoint+"?"+q.Encode(), nil)
 	if e != nil {
 		return Weather{}, e
@@ -61,7 +71,9 @@ func (c *WeatherClient) Fetch(ctx context.Context, lat, lon float64) (Weather, e
 			e = fmt.Errorf("weather HTTP %d", resp.StatusCode)
 		} else {
 			var v struct {
-				Hourly struct {
+				Offset   int    `json:"utc_offset_seconds"`
+				Timezone string `json:"timezone"`
+				Hourly   struct {
 					Time  []int64    `json:"time"`
 					GHI   []*float64 `json:"shortwave_radiation"`
 					Cloud []*float64 `json:"cloud_cover"`
@@ -71,15 +83,25 @@ func (c *WeatherClient) Fetch(ctx context.Context, lat, lon float64) (Weather, e
 			if e == nil {
 				rows := []Row{}
 				for i, ts := range v.Hourly.Time {
-					if i >= len(v.Hourly.GHI) || i >= len(v.Hourly.Cloud) || v.Hourly.GHI[i] == nil || v.Hourly.Cloud[i] == nil {
+					if i >= len(v.Hourly.GHI) || i >= len(v.Hourly.Cloud) {
 						continue
 					}
-					rows = append(rows, Row{"ts": float64(ts), "ghi_w_m2": *v.Hourly.GHI[i], "cloud_cover_pct": *v.Hourly.Cloud[i]})
+					g, cloud := 0.0, 0.0
+					if v.Hourly.GHI[i] != nil {
+						g = *v.Hourly.GHI[i]
+					}
+					if v.Hourly.Cloud[i] != nil {
+						cloud = *v.Hourly.Cloud[i]
+					}
+					rows = append(rows, Row{"ts": float64(ts), "ghi_w_m2": g, "cloud_cover_pct": cloud})
 				}
 				if len(rows) == 0 {
 					e = fmt.Errorf("weather returned no usable hours")
 				} else {
-					out := Weather{Hourly: rows, FetchedAt: time.Now().Unix()}
+					out := Weather{Hourly: rows, FetchedAt: time.Now().Unix(), Lat: lat, Lon: lon, Offset: v.Offset, Timezone: v.Timezone}
+					if c.Store != nil {
+						_ = c.Store.SaveWeather(key, out)
+					}
 					c.mu.Lock()
 					if c.cache == nil {
 						c.cache = map[string]Weather{}
@@ -92,11 +114,18 @@ func (c *WeatherClient) Fetch(ctx context.Context, lat, lon float64) (Weather, e
 		}
 	}
 	if ok {
+		cached.StaleAge = time.Now().Unix() - cached.FetchedAt
 		cached.Stale = true
 		cached.StaleError = fmt.Sprintf("weather: %v", e)
 		return cached, nil
 	}
-	return Weather{Hourly: []Row{}, Error: fmt.Sprintf("weather: %v", e)}, e
+	if c.Store != nil {
+		if fallback, found := c.fallback(key, lat, lon); found {
+			fallback.StaleError = fmt.Sprintf("weather: %v", e)
+			return fallback, nil
+		}
+	}
+	return Weather{Hourly: []Row{}, Lat: lat, Lon: lon, Error: fmt.Sprintf("weather: %v", e)}, e
 }
 func ResampleWatts(watts map[string]float64, offset int) map[int64]float64 {
 	sum := map[int64]float64{}
