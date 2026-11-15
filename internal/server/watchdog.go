@@ -76,6 +76,7 @@ func (s *Server) cancelWatchdog(sn string) {
 
 // Register the OFF intent before waiting on the bridge, including failed requests.
 func (s *Server) watchdogUserOff(sn string) func() {
+	s.cancelAC(sn)
 	s.watchdog.mu.Lock()
 	defer s.watchdog.mu.Unlock()
 	s.cancelWatchdog(sn)
@@ -131,9 +132,14 @@ func (s *Server) watchdogTick(ctx context.Context, sn string, tele map[string]an
 		s.watchdog.cancels = map[string]context.CancelFunc{}
 	}
 	s.cancelWatchdog(sn)
-	cycleCtx, cancel := context.WithCancel(ctx)
+	leaseCtx, release, ok := s.acquireAC(ctx, sn)
+	if !ok {
+		return
+	}
+	cycleCtx, cancel := context.WithCancel(leaseCtx)
 	s.watchdog.cancels[sn] = cancel
 	go func() {
+		defer release()
 		defer cancel()
 		command := func(on bool) error {
 			c, stop := context.WithTimeout(cycleCtx, 10*time.Second)

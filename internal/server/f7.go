@@ -155,6 +155,17 @@ func (s *Server) f7Tick(ctx context.Context, sn string, tele map[string]any) {
 	if f7Evaluate(cfg, tele, now, s.f7Daylight(cfg, now)) != "cycle" {
 		return
 	}
+	leaseCtx, release, ok := s.acquireAC(ctx, sn)
+	if !ok {
+		return
+	}
+	started := false
+	defer func() {
+		if !started {
+			release()
+		}
+	}()
+	ctx = leaseCtx
 	cfg["last_cycle_ts"] = now
 	if err = s.f7Save(sn, cfg); err != nil {
 		return
@@ -167,7 +178,9 @@ func (s *Server) f7Tick(ctx context.Context, sn string, tele map[string]any) {
 		s.f7.running = map[string]bool{}
 	}
 	s.f7.running[sn] = true
+	started = true
 	go func() {
+		defer release()
 		command := func(c context.Context, on bool) error {
 			bounded, cancel := context.WithTimeout(c, 10*time.Second)
 			defer cancel()

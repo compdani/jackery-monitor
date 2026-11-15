@@ -56,7 +56,7 @@ func (s *Server) runSmart(ctx context.Context, sn string, cfg automation.SmartSe
 	if err = s.Store.Put("settings", key, sn, map[string]any{"state": state, "pending": true, "plan": plan}); err != nil {
 		return err
 	}
-	state, decision := automation.RunSmart(ctx, sw, cfg, state, sn, plan)
+	state, decision := automation.RunSmart(ctx, governedSwitch{s, "smart", sw}, cfg, state, sn, plan)
 	return s.Store.App.RunInTransaction(func(app core.App) error {
 		st := &store.Store{App: app}
 		if err := st.Put("automation_decisions", fmt.Sprintf("smart_charge:%s:%d", sn, plan.DecidedAt), sn, decision.Payload()); err != nil {
@@ -120,7 +120,7 @@ func (s *Server) smartChargeRoutes(w http.ResponseWriter, r *http.Request, b map
 	}
 	conflicts := []map[string]any{}
 	for _, row := range rows {
-		if row["enabled"] == false || str(row, "kasa_host") != cfg.Host || cfg.Host == "" {
+		if row["enabled"] == false || !sameHost(str(row, "kasa_host"), cfg.Host) || cfg.Host == "" {
 			continue
 		}
 		scope := str(row, "jackery_device_sn")

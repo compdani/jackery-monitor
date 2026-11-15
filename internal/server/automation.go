@@ -84,7 +84,7 @@ func (s *Server) evaluateRules(ctx context.Context, sn string, tele map[string]a
 		if !match {
 			row["last_state"] = false
 		} else if row["last_state"] != true {
-			e := s.controllers.engine.Switch.SetPower(ctx, rule.Host, rule.Action == "on")
+			e := (governedSwitch{s, "rule", s.controllers.engine.Switch}).SetPower(ctx, rule.Host, rule.Action == "on")
 			if e != nil {
 				row["last_error"] = e.Error()
 			} else {

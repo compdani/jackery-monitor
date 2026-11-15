@@ -55,7 +55,7 @@ func (s *Server) solarCommand(ctx context.Context, sn string, c map[string]any, 
 	}
 	call, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
-	e := s.smartPlug().SetPower(call, str(c, "kasa_device_host"), on)
+	e := (governedSwitch{s, "solar", s.smartPlug()}).SetPower(call, str(c, "kasa_device_host"), on)
 	if e != nil {
 		st.Error = e.Error()
 		_ = s.saveSolar(sn, *st)

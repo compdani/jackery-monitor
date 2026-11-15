@@ -104,6 +104,8 @@ func (s *Server) rescueHosts() (map[string]string, error) {
 // rescueTick is also called without observations by the independent watchdog
 // and after failed polls. It NEVER replaces a source timestamp with poll time.
 func (s *Server) rescueTick(ctx context.Context, now float64, p map[string]any) {
+	s.actions.plugs.Lock()
+	defer s.actions.plugs.Unlock()
 	s.rescue.mu.Lock()
 	defer s.rescue.mu.Unlock()
 	if err := s.loadRescue(); err != nil {

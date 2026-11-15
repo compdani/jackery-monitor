@@ -27,6 +27,7 @@ import (
 )
 
 type Server struct {
+	actions       actionArbiter
 	watchdog      watchdogRuntime
 	f7            f7Runtime
 	SmartPlug     SmartPlug

@@ -430,12 +430,12 @@ func (s *Server) smartOwnsHost(host string) bool {
 	by, ok := raw["by_device"].(map[string]any)
 	if !ok {
 		c := automation.NormalizeSmart(raw)
-		return c.Mode == "active" && c.Host == host
+		return c.Mode == "active" && sameHost(c.Host, host)
 	}
 	for _, v := range by {
 		m, _ := v.(map[string]any)
 		c := automation.NormalizeSmart(m)
-		if c.Mode == "active" && c.Host == host {
+		if c.Mode == "active" && sameHost(c.Host, host) {
 			return true
 		}
 	}
