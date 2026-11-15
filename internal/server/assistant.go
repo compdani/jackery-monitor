@@ -21,6 +21,9 @@ type assistantRuntime struct{ mu sync.Mutex }
 
 func (s *Server) aiRoutes(w http.ResponseWriter, r *http.Request, b map[string]any) bool {
 	p := r.URL.Path
+	if s.modelRoutes(w, r) {
+		return true
+	}
 	for _, provider := range []string{"anthropic", "openai"} {
 		if p != "/api/"+provider+"/key" {
 			continue
@@ -115,7 +118,7 @@ func (s *Server) aiRoutes(w http.ResponseWriter, r *http.Request, b map[string]a
 			fail(w, 400, "AI model required")
 			return true
 		}
-		client = &assistant.Client{APIKey: key, Model: model, BaseURL: assistant.ResolveBaseURL(str(prefs, "openai_preset"), str(prefs, "openai_base_url"))}
+		client = &assistant.Client{HTTP: s.AIHTTP, APIKey: key, Model: model, BaseURL: assistant.ResolveBaseURL(compatPreset(prefs), str(prefs, "openai_base_url"))}
 	} else {
 		if model == "" {
 			model = str(prefs, "assistant_model")
@@ -158,6 +161,6 @@ func (s *Server) aiRoutes(w http.ResponseWriter, r *http.Request, b map[string]a
 		storageError(w, e)
 		return true
 	}
-	jsonOut(w, 200, map[string]any{"conversation_id": id, "text": reply, "message": reply, "tool_runs": []any{}})
+	jsonOut(w, 200, map[string]any{"conversation_id": id, "text": reply, "message": map[string]any{"id": aid, "conversation_id": id, "role": "assistant", "content": reply, "ts": stamp + .000001}, "pending_tools": []any{}, "tool_runs": []any{}})
 	return true
 }

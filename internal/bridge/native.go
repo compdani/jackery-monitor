@@ -3,6 +3,8 @@ package bridge
 import (
 	"context"
 	"errors"
+	"fmt"
+	"strconv"
 	"sync"
 	"time"
 )
@@ -28,7 +30,7 @@ type Native struct {
 }
 
 func (n *Native) event(kind string) {
-	n.events = append(n.events, map[string]any{"ts": float64(time.Now().Unix()), "kind": kind})
+	n.events = append(n.events, map[string]any{"ts": float64(time.Now().Unix()), "kind": kind, "level": "info", "category": "cloud", "message": kind, "extra": map[string]any{}})
 	if len(n.events) > 500 {
 		n.events = n.events[len(n.events)-500:]
 	}
@@ -50,7 +52,22 @@ func (n *Native) Call(ctx context.Context, method string, p map[string]any) (map
 	n.initialized = true
 	switch method {
 	case "get_events":
-		return map[string]any{"ok": true, "events": append([]map[string]any{}, n.events...)}, nil
+		since, _ := strconv.ParseFloat(fmt.Sprint(p["since"]), 64)
+		limit, _ := strconv.Atoi(fmt.Sprint(p["limit"]))
+		if limit <= 0 {
+			limit = 100
+		}
+		limit = min(limit, 500)
+		events := []map[string]any{}
+		for _, e := range n.events {
+			if e["ts"].(float64) > since {
+				events = append(events, e)
+			}
+		}
+		if len(events) > limit {
+			events = events[len(events)-limit:]
+		}
+		return map[string]any{"ok": true, "events": events}, nil
 	case "auth_status":
 		email := ""
 		if n.Cloud != nil {

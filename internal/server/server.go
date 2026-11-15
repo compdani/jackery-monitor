@@ -23,6 +23,7 @@ import (
 )
 
 type Server struct {
+	AIHTTP      *http.Client
 	Store       *store.Store
 	Bridge      bridge.Client
 	PublicDir   string
@@ -404,6 +405,9 @@ func (s *Server) status(r *http.Request) map[string]any {
 				}
 			}
 			cloud["selected_device_id"] = view
+			if device, ok := cached["device"].(map[string]any); ok && str(device, "device_id") != "" {
+				cloud["selected_device_id"] = device["device_id"]
+			}
 			out["cloud"] = cloud
 			for _, k := range []string{"device", "telemetry", "last_update_ts", "battery_packs"} {
 				if v, ok := cached[k]; ok {
@@ -411,6 +415,12 @@ func (s *Server) status(r *http.Request) map[string]any {
 				}
 			}
 		}
+	}
+	if values, _, err := s.settingValues(); err == nil {
+		out["low_battery_threshold"] = values["low_battery_threshold"]
+	}
+	if d, ok := out["device"].(map[string]any); ok {
+		out["device"] = s.deviceAlias(d)
 	}
 	return out
 }

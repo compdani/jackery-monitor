@@ -124,3 +124,27 @@ func (s *Server) devicePrefs(w http.ResponseWriter, r *http.Request, b map[strin
 	}
 	return true
 }
+
+func (s *Server) deviceAlias(device map[string]any) map[string]any {
+	out := map[string]any{}
+	for k, v := range device {
+		out[k] = v
+	}
+	for _, id := range []string{str(device, "device_id"), str(device, "device_sn")} {
+		if id == "" {
+			continue
+		}
+		pref, err := s.Store.Get("device_prefs", id)
+		if err != nil {
+			continue
+		}
+		if alias := str(pref, "alias"); alias != "" {
+			if out["portal_name"] == nil {
+				out["portal_name"] = out["name"]
+			}
+			out["name"] = alias
+		}
+		break
+	}
+	return out
+}

@@ -1,0 +1,12 @@
+{
+  "provider": "anthropic",
+  "advisor_model": "claude-opus-4-7",
+  "advisor_1m_context": true,
+  "advisor_thinking_effort": "high",
+  "narrator_model": "claude-haiku-4-5",
+  "openai_advisor_model": "o4-mini",
+  "openai_narrator_model": "gpt-4o-mini",
+  "openai_advisor_effort": "high",
+  "openai_compat_preset": "openai",
+  "openai_base_url": ""
+}

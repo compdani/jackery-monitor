@@ -6,6 +6,8 @@ import (
 	"errors"
 	"github.com/compdani/jackery-monitor/internal/automation"
 	"github.com/compdani/jackery-monitor/internal/store"
+	"github.com/pocketbase/dbx"
+	"github.com/pocketbase/pocketbase/core"
 	"net/http"
 	"strings"
 )
@@ -27,9 +29,9 @@ func (s *Server) resources(w http.ResponseWriter, r *http.Request, b map[string]
 			key = "load_schedule:" + str(b, "device_sn")
 		}
 	case "/api/anthropic/prefs":
-		key = "anthropic_prefs"
+		return s.aiPreferences(w, r, b, false)
 	case "/api/ai/provider":
-		key = "ai_provider"
+		return s.aiPreferences(w, r, b, true)
 	case "/api/location":
 		if r.Method == "GET" {
 			v, e := s.Store.Secret(s.Key, "location")
@@ -38,11 +40,7 @@ func (s *Server) resources(w http.ResponseWriter, r *http.Request, b map[string]
 			} else if e != nil {
 				storageError(w, e)
 			} else {
-				if path == "/api/cost/plan" {
-					jsonOut(w, 200, map[string]any{"plan": v, "presets": costPresets()})
-				} else {
-					jsonOut(w, 200, v)
-				}
+				jsonOut(w, 200, v)
 			}
 			return true
 		}
@@ -58,11 +56,7 @@ func (s *Server) resources(w http.ResponseWriter, r *http.Request, b map[string]
 		if e := s.Store.SaveSecret(s.Key, "location", b); e != nil {
 			storageError(w, e)
 		} else {
-			if path == "/api/cost/plan" {
-				jsonOut(w, 200, map[string]any{"plan": b})
-			} else {
-				jsonOut(w, 200, b)
-			}
+			jsonOut(w, 200, b)
 		}
 		return true
 	default:
@@ -148,20 +142,47 @@ func (s *Server) conversations(w http.ResponseWriter, r *http.Request, b map[str
 			return true
 		}
 	} else if r.Method == "GET" {
-		v, e := s.Store.Get("conversations", id)
-		if e != nil {
-			storageError(w, e)
-		} else {
-			jsonOut(w, 200, v)
+		v, err := s.Store.Get("conversations", id)
+		if err != nil {
+			storageError(w, err)
+			return true
 		}
+		for _, collection := range []string{"messages", "tool_runs", "attachments"} {
+			rows, err := s.Store.List(collection, id, 0, 100000)
+			if err != nil {
+				storageError(w, err)
+				return true
+			}
+			v[collection] = rows
+		}
+		jsonOut(w, 200, v)
 		return true
 	} else if r.Method == "DELETE" {
-		if e := s.Store.Delete("conversations", id); e != nil {
-			storageError(w, e)
+		err := s.Store.App.RunInTransaction(func(app core.App) error {
+			st := &store.Store{App: app}
+			if _, err := st.Get("conversations", id); err != nil {
+				return err
+			}
+			for _, collection := range []string{"messages", "tool_runs", "attachments"} {
+				rows, err := app.FindRecordsByFilter(collection, "device_sn = {:id}", "", 0, 0, dbx.Params{"id": id})
+				if err != nil {
+					return err
+				}
+				for _, row := range rows {
+					if err := app.Delete(row); err != nil {
+						return err
+					}
+				}
+			}
+			return st.Delete("conversations", id)
+		})
+		if err != nil {
+			storageError(w, err)
 		} else {
 			jsonOut(w, 200, map[string]any{"ok": true})
 		}
 		return true
 	}
+
 	return false
 }
