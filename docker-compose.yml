@@ -26,37 +26,10 @@ services:
       JACKERY_AT_REST_KEY_FILE: /data/.jackery-creds.key
     volumes:
       - jackery-data:/data
-      # Host BlueZ D-Bus so the Go adapter can talk to a USB BLE adapter on the Pi.
-      # bluetoothd must be running on DSM; if scan returns nothing, enable
-      # host Bluetooth for the dongle and enter the BMS MAC manually.
+      # Host BlueZ D-Bus so the Go adapter can use the Pi's Bluetooth adapter.
+      # bluetoothd must be running on the Pi host; if a scan returns nothing,
+      # check `bluetoothctl show` on the host and enter the BMS MAC manually.
       - /var/run/dbus:/var/run/dbus:ro
-    # NET_ADMIN + NET_RAW are for optional local Siseli read (ARP path
-    # to the inverter dongle). Backup still uses smbclient and does not
-    # need SYS_ADMIN. Without these caps the sniffer cannot start and
-    # Live watts stay on the HTTP portal.
-    cap_add:
-      - NET_ADMIN
-      - NET_RAW
-    labels:
-      - com.centurylinklabs.watchtower.enable=true
-
-  # Auto-update the monitor above when a new :latest image is published
-  # to GHCR (by .github/workflows/docker-publish.yml on push to main).
-  # Polls every 60s; only touches containers with the watchtower.enable label.
-  # nickfedor/watchtower is the maintained drop-in for containrrr/watchtower,
-  # which hardcodes Docker API 1.25 and crash-loops on engines that require
-  # 1.40+ (Synology Container Manager, Docker 25+). This fork negotiates.
-  watchtower:
-    image: nickfedor/watchtower
-    container_name: watchtower
-    restart: unless-stopped
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
-    environment:
-      WATCHTOWER_POLL_INTERVAL: "60"
-      WATCHTOWER_CLEANUP: "true"
-      WATCHTOWER_LABEL_ENABLE: "true"
-    command: --label-enable
 
 volumes:
   jackery-data:

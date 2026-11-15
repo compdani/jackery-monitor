@@ -24,18 +24,9 @@ services:
       JACKERY_AT_REST_KEY_FILE: /data/.jackery-creds.key
     volumes:
       - jackery-data:/data
-      # Host BlueZ D-Bus so the Go adapter can talk to a USB BLE adapter on the Pi.
-      # bluetoothd must be running on DSM; if scan returns nothing, enable
-      # host Bluetooth for the dongle and enter the BMS MAC manually.
+      # Host BlueZ D-Bus so the Go adapter can use the Pi's Bluetooth adapter.
+      # bluetoothd must be running on the Pi host.
       - /var/run/dbus:/var/run/dbus:ro
-      # Live-bind the web UI so editing files in /docker/jackery-monitor/web/
-      # takes effect immediately (just hard-reload the browser, no rebuild).
-      # Comment this out if you want the image to be self-contained.
-      - ./web:/app/web
-    # NET_ADMIN + NET_RAW: optional local Siseli ARP sniff. See docker-compose.yml.
-    cap_add:
-      - NET_ADMIN
-      - NET_RAW
 
 volumes:
   jackery-data:
