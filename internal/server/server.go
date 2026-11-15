@@ -26,6 +26,7 @@ import (
 type Server struct {
 	RescueSwitch automation.Switch
 	rescue       rescueRuntime
+	smart        smartRuntime
 	AIHTTP       *http.Client
 	Store        *store.Store
 	Bridge       bridge.Client
@@ -345,6 +346,9 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if s.teslaRoutes(w, r, b) {
+		return
+	}
+	if s.smartChargeRoutes(w, r, b) {
 		return
 	}
 	if s.rescueRoutes(w, r, b) {

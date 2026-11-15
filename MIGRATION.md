@@ -753,3 +753,36 @@ whose runtime consumers still need migration.
 Validation: go build ./..., go vet ./..., go test ./..., and CGO_ENABLED=0
 GOOS=linux GOARCH=arm64 go build ./... passed. All test inputs are fixtures or
 synthetic values. Python, legacy data and encryption keys remain untouched.
+
+## Step 6b — smart-charge execution seam (partial)
+
+This increment does **not** finish smart-charge or step 6b. It adds:
+
+- Normalized per-device smart-charge settings, including imported legacy and
+  by_device configs. Authenticated GET/POST `/api/smart_charge/config` return
+  device_sn, config and conflicting_rules, preserving null for an unset plug.
+- A fake-tested execution primitive using the existing Switch interface with
+  ten-second command deadlines. Off/test modes never actuate. Successful
+  commands alone advance ON tracking; failed commands retain the prior state.
+  A conservative continuous-ON timeout forces OFF at the configured duration;
+  a cumulative dusk/dawn budget is not implemented.
+- A server persistence seam records intent before actuation, then atomically
+  saves runtime state and an idempotently keyed smart-charge decision. An
+  unresolved intent blocks subsequent commands, including after restart.
+  This avoids blindly repeating an ambiguous command but still needs explicit
+  plug-state reconciliation before it can form a running supervisor.
+- Synthetic tests for normalization, authenticated HTTP config round trips,
+  device isolation/conflict reporting, restart state, duration cutoff, failed
+  actuation, test/off suppression, history and unresolved intent suppression.
+
+The execution seam is deliberately not scheduled: weather/forecast input
+assembly, readiness and freshness gates, reconciliation and controller/rule
+arbitration still need to be connected before live execution. Smart status,
+read-only evaluate, decision details, analytics/backtest and narration remain
+unported. Solar, inverter watchdog, F7 and rule gaps remain as listed above;
+no controller is newly complete. No Python file becomes safe to delete.
+
+Validation passed: `go build ./...`, `go vet ./...`, `go test ./...`, and
+`CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build ./...`. Only synthetic temporary
+PocketBase data and fake switches were used. No legacy data, keys, accounts or
+hardware were accessed. No Python was removed.
