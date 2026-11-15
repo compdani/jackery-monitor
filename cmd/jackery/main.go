@@ -23,6 +23,7 @@ func main() {
 	app := pocketbase.New()
 	app.RootCmd.AddCommand(importConfigCommand(app))
 	app.RootCmd.AddCommand(importHistoryCommand(app))
+	app.RootCmd.AddCommand(diagnoseCommand(app))
 
 	app.OnServe().BindFunc(func(e *core.ServeEvent) error {
 		key, err := store.LoadKey(env("JACKERY_AT_REST_KEY_FILE", app.DataDir()+"/.jackery-creds.key"))
@@ -44,8 +45,15 @@ func main() {
 		}
 		s.Register(e)
 		ctx, cancel := context.WithCancel(context.Background())
-		app.OnTerminate().BindFunc(func(e *core.TerminateEvent) error { cancel(); return e.Next() })
+		app.OnTerminate().BindFunc(func(e *core.TerminateEvent) error {
+			cancel()
+			if closer, ok := s.Bridge.(interface{ Close() }); ok {
+				closer.Close()
+			}
+			return e.Next()
+		})
 		go s.RescueLoop(ctx)
+		go s.RunNativeRealtime(ctx)
 		go s.Poll(ctx, 10*time.Second)
 		go s.PollTesla(ctx)
 		return e.Next()

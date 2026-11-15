@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"crypto/aes"
-	"crypto/cipher"
 	"crypto/md5"
 	"crypto/rand"
 	"crypto/rsa"
@@ -25,6 +24,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -57,6 +57,10 @@ type Cloud struct {
 	BaseURL                            string
 	HTTP                               *http.Client
 	// TLSConfig allows the operator to supply the Jackery broker CA.
+	Broker                 string
+	MQTTFactory            func(*mqtt.ClientOptions) mqtt.Client
+	pushes                 chan Push
+	droppedPushes          atomic.Uint64
 	TLSConfig              *tls.Config
 	token, userID, mqttKey string
 	mqtt                   mqtt.Client
@@ -294,23 +298,10 @@ func (c *Cloud) Command(ctx context.Context, sn, port string, on bool) (map[stri
 			return nil, err
 		}
 	}
-	if c.mqtt == nil {
-		key, err := base64.StdEncoding.DecodeString(c.mqttKey)
-		if err != nil || len(key) != 32 || c.userID == "" {
-			return nil, errors.New("Jackery MQTT credentials missing or invalid")
-		}
-		user := c.userID + "@" + c.macID
-		b := pad([]byte(user))
-		block, _ := aes.NewCipher(key)
-		cipher.NewCBCEncrypter(block, key[:16]).CryptBlocks(b, b)
-		opts := mqtt.NewClientOptions().AddBroker("ssl://emqx.jackeryapp.com:8883").SetClientID(c.userID + "@APP").SetUsername(user).SetPassword(base64.StdEncoding.EncodeToString(b)).SetConnectTimeout(10 * time.Second).SetTLSConfig(c.TLSConfig)
-		client := mqtt.NewClient(opts)
-		if err = waitMQTT(ctx, client.Connect()); err != nil {
-			client.Disconnect(0)
-			return nil, err
-		}
-		c.mqtt = client
+	if err := c.ensureMQTT(ctx); err != nil {
+		return nil, err
 	}
+
 	ts := time.Now().UnixMilli()
 	v := 0
 	if on {

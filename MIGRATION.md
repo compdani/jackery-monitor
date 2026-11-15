@@ -646,3 +646,77 @@ correction contracts and unchanged source database/attachment bytes.
 This replaces the history/import algorithms, not all of energy_db.py's forecast,
 controller/advisor helpers or assistant_store.py's future attachment/tool APIs.
 Those Python modules still have callers and are retained for step 11.
+
+## Step 5 — native Jackery lifecycle
+
+Native now polls all bound devices (selected unit first), caches per-device raw
+properties, main telemetry and packs, and exposes cloud.devices_telemetry with
+source-observation timestamps. The server records every fleet member, preserves
+capacity/metadata, uses observation identities rather than generating duplicate
+samples on cached reads, and records packs against their own timestamps.
+
+MQTT connects using the existing encrypted username/password derivation,
+subscribes to the per-user device topic, and re-subscribes on reconnect. Property
+deltas merge only into their matching serial; sub-device pushes update the pack
+cache. Unknown devices and older/future-dated messages do not overwrite current
+state. The bounded queue reports dropped messages in diagnostics. A one-second
+realtime dispatcher delivers accepted pushes to the server independently of the
+UI poll interval, including rescue ingestion. It avoids waiting behind a poll;
+HTTP operations have a 45-second total context bound and 15-second transport
+timeout. Cached reads and failed HTTP fetches never advance observation time.
+
+Cloud refresh interval and session-contention cooldown now consume runtime
+settings. Consecutive failures back off exponentially up to five minutes with a
+capped counter; contested/auth-invalid responses retain the configured cooldown.
+After ten minutes without observations, a poll recycles the auth/MQTT session
+at most once per five minutes; bounded request contexts prevent an indefinite
+network stall. Pause/cooldown suppress intentional polling, while independent
+rescue timing remains active. Shutdown cancels loops and closes MQTT.
+
+`JACKERY_MQTT_CA_FILE` optionally names a PEM CA bundle; invalid/unreadable files
+fail configuration. TLS verification is always enabled (minimum TLS 1.2), using
+system roots plus that bundle. Mount a custom CA read-only at the configured
+container path via a Compose override. `JACKERY_MQTT_BROKER` defaults to the
+standard Jackery SSL broker. Compose forwards both variables.
+
+Implemented diagnostics: GET `/api/debug/raw_props`, GET
+`/api/debug/cloud_probe`, GET `/api/devices/probe_results`, POST
+`/api/devices/probe_now`, and GET `/api/devices/battery_packs` (cached or
+`fresh=true`). Raw props retain their original property keys. Cloud probing uses
+the same eleven legacy read-only pack/version request shapes (including POST
+version query bodies); it does not issue output or firmware-update commands.
+Auto-capacity interpretation and fitted-parameter application remain step 7.
+
+The explicit CLI replaces the two Python login/device diagnostic scripts:
+
+```sh
+JACKERY_AT_REST_KEY_FILE=/path/to/existing/key go run ./cmd/jackery diagnose --dir=/path/to/pb_data
+JACKERY_AT_REST_KEY_FILE=/path/to/existing/key go run ./cmd/jackery diagnose --devices --dir=/path/to/pb_data
+```
+
+Those commands intentionally contact the configured Jackery account when an
+operator runs them; this run tested only injected local fake HTTP/MQTT transports.
+CLI output excludes passwords/tokens. Do not run diagnostics against a real
+account as part of migration verification without separate owner authorization.
+
+Tests verify multiple devices, MQTT reconnect subscriptions, property and pack
+deltas, independent realtime delivery, old-message rejection, frozen timestamps
+on HTTP failure, cached-read identity, normalized fleet history, metadata/capacity
+retention, retry/cooldown/watchdog pacing, diagnostic routing/request shapes,
+redacted CLI output, and CA failure behavior. Hardware/cloud behavior is not
+validated. Device-side freshness cannot be inferred from HTTP success alone;
+HTTP observation timestamps match the legacy bridge semantics.
+
+Step 6b is next: operational controller supervisors, persisted edges/conflicts,
+action sequencing/history and full solar plan parity. Steps 7–10 also remain.
+The generic backoff.py helper must still be ported for those other loops.
+Cloudflare Access is still an outstanding cross-cutting auth port (kept, not
+retired). diag_login.py and diag_devices.py now have wired/tested Go command
+replacements and are step-11 deletion candidates. Broader bridge.py/cloud_client.py
+removal still requires final runtime cutover and the remaining feature audit.
+
+Verification for steps 4/5 passed: `go build ./...`, `go vet ./...`,
+`go test ./...`, targeted race checks for store/server/bridge/CLI, and the
+CGO-free linux/arm64 cross-build. The 100,005-row traversal test also passed
+under the race detector. No real device/account/broker was used. This run stops
+at the completed step-5 boundary due to remaining context; step 6b is next.

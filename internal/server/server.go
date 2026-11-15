@@ -300,10 +300,10 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		jsonOut(w, 200, map[string]any{"ok": true, "view_device_id": id})
 		return
 	}
-	rpc := map[string]string{"/api/reconnect": "connect", "/api/set_output": "set_output", "/api/pause_polling": "pause_polling", "/api/resume_polling": "resume_polling", "/api/select_device": "select_device", "/api/auth/status": "auth_status", "/api/auth/credentials": "set_credentials", "/api/auth/forget": "clear_credentials", "/api/events": "get_events"}
+	rpc := map[string]string{"/api/reconnect": "connect", "/api/set_output": "set_output", "/api/pause_polling": "pause_polling", "/api/resume_polling": "resume_polling", "/api/select_device": "select_device", "/api/auth/status": "auth_status", "/api/auth/credentials": "set_credentials", "/api/auth/forget": "clear_credentials", "/api/events": "get_events", "/api/debug/raw_props": "get_raw_props", "/api/devices/probe_results": "probe_results", "/api/devices/probe_now": "cloud_probe", "/api/debug/cloud_probe": "cloud_probe"}
 	if method, ok := rpc[p]; ok {
 		expected := "POST"
-		if p == "/api/auth/status" || p == "/api/events" {
+		if p == "/api/auth/status" || p == "/api/events" || strings.HasPrefix(p, "/api/debug/") || p == "/api/devices/probe_results" {
 			expected = "GET"
 		}
 		if r.Method != expected {
@@ -323,10 +323,12 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
-		if r.Method == "GET" {
+		if b == nil {
 			b = map[string]any{}
+		}
+		{
 			for k, values := range r.URL.Query() {
-				if len(values) > 0 {
+				if _, exists := b[k]; !exists && len(values) > 0 {
 					b[k] = values[len(values)-1]
 				}
 			}
@@ -355,6 +357,9 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if s.resources(w, r, b) {
+		return
+	}
+	if s.packRoutes(w, r) {
 		return
 	}
 	if s.energyMutation(w, r, b) {
@@ -403,6 +408,9 @@ func (s *Server) status(r *http.Request) map[string]any {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	out := map[string]any{"connection_status": "disconnected", "connection_error": nil, "device": nil, "telemetry": nil, "last_update_ts": nil, "history": []any{}, "battery_packs": []any{}, "backend": "bridge", "mock_mode": false, "cloud": map[string]any{}, "energy": nil, "low_battery_threshold": 20}
+	if _, native := s.Bridge.(*bridge.Native); native {
+		out["backend"] = "native"
+	}
 	for k, v := range s.snapshot {
 		out[k] = v
 	}
@@ -488,17 +496,54 @@ func (s *Server) pollOnce(ctx context.Context) {
 		s.mu.Unlock()
 		return
 	}
-	snap := map[string]any{"connection_status": "connected", "connection_error": nil, "last_update_ts": float64(time.Now().Unix())}
-	for _, k := range []string{"device", "telemetry", "cloud", "source", "battery_packs"} {
-		snap[k] = p[k]
+	s.acceptSnapshot(ctx, p)
+}
+func (s *Server) acceptSnapshot(ctx context.Context, p map[string]any) {
+	snap := map[string]any{"connection_status": "connected", "connection_error": nil, "last_update_ts": p["last_update_ts"]}
+	for _, k := range []string{"device", "telemetry", "cloud", "source", "battery_packs", "connection_status", "connection_error"} {
+		if v, ok := p[k]; ok {
+			snap[k] = v
+		}
 	}
 	s.mu.Lock()
 	s.snapshot = snap
 	s.mu.Unlock()
+	fleet, _ := p["cloud"].(map[string]any)
+	entries, _ := fleet["devices_telemetry"].(map[string]any)
+	if len(entries) > 0 {
+		for _, raw := range entries {
+			entry, ok := raw.(map[string]any)
+			if !ok {
+				continue
+			}
+			snapshot := map[string]any{"device": entry["device"], "telemetry": entry["telemetry"], "last_update_ts": entry["ts"], "battery_packs": entry["battery_packs"], "pack_ts": entry["pack_ts"]}
+			s.persistObservation(ctx, snapshot)
+		}
+	} else {
+		s.persistObservation(ctx, p)
+	}
+}
+func (s *Server) persistObservation(ctx context.Context, p map[string]any) {
+	stamp, _ := p["last_update_ts"].(float64)
+	if stamp <= 0 {
+		return
+	}
+	snap := map[string]any{"device": p["device"], "telemetry": p["telemetry"], "last_update_ts": stamp, "battery_packs": p["battery_packs"]}
 	if d, ok := p["device"].(map[string]any); ok {
 		sn := str(d, "device_sn")
 		if sn != "" {
 			if previous, err := s.Store.Get("devices", sn); err == nil {
+				oldDevice, _ := previous["device"].(map[string]any)
+				merged := map[string]any{}
+				for key, value := range oldDevice {
+					merged[key] = value
+				}
+				for key, value := range d {
+					merged[key] = value
+				}
+				merged["last_seen"] = stamp
+				snap["device"] = merged
+
 				for _, key := range []string{"capacity_wh_override", "_capacity_corrected"} {
 					if value, ok := previous[key]; ok {
 						snap[key] = value
@@ -509,13 +554,17 @@ func (s *Server) pollOnce(ctx context.Context) {
 				s.Store.App.Logger().Error("persist device", "error", e)
 			}
 			if t, ok := p["telemetry"].(map[string]any); ok {
-				if packs, ok := p["battery_packs"].([]any); ok && len(packs) > 0 {
-					if e := s.Store.Put("battery_packs", store.ID(), sn, map[string]any{"ts": float64(time.Now().Unix()), "packs": packs}); e != nil {
+				if packs, ok := p["battery_packs"].([]any); ok {
+					packStamp, _ := p["pack_ts"].(float64)
+					if packStamp <= 0 {
+						packStamp = stamp
+					}
+					if e := s.Store.Put("battery_packs", fmt.Sprintf("packs:%s:%.6f", sn, packStamp), sn, map[string]any{"ts": packStamp, "packs": packs}); e != nil {
 						s.Store.App.Logger().Error("persist battery packs", "error", e)
 					}
 				}
 				s.evaluateRules(ctx, sn, t)
-				row := map[string]any{"ts": float64(time.Now().Unix()), "device_sn": sn}
+				row := map[string]any{"ts": stamp, "device_sn": sn}
 				for k, v := range t {
 					row[k] = v
 				}
@@ -523,7 +572,7 @@ func (s *Server) pollOnce(ctx context.Context) {
 				for dst, src := range map[string]string{"input_w": "input_power_w", "output_w": "output_power_w", "solar_w": "solar_input_w"} {
 					row[dst] = t[src]
 				}
-				if e := s.Store.Put("samples", store.ID(), sn, row); e != nil {
+				if e := s.Store.Put("samples", fmt.Sprintf("observation:%s:%.6f", sn, stamp), sn, row); e != nil {
 					s.Store.App.Logger().Error("persist telemetry", "error", e)
 				}
 			}

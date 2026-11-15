@@ -78,7 +78,7 @@ func TestCloudLoginPollingAndContested(t *testing.T) {
 	}))
 	defer h.Close()
 	c := &Cloud{Email: "test@example.com", Password: "secret", BaseURL: h.URL}
-	n := &Native{Cloud: c}
+	n := &Native{Cloud: c, PollInterval: func() time.Duration { return 0 }}
 	got, e := n.Call(context.Background(), "poll", nil)
 	if e != nil {
 		t.Fatal(e)
