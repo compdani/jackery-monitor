@@ -50,7 +50,8 @@ The device libraries remain separate from the core through adapters in
 
 ## Collection schemas
 
-The compiled migration is migrations/1762646400_core.go.
+The core migration is migrations/1762646400_core.go;
+migrations/1762646401_battery_packs.go adds locked pack-history storage.
 
 users is the PocketBase auth collection, with a required, unique username
 field. Email is optional. Public record CRUD is locked.
@@ -72,7 +73,8 @@ Collections:
 | settings, device_prefs | Global configuration and device presentation preferences |
 | credentials | Encrypted secret envelopes; location is also encrypted here |
 | devices, samples | Cached device snapshots and timestamped raw telemetry |
-| predictions, forecast_models | Reserved forecast history/model records |
+| predictions, forecast_models | Forecast snapshots, daily summaries, model records |
+| battery_packs | Timestamped expansion-pack snapshots for capacity-weighted accuracy |
 | automation_rules, automation_decisions | Reserved rules, decisions and imported firings |
 | conversations, messages, attachments, tool_runs | Assistant persistence |
 | suggestions, changes | Advisor proposals and audit records |
@@ -172,8 +174,10 @@ not one atomic operation; a failed run can be rerun.
 5. Daily advisor reviews/narration, suggestion application
    transactions, assistant streaming/tool approval/attachments/read tools,
    provider discovery, API-key endpoints and richer conversation history.
-6. SMB/rsync discovery, scheduling, retention, restore and first-run restore.
-   Remote archive upload and checksum verification are now implemented, but
+6. Remote snapshot enumeration, rsync-module discovery, backup scheduling,
+   retention and first-run restore. SMB host/share discovery, local archive
+   listing and authenticated PocketBase restore (including a verified remote
+   download by name) now exist. Remote upload/checksum verification exists, but
    Python directory snapshots are not compatible with Go PocketBase archives.
    Preserve the encryption key separately when taking external snapshots.
 7. Complete migration of legacy settings/device prefs/credentials/auth,
@@ -290,3 +294,96 @@ automation, assistant, advisor, backup and devices. Reference captures contain
 New server tests exercise text-chat history persistence, provider secret
 redaction/encryption and browser view fallback. Kasa credential read/write/delete
 and status/test routes are also wired to the native client.
+
+
+## Implementation sub-agent continuation (2026-11-09)
+
+**The requested migration is still incomplete.** This section supersedes the
+older descriptions of the forecasting primitives and backup discovery/restore.
+Python remains intact and no commit was created.
+
+Completed and verified in this continuation:
+
+- `internal/forecast`: joint drain regression, clean multi-hour discharge runs,
+  narrow-load fallback, strict system-SOC filtering, per-pack baselines,
+  signed inverter-loss fitting and span-based readiness. The forecast builder
+  now composes these fits with the existing solar/load/efficiency/ceiling
+  models, partial intervals, hybrid solar sources, recent-peak solar cap,
+  scheduled loads/sleep windows, simulator, solar calibration and daily summaries.
+  EV-diversion summaries and observed maximum charge-rate fitting are included.
+  Battery/expansion capacities use the canonical embedded `models.json`.
+- Historic decision replay truncates energy at each decision time and returns
+  comparison rows and action/flip/extension/error summaries. It explicitly passes
+  historical time to the builder: Python's replay omits `now_ts`, so parity
+  fixtures freeze Python's wall clock at each decision. This is an intentional
+  correction, not a claim that wall-clock-dependent Python replay is identical.
+- Forecast snapshot upserts are transactional and collapse by device, made-at
+  hour and target hour. Accuracy joins actual samples in the half-open ±30-minute
+  window, selects nearest pack snapshots and capacity-weights actual SOC. Daily
+  summaries filter by calendar date, preserve prediction timestamps during actual
+  backfill, and backfill eligible past sunset/sunrise actuals idempotently.
+- A separate migration adds locked `battery_packs` history. Successful polls
+  persist pack arrays. Authenticated `/api/forecast/accuracy` and
+  `/api/daily_summary` routes read the new storage, including signed bias and
+  unsigned MAE by lead bucket. Capacity overrides and normalization of legacy
+  imported archive rows into these live models remain open.
+- Backup subnet inference, bounded 64-worker TCP discovery with parallel DNS,
+  named-host ordering, result limits and SMB share enumeration. Temporary auth
+  files remain private and are removed on failure as well as success. Share
+  parsing handles machine-readable output and fallback tables; diagnostics keep
+  actionable SMB errors. `/api/backup/discover` and `/api/backup/list-shares`
+  are wired behind the existing application authentication.
+- `/api/backup/snapshots` lists local PocketBase archives.
+  `/api/backup/restore` invokes PocketBase's restore/restart lifecycle. With
+  `remote: true`, it first downloads the named archive and its completion
+  manifest, verifies name/size/SHA-256, rejects unsafe archive paths/symlinks,
+  requires `data.db`, and stages the archive without replacing an existing local
+  backup. Download verification tests cover corruption, missing/mismatched
+  manifests, unsafe ZIP paths, private output permissions and existing files.
+  Native archives remain incompatible with Python directory snapshots. Restore
+  requires the corresponding encryption key. Actual process restart and real
+  NAS transports were not exercised.
+
+Reference checks added:
+
+    PYTHONPATH=. python3 scripts/build-forecast-fixtures.py
+    PYTHONPATH=. python3 scripts/forecaster-test-fixtures.py
+    go test ./internal/forecast ./internal/store ./internal/backup ./internal/server
+
+The first script creates 48 complete forecast-output cases and 16 historical
+replay cases. The second runs all 94 existing `test_forecaster.py` tests and
+captures 123 calls to seven ported functions. Go asserts their captured values,
+allowing 1e-9 for floating-point arithmetic on unrounded fit coefficients; full
+builder output fields compare exactly. Fixtures are deterministically gzipped.
+These captures are **not** a complete direct port of every pytest assertion:
+SOC diagnostic instrumentation, diagnostic rejection classification, custom fit
+options, catalog override monkeypatching, and remaining server contracts still
+need dedicated Go coverage. New prediction/storage tests retain Python's
+70/65/5 accuracy example, 84/4 capacity-weighted example, signed MAE/bias 3/+1,
+made-at cutoff, daily-date cutoff and idempotent three-actual backfill expectations.
+
+Still required for the user's requested scope:
+
+1. Connect forecast building and recording to an ongoing forecast service and
+   `/api/forecast`, with correct rolling telemetry aggregation, pack-weighted
+   historical fits, saved weather observations, calibration/debug endpoints and
+   configured per-device overrides. The new builder accepts normalized history;
+   handing raw poll samples directly to its energy-window fits is incorrect.
+   Wire the replay and daily backfill service/API scheduling as well.
+2. Complete full solar Plan/helper parity, controller arbitration and persistent
+   state, then wire scheduled smart-charge, solar-charge and watchdog actuation
+   across Kasa/Jackery/EcoFlow/Siseli. Existing rule actuation is unchanged;
+   the pure planners and watchdog are still not a live supervisor.
+3. Assistant tool transport/dispatch, approval state, streaming, attachments and
+   reference read-tool contracts; daily advisor/narrator reviews, suggestion
+   transactions and advisor routes. No assistant/advisor work was completed in
+   this continuation.
+4. Remote archive enumeration, rsync-module discovery, credential contract
+   parity, scheduling/retention, first-run restore and Python-snapshot migration.
+5. The other native fleet lifecycle, server contract, import, Cloudflare Access,
+   Docker and hardware validation gaps listed above remain open. The remaining
+   pytest suites have not all been ported.
+
+Validation completed: `go build ./...`, `go vet ./...`, `go test ./...`, and
+`go test -race` for store, server, bridge, forecast, automation, assistant,
+advisor, backup and devices. No real device or NAS was contacted by the tests.

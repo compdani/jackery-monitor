@@ -65,6 +65,7 @@ func main() {
 		ctx, cancel := context.WithCancel(context.Background())
 		app.OnTerminate().BindFunc(func(e *core.TerminateEvent) error { cancel(); return e.Next() })
 		go s.Poll(ctx, 10*time.Second)
+		go s.PollTesla(ctx)
 		return e.Next()
 	})
 	if err := app.Start(); err != nil {

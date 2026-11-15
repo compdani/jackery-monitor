@@ -32,6 +32,7 @@ type Server struct {
 	setupMu     sync.Mutex
 	mu          sync.RWMutex
 	snapshot    map[string]any
+	tesla       teslaRuntime
 }
 
 func (s *Server) Register(e *core.ServeEvent) {
@@ -223,6 +224,9 @@ func (s *Server) auth(w http.ResponseWriter, r *http.Request) bool {
 	return false
 }
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if s.teslaPublic(w, r) {
+		return
+	}
 	if s.auth(w, r) {
 		return
 	}
@@ -303,7 +307,13 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		jsonOut(w, 200, out)
 		return
 	}
+	if s.teslaRoutes(w, r, b) {
+		return
+	}
 	if s.automationRoutes(w, r, b) {
+		return
+	}
+	if s.predictionRoutes(w, r) {
 		return
 	}
 	if s.resources(w, r, b) {
@@ -436,6 +446,11 @@ func (s *Server) pollOnce(ctx context.Context) {
 				s.Store.App.Logger().Error("persist device", "error", e)
 			}
 			if t, ok := p["telemetry"].(map[string]any); ok {
+				if packs, ok := p["battery_packs"].([]any); ok && len(packs) > 0 {
+					if e := s.Store.Put("battery_packs", store.ID(), sn, map[string]any{"ts": float64(time.Now().Unix()), "packs": packs}); e != nil {
+						s.Store.App.Logger().Error("persist battery packs", "error", e)
+					}
+				}
 				s.evaluateRules(ctx, sn, t)
 				row := map[string]any{"ts": float64(time.Now().Unix()), "device_sn": sn}
 				for k, v := range t {

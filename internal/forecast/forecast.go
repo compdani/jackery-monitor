@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"math"
 	"sort"
+	"strconv"
 	"time"
 )
 
@@ -24,8 +25,12 @@ func Number(r map[string]any, key string) float64 {
 	}
 	return 0
 }
-func clamp(v, a, b float64) float64  { return math.Max(a, math.Min(b, v)) }
-func round(v float64, n int) float64 { p := math.Pow10(n); return math.RoundToEven(v*p) / p }
+func clamp(v, a, b float64) float64 { return math.Max(a, math.Min(b, v)) }
+func round(v float64, n int) float64 {
+	s := strconv.FormatFloat(v, 'f', n, 64)
+	out, _ := strconv.ParseFloat(s, 64)
+	return out
+}
 func RowSOC(r Row) *float64 {
 	for _, k := range []string{"system_soc", "battery_pct"} {
 		if r[k] != nil {

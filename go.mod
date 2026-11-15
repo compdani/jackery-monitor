@@ -8,12 +8,15 @@ require (
 	github.com/pocketbase/dbx v1.12.0
 	github.com/pocketbase/pocketbase v0.40.6
 	github.com/spf13/cobra v1.10.2
+	github.com/teslamotors/vehicle-command v0.4.2-0.20261104010654-0a582da430c4
 	google.golang.org/protobuf v1.36.10
 	modernc.org/sqlite v1.60.1
+	tinygo.org/x/bluetooth v0.17.0
 )
 
 require (
 	github.com/asaskevich/govalidator v0.0.0-20230301143203-a9d515a09cc2 // indirect
+	github.com/cronokirby/saferith v0.33.0 // indirect
 	github.com/disintegration/imaging v1.6.2 // indirect
 	github.com/domodwyer/mailyak/v3 v3.6.2 // indirect
 	github.com/dustin/go-humanize v1.1.0 // indirect
@@ -49,10 +52,8 @@ require (
 	golang.org/x/sync v0.24.0 // indirect
 	golang.org/x/sys v0.49.0 // indirect
 	golang.org/x/text v0.43.0 // indirect
-	gopkg.in/yaml.v3 v3.0.1 // indirect
 	modernc.org/libc v1.77.1 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.12.1 // indirect
-	tinygo.org/x/bluetooth v0.17.0 // indirect
 	tinygo.org/x/espradio v0.5.0 // indirect
 )
