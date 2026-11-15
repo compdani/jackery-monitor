@@ -68,6 +68,8 @@ type Server struct {
 	// AnthropicBaseURL redirects Anthropic calls to a fixture in tests.
 	AnthropicBaseURL string
 	advisor          advisorRuntime
+	// CFAccess verifies Cloudflare Access assertions when configured.
+	CFAccess *CFAccess
 }
 
 func (s *Server) Register(e *core.ServeEvent) {
@@ -285,6 +287,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if s.teslaPublic(w, r) {
 		return
 	}
+	s.cfAccessSession(w, r)
 	if s.auth(w, r) {
 		return
 	}

@@ -42,6 +42,7 @@ func main() {
 		}
 		s := &server.Server{Store: &store.Store{App: app}, Key: key, PublicDir: public, Bridge: &bridge.RPC{Address: env("BRIDGE_URL", "127.0.0.1:8766")}}
 		s.BLEAdapter = blehw.New()
+		s.CFAccess = server.CFAccessFromEnv()
 		if env("BACKEND", "native") == "native" {
 			s.UseNativeCloud()
 		}

@@ -18,6 +18,9 @@ services:
     environment:
       BACKEND: native
       JACKERY_MQTT_CA_FILE: "${JACKERY_MQTT_CA_FILE:-}"
+      JACKERY_CF_ACCESS_TEAM: "${JACKERY_CF_ACCESS_TEAM:-}"
+      JACKERY_CF_ACCESS_AUD: "${JACKERY_CF_ACCESS_AUD:-}"
+      JACKERY_CF_ACCESS_EMAILS: "${JACKERY_CF_ACCESS_EMAILS:-}"
       JACKERY_MQTT_BROKER: "${JACKERY_MQTT_BROKER:-ssl://emqx.jackeryapp.com:8883}"
       # Preserve the legacy encryption key; config import is still required.
       JACKERY_AT_REST_KEY_FILE: /data/.jackery-creds.key

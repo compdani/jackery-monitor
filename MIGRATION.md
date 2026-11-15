@@ -1243,3 +1243,29 @@ thinking-block echo, attachments, redaction and gating
 validation and bucket clamp (test_advisor_query_samples.py), review
 persistence/whitelist filtering, apply/dismiss/audit, background jobs, daily
 scheduling, the narrator prompt and OpenAI tool calls.
+
+## Step 9b — Cloudflare Access (step 9 complete, 2026-11-15)
+
+**Step 9 is complete.** `internal/server/cf_access.go` ports cf_access.py:
+RS256 only (alg none/HS* rejected), signature against the team JWKS matched
+by `kid` (one-hour cache, one forced refetch on an unknown kid for rotation,
+stale keys served on fetch failure), issuer `https://<team>.cloudflareaccess.com`,
+audience string or list, expiry with 30 s leeway, required lowercased email
+and the optional `JACKERY_CF_ACCESS_EMAILS` allowlist. It is inert until both
+`JACKERY_CF_ACCESS_TEAM` and `JACKERY_CF_ACCESS_AUD` are set; Compose forwards
+all three variables. A request without a valid session but with a valid
+`Cf-Access-Jwt-Assertion` gets a normal 30-day `jackery_session` cookie and is
+then served, so follow-ups and the WebSocket use the session path; LAN hits
+without the header still require the password.
+
+Owner-facing conservative choice: Python minted a session for the email
+itself (single-user HMAC sessions). Go sessions belong to PocketBase accounts,
+so Access maps to the account whose username equals the email, otherwise the
+first-created account, and never creates an account — a fresh install still
+needs local setup. All tests/test_cf_access.py cases are ported with a local
+RSA key and fixture JWKS, plus HTTP session issuance tests.
+
+Step-11 deletion candidates after runtime cutover: assistant_agent.py,
+assistant_routes.py, assistant_store.py, claude_advisor.py, advisor_routes.py,
+claude_narrator.py, cf_access.py, anthropic_prefs.py, anthropic_creds.py,
+openai_creds.py, openai_compat.py (plus the matching server.py routes).
