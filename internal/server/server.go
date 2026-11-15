@@ -20,9 +20,12 @@ import (
 
 	"github.com/coder/websocket"
 	"github.com/compdani/jackery-monitor/internal/automation"
+	"github.com/compdani/jackery-monitor/internal/ble"
 	"github.com/compdani/jackery-monitor/internal/bridge"
+	"github.com/compdani/jackery-monitor/internal/ecoflow"
 	"github.com/compdani/jackery-monitor/internal/forecast"
 	"github.com/compdani/jackery-monitor/internal/kasa"
+	"github.com/compdani/jackery-monitor/internal/siseli"
 	"github.com/compdani/jackery-monitor/internal/store"
 	"github.com/pocketbase/pocketbase/core"
 )
@@ -56,6 +59,12 @@ type Server struct {
 	// KasaBackend replaces the native LAN transport in tests.
 	KasaBackend kasa.Backend
 	fleet       fleetRuntime
+	// Fleet transports are injectable so tests never reach real accounts or radios.
+	SiseliHTTP    siseli.HTTPDoer
+	SiseliBaseURL string
+	EcoFlowHTTP   ecoflow.HTTPDoer
+	EcoFlowMQTT   ecoflow.MQTTTransport
+	BLEAdapter    ble.Adapter
 }
 
 func (s *Server) Register(e *core.ServeEvent) {
@@ -296,6 +305,11 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	p := r.URL.Path
+	if strings.HasPrefix(p, "/api/ble/") {
+		// The inspector handler owns its request bodies and status codes.
+		s.bmsInit().sessions.Handler().ServeHTTP(w, r)
+		return
+	}
 	var b map[string]any
 	if r.Method == "POST" || r.Method == "PUT" {
 		var e error
@@ -418,6 +432,9 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if s.watchdogRoutes(w, r, b) {
 		return
 	}
+	if s.siseliRoutes(w, r, b) || s.ecoflowRoutes(w, r, b) || s.bmsRoutes(w, r, b) {
+		return
+	}
 	if s.kasaRoutes(w, r, b) {
 		return
 	}
@@ -536,6 +553,7 @@ func (s *Server) status(r *http.Request) map[string]any {
 	if d, ok := out["device"].(map[string]any); ok {
 		out["device"] = s.deviceAlias(d)
 	}
+	s.mergeFleetStatus(out)
 	return out
 }
 func (s *Server) Poll(ctx context.Context, interval time.Duration) {

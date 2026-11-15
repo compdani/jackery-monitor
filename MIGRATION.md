@@ -1127,3 +1127,64 @@ Step-11 deletion candidates after runtime cutover: forecaster.py,
 forecast_tables.py, forecast_solar.py, weather_client.py, solar_array.py,
 location.py and load_schedule.py (plus their server.py routes). They are
 still imported by the retained Python server, so nothing is deleted now.
+
+## Step 8 — device fleets (complete, 2026-11-15)
+
+**Step 8 is complete** for the Pi scope (Siseli cloud only; local packet
+capture stays retired). All fleet registries persist in PocketBase settings
+records that use the imported legacy document keys (`kasa_devices`,
+`ecoflow_devices`, `ecoflow_reconnect`, `bms_devices`), preserving unrelated
+imported fields. Credentials and session tokens use encrypted credential
+records (`kasa`, `siseli`, `ecoflow`); token refreshes are written back.
+
+- Kasa: registry CRUD, five-minute reconciler with Python's per-device backoff
+  (min(5 min·2^min(fails,5), 30 min)), `/api/kasa/{credentials,devices,test,
+  status,saved,health}` and `DELETE /api/kasa/saved/{host}` with
+  `rules_referencing`. `/api/kasa/test` now toggles like Python (it previously
+  only read status). Native discovery adds KLAP/SMART devices through the
+  UDP 20002 TDP query (python-kasa's fixed DISCOVERY_QUERY_2), lazily
+  handshaking with saved or blank-setup credentials; AES/TPAP-only devices
+  are skipped rather than presented as controllable.
+- Siseli cloud: `SiseliLoop` (max(30 s, `siseli_poll_interval_s`) or wake on
+  credential change) logs in, lists the station's devices (optional device
+  filter), caches normalized controls, fetches latest data and records each
+  observation through the shared device/sample/rule path with BMS and linked
+  EcoFlow overlays. Routes: credentials GET/POST (portal probe, 400 for auth
+  and Station ID errors, 502 for transport, empty password keeps the saved
+  one)/DELETE, status, settings GET/POST (known or cached controls only,
+  fresh settings after a write). `/api/siseli/local`, `/local/test` and
+  POST `/mqtt-capture` return 410 (retired); GET `/mqtt-capture` reports
+  disabled.
+- EcoFlow: `EcoFlowLoop` ports start/resubscribe on registry change, the
+  one-time MQTT client-id rotation after auth failure, the 5/30/300 s retry
+  schedule, three quota requests 20 s apart and auto-reconnect only inside
+  the reconnect window. MQTT updates are cached, persisted, and re-record the
+  linked Siseli parent. Routes: credentials (login probe)/reconnect_settings/
+  reconnect/devices including link and delete.
+- BMS/BLE: `BMSLoop` polls assigned JBD packs every 15 s through the shared
+  adapter lock, keeps the last good reading on error and adopts inferred
+  capacity. Routes: scan (1–15 s, never 500 without BlueZ), status, saved
+  CRUD, inverter `use_as_main`. The BLE inspector `/api/ble/*` handlers are
+  mounted behind application auth with captures under `<pb_data>/ble_captures`.
+  `cmd/jackery` uses the BlueZ (`blehw`) adapter; no BLE hardware was used.
+- Status/WebSocket merge Siseli and unattached EcoFlow devices and overlaid
+  telemetry into `cloud.devices`/`devices_telemetry` (`_merged_cloud_meta`).
+  Forecasts and smart-charge now exempt EcoFlow battery-linked Siseli devices
+  from the charge ceiling and seed Siseli SOC/capacity from the overlaid live
+  view (`_siseli_forecast_seed`), closing the step 7 caveat. Smart-charge now
+  also passes pack count and car load to the forecast like Python.
+
+Tests use fixture HTTP portals, a fake EcoFlow HTTP doer and MQTT transport,
+fake Kasa backends, a loopback UDP/HTTP KLAP device and no BLE adapter. The
+existing device-package suites remain the port of tests/test_kasa_devices.py,
+test_bms_devices.py, test_bms_ble.py, test_jbd_bms.py, test_ecoflow_*.py,
+test_siseli_client.py/creds and the test_ble_*.py inspector cases; new server
+tests cover route contracts, persistence across restart, retries/backoff and
+the overlay/forecast integration. `go test -race` passed for the fleet tests.
+
+Step-11 deletion candidates after runtime cutover: kasa_client.py,
+kasa_creds.py, kasa_devices.py, siseli_client.py, siseli_creds.py,
+ecoflow_client.py, ecoflow_creds.py, ecoflow_delta3.py, ecoflow_devices.py,
+ecoflow_reconnect.py, bms_ble.py, bms_devices.py, jbd_bms.py, ble_inspector.py,
+ble_routes.py, plus the retired siseli_local capture package (keep any pure
+decoder still imported by the retained Python runtime until step 11).

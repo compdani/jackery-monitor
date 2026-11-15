@@ -150,7 +150,7 @@ func (s *Server) evaluateSmart(ctx context.Context, sn string, now int64, record
 	if soc == nil {
 		reason = "fresh battery telemetry unavailable"
 	} else if len(w) > 0 {
-		opts := forecast.BuildOptions{Now: now, Offset: offset}
+		opts := forecast.BuildOptions{Now: now, Offset: offset, Packs: s.packCount(sn), CarLoad: s.carLoad(sn), DisableCeiling: s.ecoflowBatteryWh(sn) > 0}
 		baseline := forecast.Build(h, w, *soc, capacity, opts)
 		opts.Simulation.ACFloor = &cfg.Target
 		live := forecast.Build(h, w, *soc, capacity, opts)

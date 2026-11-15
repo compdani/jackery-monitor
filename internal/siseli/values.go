@@ -351,3 +351,13 @@ func DefaultLiveControlKeys(controls []Values) []string {
 	}
 	return out
 }
+
+// IsKnownControl reports whether key is a canonical CONTROL_DEFINITIONS entry.
+func IsKnownControl(key string) bool {
+	for _, spec := range tables.Controls {
+		if spec["canonical"] == key {
+			return true
+		}
+	}
+	return false
+}

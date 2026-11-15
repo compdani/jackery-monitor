@@ -157,6 +157,14 @@ func (s *Server) buildForecast(ctx context.Context, sn string, now int64, record
 	if soc != nil {
 		start = *soc
 	}
+	if seed, seedCap := s.siseliSeed(sn); seed != nil || seedCap > 0 {
+		if seed != nil {
+			start = *seed
+		}
+		if cached, _ := s.Store.Get("devices", sn); seedCap > 0 && forecast.Number(cached, "capacity_wh_override") <= 0 {
+			capacity = max(capacity, seedCap)
+		}
+	}
 	fsMeta := map[string]any{"configured": false}
 	var planeOut any
 	solarHourly := map[int64]float64{}
@@ -186,7 +194,7 @@ func (s *Server) buildForecast(ctx context.Context, sn string, now int64, record
 	var windows []automation.Window
 	data, _ := json.Marshal(sched["windows"])
 	_ = json.Unmarshal(data, &windows)
-	opts := forecast.BuildOptions{Now: now, Offset: offset, Packs: s.packCount(sn), CarLoad: s.carLoad(sn), LoadMode: str(sched, "mode"), Windows: windows, SleepStart: str(sched, "sleep_start"), SleepEnd: str(sched, "sleep_end")}
+	opts := forecast.BuildOptions{Now: now, Offset: offset, Packs: s.packCount(sn), CarLoad: s.carLoad(sn), LoadMode: str(sched, "mode"), Windows: windows, SleepStart: str(sched, "sleep_start"), SleepEnd: str(sched, "sleep_end"), DisableCeiling: s.ecoflowBatteryWh(sn) > 0}
 	if len(solarHourly) > 0 {
 		opts.SolarHourly = solarHourly
 	}

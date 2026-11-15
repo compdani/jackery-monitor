@@ -22,13 +22,18 @@ func (p fakePlug) Update(context.Context) error {
 	}
 	return nil
 }
-func (p fakePlug) TurnOn(context.Context) error  { p.mu.Lock(); *p.on = true; p.mu.Unlock(); return nil }
-func (p fakePlug) TurnOff(context.Context) error { p.mu.Lock(); *p.on = false; p.mu.Unlock(); return nil }
-func (p fakePlug) Alias() string                 { return "Car" }
-func (p fakePlug) Model() string                 { return "KP125M" }
-func (p fakePlug) DeviceType() string            { return "Plug" }
-func (p fakePlug) IsOn() bool                    { p.mu.Lock(); defer p.mu.Unlock(); return *p.on }
-func (p fakePlug) PowerW() *float64              { return nil }
+func (p fakePlug) TurnOn(context.Context) error { p.mu.Lock(); *p.on = true; p.mu.Unlock(); return nil }
+func (p fakePlug) TurnOff(context.Context) error {
+	p.mu.Lock()
+	*p.on = false
+	p.mu.Unlock()
+	return nil
+}
+func (p fakePlug) Alias() string      { return "Car" }
+func (p fakePlug) Model() string      { return "KP125M" }
+func (p fakePlug) DeviceType() string { return "Plug" }
+func (p fakePlug) IsOn() bool         { p.mu.Lock(); defer p.mu.Unlock(); return *p.on }
+func (p fakePlug) PowerW() *float64   { return nil }
 
 type fakeKasaBackend struct {
 	mu    sync.Mutex

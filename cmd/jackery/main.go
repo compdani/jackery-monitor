@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"github.com/compdani/jackery-monitor/internal/ble/blehw"
 	"github.com/compdani/jackery-monitor/internal/bridge"
 	"github.com/compdani/jackery-monitor/internal/server"
 	"github.com/compdani/jackery-monitor/internal/store"
@@ -40,6 +41,7 @@ func main() {
 			}
 		}
 		s := &server.Server{Store: &store.Store{App: app}, Key: key, PublicDir: public, Bridge: &bridge.RPC{Address: env("BRIDGE_URL", "127.0.0.1:8766")}}
+		s.BLEAdapter = blehw.New()
 		if env("BACKEND", "native") == "native" {
 			s.UseNativeCloud()
 		}
@@ -57,6 +59,9 @@ func main() {
 		go s.SolarChargeLoop(ctx)
 		go s.ForecastRecorderLoop(ctx)
 		go s.KasaReconcileLoop(ctx)
+		go s.SiseliLoop(ctx)
+		go s.EcoFlowLoop(ctx)
+		go s.BMSLoop(ctx)
 		go s.RunNativeRealtime(ctx)
 		go s.Poll(ctx, 10*time.Second)
 		go s.PollTesla(ctx)

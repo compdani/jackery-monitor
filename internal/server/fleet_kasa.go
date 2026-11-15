@@ -76,6 +76,9 @@ func (k kasaStore) Save(d []kasa.SavedDevice) error { return k.save("devices", d
 type fleetRuntime struct {
 	kasaOnce sync.Once
 	kasa     *kasa.Registry
+	siseli   siseliRuntime
+	ecoflow  ecoflowRuntime
+	bms      bmsRuntime
 }
 
 func (s *Server) kasaRegistry() *kasa.Registry {
