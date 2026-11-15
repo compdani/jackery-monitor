@@ -1,0 +1,1677 @@
+[
+  {
+    "input": {
+      "config": {
+        "mode": "off"
+      },
+      "current_soc_pct": 20,
+      "forecast": {
+        "forecast": []
+      },
+      "cost_plan": {
+        "type": "flat",
+        "rate_per_kwh": 0.3,
+        "currency": "USD"
+      },
+      "capacity_wh": 5040,
+      "baseline_forecast": null,
+      "tz_offset_seconds": 0,
+      "now_ts": 1794234301,
+      "forecast_unavailable_reason": null
+    },
+    "expected": {
+      "action": "skip",
+      "reason": "smart-charge disabled (mode=off)",
+      "mode": "off",
+      "decided_at": 1794234301,
+      "current_soc_pct": 20,
+      "predicted_sunrise_soc_pct": null,
+      "baseline_predicted_sunrise_soc_pct": null,
+      "target_sunrise_soc_pct": 25.0,
+      "deficit_kwh": 0.0,
+      "window_start": null,
+      "window_end": null,
+      "sunrise_ts": null,
+      "cheapest_rate": null,
+      "planned_hours": null,
+      "extension_active": false
+    }
+  },
+  {
+    "input": {
+      "config": {
+        "mode": "active",
+        "target_sunrise_soc_pct": 25
+      },
+      "current_soc_pct": 50,
+      "forecast": {
+        "forecast": [
+          {
+            "ts": 1794232800,
+            "solar_w": 200,
+            "load_w": 50,
+            "predicted_soc": 50.0
+          },
+          {
+            "ts": 1794236400,
+            "solar_w": 200,
+            "load_w": 50,
+            "predicted_soc": 50.0
+          },
+          {
+            "ts": 1794240000,
+            "solar_w": 0,
+            "load_w": 50,
+            "predicted_soc": 48.0
+          },
+          {
+            "ts": 1794243600,
+            "solar_w": 0,
+            "load_w": 50,
+            "predicted_soc": 46.0
+          },
+          {
+            "ts": 1794247200,
+            "solar_w": 0,
+            "load_w": 50,
+            "predicted_soc": 44.0
+          },
+          {
+            "ts": 1794250800,
+            "solar_w": 0,
+            "load_w": 50,
+            "predicted_soc": 42.0
+          },
+          {
+            "ts": 1794254400,
+            "solar_w": 0,
+            "load_w": 50,
+            "predicted_soc": 40.0
+          },
+          {
+            "ts": 1794258000,
+            "solar_w": 0,
+            "load_w": 50,
+            "predicted_soc": 38.0
+          },
+          {
+            "ts": 1794261600,
+            "solar_w": 0,
+            "load_w": 50,
+            "predicted_soc": 36.0
+          },
+          {
+            "ts": 1794265200,
+            "solar_w": 0,
+            "load_w": 50,
+            "predicted_soc": 34.0
+          },
+          {
+            "ts": 1794268800,
+            "solar_w": 0,
+            "load_w": 50,
+            "predicted_soc": 32.0
+          },
+          {
+            "ts": 1794272400,
+            "solar_w": 0,
+            "load_w": 50,
+            "predicted_soc": 30.0
+          },
+          {
+            "ts": 1794276000,
+            "solar_w": 300,
+            "load_w": 50,
+            "predicted_soc": 50.0
+          },
+          {
+            "ts": 1794279600,
+            "solar_w": 300,
+            "load_w": 50,
+            "predicted_soc": 50.0
+          }
+        ]
+      },
+      "cost_plan": {
+        "type": "flat",
+        "rate_per_kwh": 0.3,
+        "currency": "USD"
+      },
+      "capacity_wh": 5040,
+      "baseline_forecast": null,
+      "tz_offset_seconds": 0,
+      "now_ts": 1794234301,
+      "forecast_unavailable_reason": null
+    },
+    "expected": {
+      "action": "off",
+      "reason": "baseline sunrise SOC 30% \u2265 target 25%; AC not needed",
+      "mode": "active",
+      "decided_at": 1794234301,
+      "current_soc_pct": 50,
+      "predicted_sunrise_soc_pct": 30.0,
+      "baseline_predicted_sunrise_soc_pct": 30.0,
+      "target_sunrise_soc_pct": 25.0,
+      "deficit_kwh": 0.0,
+      "window_start": null,
+      "window_end": null,
+      "sunrise_ts": 1794276000,
+      "cheapest_rate": null,
+      "planned_hours": null,
+      "extension_active": false
+    }
+  },
+  {
+    "input": {
+      "config": {
+        "mode": "active",
+        "target_sunrise_soc_pct": 25,
+        "max_charge_w": 800
+      },
+      "current_soc_pct": 20,
+      "forecast": {
+        "forecast": [
+          {
+            "ts": 1794232800,
+            "solar_w": 0,
+            "load_w": 50,
+            "predicted_soc": 45.0
+          },
+          {
+            "ts": 1794236400,
+            "solar_w": 0,
+            "load_w": 50,
+            "predicted_soc": 40.0
+          },
+          {
+            "ts": 1794240000,
+            "solar_w": 0,
+            "load_w": 50,
+            "predicted_soc": 35.0
+          },
+          {
+            "ts": 1794243600,
+            "solar_w": 0,
+            "load_w": 50,
+            "predicted_soc": 30.0
+          },
+          {
+            "ts": 1794247200,
+            "solar_w": 0,
+            "load_w": 50,
+            "predicted_soc": 25.0
+          },
+          {
+            "ts": 1794250800,
+            "solar_w": 0,
+            "load_w": 50,
+            "predicted_soc": 20.0
+          },
+          {
+            "ts": 1794254400,
+            "solar_w": 0,
+            "load_w": 50,
+            "predicted_soc": 15.0
+          },
+          {
+            "ts": 1794258000,
+            "solar_w": 0,
+            "load_w": 50,
+            "predicted_soc": 10.0
+          },
+          {
+            "ts": 1794261600,
+            "solar_w": 300,
+            "load_w": 50,
+            "predicted_soc": 50.0
+          },
+          {
+            "ts": 1794265200,
+            "solar_w": 300,
+            "load_w": 50,
+            "predicted_soc": 50.0
+          }
+        ]
+      },
+      "cost_plan": {
+        "type": "flat",
+        "rate_per_kwh": 0.3,
+        "currency": "USD"
+      },
+      "capacity_wh": 5040,
+      "baseline_forecast": null,
+      "tz_offset_seconds": 0,
+      "now_ts": 1794234301,
+      "forecast_unavailable_reason": null
+    },
+    "expected": {
+      "action": "off",
+      "reason": "waiting for next planned hour (deficit 15pp, 2 planned hour(s))",
+      "mode": "active",
+      "decided_at": 1794234301,
+      "current_soc_pct": 20.0,
+      "predicted_sunrise_soc_pct": 10.0,
+      "baseline_predicted_sunrise_soc_pct": 10.0,
+      "target_sunrise_soc_pct": 25.0,
+      "deficit_kwh": 0.756,
+      "window_start": 1794250800,
+      "window_end": 1794258000,
+      "sunrise_ts": 1794261600,
+      "cheapest_rate": 0.3,
+      "planned_hours": [
+        1794250800,
+        1794254400
+      ],
+      "extension_active": false
+    }
+  },
+  {
+    "input": {
+      "config": {
+        "mode": "active",
+        "target_sunrise_soc_pct": 50,
+        "max_charge_w": 1500
+      },
+      "current_soc_pct": 80,
+      "forecast": {
+        "forecast": [
+          {
+            "ts": 1699999200,
+            "solar_w": 0,
+            "load_w": 400,
+            "predicted_soc": 73.33333333333333
+          },
+          {
+            "ts": 1700002800,
+            "solar_w": 0,
+            "load_w": 400,
+            "predicted_soc": 66.66666666666667
+          },
+          {
+            "ts": 1700006400,
+            "solar_w": 0,
+            "load_w": 400,
+            "predicted_soc": 60.0
+          },
+          {
+            "ts": 1700010000,
+            "solar_w": 0,
+            "load_w": 400,
+            "predicted_soc": 53.33333333333333
+          },
+          {
+            "ts": 1700013600,
+            "solar_w": 0,
+            "load_w": 400,
+            "predicted_soc": 46.666666666666664
+          },
+          {
+            "ts": 1700017200,
+            "solar_w": 0,
+            "load_w": 400,
+            "predicted_soc": 40.0
+          },
+          {
+            "ts": 1700020800,
+            "solar_w": 0,
+            "load_w": 400,
+            "predicted_soc": 33.333333333333336
+          },
+          {
+            "ts": 1700024400,
+            "solar_w": 0,
+            "load_w": 400,
+            "predicted_soc": 26.666666666666664
+          },
+          {
+            "ts": 1700028000,
+            "solar_w": 0,
+            "load_w": 400,
+            "predicted_soc": 20.0
+          },
+          {
+            "ts": 1700031600,
+            "solar_w": 0,
+            "load_w": 400,
+            "predicted_soc": 13.333333333333329
+          },
+          {
+            "ts": 1700035200,
+            "solar_w": 0,
+            "load_w": 400,
+            "predicted_soc": 6.666666666666671
+          },
+          {
+            "ts": 1700038800,
+            "solar_w": 0,
+            "load_w": 400,
+            "predicted_soc": 0
+          },
+          {
+            "ts": 1700042400,
+            "solar_w": 200,
+            "predicted_soc": 0
+          }
+        ],
+        "charge_efficiency": 0.85
+      },
+      "cost_plan": {
+        "type": "flat",
+        "rate_per_kwh": 0.3,
+        "currency": "USD"
+      },
+      "capacity_wh": 10000,
+      "baseline_forecast": null,
+      "tz_offset_seconds": 0,
+      "now_ts": 1699999200,
+      "forecast_unavailable_reason": null
+    },
+    "expected": {
+      "action": "off",
+      "reason": "deferred: SOC 80% \u2265 target now, sunrise 0% < target 50% \u2014 charging at 05:00 (near sunrise to minimize drain)",
+      "mode": "active",
+      "decided_at": 1699999200,
+      "current_soc_pct": 80.0,
+      "predicted_sunrise_soc_pct": 0.0,
+      "baseline_predicted_sunrise_soc_pct": 0.0,
+      "target_sunrise_soc_pct": 50.0,
+      "deficit_kwh": 5.0,
+      "window_start": 1700024400,
+      "window_end": 1700038800,
+      "sunrise_ts": 1700042400,
+      "cheapest_rate": 0.3,
+      "planned_hours": [
+        1700024400,
+        1700028000,
+        1700031600,
+        1700035200
+      ],
+      "extension_active": false
+    }
+  },
+  {
+    "input": {
+      "config": {
+        "mode": "active",
+        "target_sunrise_soc_pct": 70,
+        "max_charge_w": 1500
+      },
+      "current_soc_pct": 80,
+      "forecast": {
+        "forecast": [
+          {
+            "ts": 1699999200,
+            "solar_w": 0,
+            "load_w": 400,
+            "predicted_soc": 73.33333333333333
+          },
+          {
+            "ts": 1700002800,
+            "solar_w": 0,
+            "load_w": 400,
+            "predicted_soc": 66.66666666666667
+          },
+          {
+            "ts": 1700006400,
+            "solar_w": 0,
+            "load_w": 400,
+            "predicted_soc": 60.0
+          },
+          {
+            "ts": 1700010000,
+            "solar_w": 0,
+            "load_w": 400,
+            "predicted_soc": 53.33333333333333
+          },
+          {
+            "ts": 1700013600,
+            "solar_w": 0,
+            "load_w": 400,
+            "predicted_soc": 46.666666666666664
+          },
+          {
+            "ts": 1700017200,
+            "solar_w": 0,
+            "load_w": 400,
+            "predicted_soc": 40.0
+          },
+          {
+            "ts": 1700020800,
+            "solar_w": 0,
+            "load_w": 400,
+            "predicted_soc": 33.333333333333336
+          },
+          {
+            "ts": 1700024400,
+            "solar_w": 0,
+            "load_w": 400,
+            "predicted_soc": 26.666666666666664
+          },
+          {
+            "ts": 1700028000,
+            "solar_w": 0,
+            "load_w": 400,
+            "predicted_soc": 20.0
+          },
+          {
+            "ts": 1700031600,
+            "solar_w": 0,
+            "load_w": 400,
+            "predicted_soc": 13.333333333333329
+          },
+          {
+            "ts": 1700035200,
+            "solar_w": 0,
+            "load_w": 400,
+            "predicted_soc": 6.666666666666671
+          },
+          {
+            "ts": 1700038800,
+            "solar_w": 0,
+            "load_w": 400,
+            "predicted_soc": 0
+          },
+          {
+            "ts": 1700042400,
+            "solar_w": 200,
+            "predicted_soc": 0
+          }
+        ],
+        "charge_efficiency": 0.85
+      },
+      "cost_plan": {
+        "type": "flat",
+        "rate_per_kwh": 0.3,
+        "currency": "USD"
+      },
+      "capacity_wh": 30000,
+      "baseline_forecast": null,
+      "tz_offset_seconds": 0,
+      "now_ts": 1699999200,
+      "forecast_unavailable_reason": null
+    },
+    "expected": {
+      "action": "on",
+      "reason": "charging now: deficit 70pp (21.0 kWh), in cheap window @ $0.30/kWh",
+      "mode": "active",
+      "decided_at": 1699999200,
+      "current_soc_pct": 80.0,
+      "predicted_sunrise_soc_pct": 0.0,
+      "baseline_predicted_sunrise_soc_pct": 0.0,
+      "target_sunrise_soc_pct": 70.0,
+      "deficit_kwh": 21.0,
+      "window_start": 1699999200,
+      "window_end": 1700038800,
+      "sunrise_ts": 1700042400,
+      "cheapest_rate": 0.3,
+      "planned_hours": [
+        1699999200,
+        1700002800,
+        1700006400,
+        1700010000,
+        1700013600,
+        1700017200,
+        1700020800,
+        1700024400,
+        1700028000,
+        1700031600,
+        1700035200
+      ],
+      "extension_active": false
+    }
+  },
+  {
+    "input": {
+      "config": {
+        "mode": "active",
+        "target_sunrise_soc_pct": 25
+      },
+      "current_soc_pct": 80,
+      "forecast": {
+        "forecast": [
+          {
+            "ts": 1794232800,
+            "solar_w": 0,
+            "load_w": 50,
+            "predicted_soc": 45.0
+          },
+          {
+            "ts": 1794236400,
+            "solar_w": 0,
+            "load_w": 50,
+            "predicted_soc": 40.0
+          },
+          {
+            "ts": 1794240000,
+            "solar_w": 0,
+            "load_w": 50,
+            "predicted_soc": 35.0
+          },
+          {
+            "ts": 1794243600,
+            "solar_w": 0,
+            "load_w": 50,
+            "predicted_soc": 30.0
+          },
+          {
+            "ts": 1794247200,
+            "solar_w": 0,
+            "load_w": 50,
+            "predicted_soc": 25.0
+          },
+          {
+            "ts": 1794250800,
+            "solar_w": 0,
+            "load_w": 50,
+            "predicted_soc": 20.0
+          },
+          {
+            "ts": 1794254400,
+            "solar_w": 0,
+            "load_w": 50,
+            "predicted_soc": 15.0
+          },
+          {
+            "ts": 1794258000,
+            "solar_w": 0,
+            "load_w": 50,
+            "predicted_soc": 10.0
+          },
+          {
+            "ts": 1794261600,
+            "solar_w": 300,
+            "load_w": 50,
+            "predicted_soc": 50.0
+          },
+          {
+            "ts": 1794265200,
+            "solar_w": 300,
+            "load_w": 50,
+            "predicted_soc": 50.0
+          }
+        ]
+      },
+      "cost_plan": {
+        "type": "flat",
+        "rate_per_kwh": 0.3,
+        "currency": "USD"
+      },
+      "capacity_wh": 5040,
+      "baseline_forecast": null,
+      "tz_offset_seconds": 0,
+      "now_ts": 1794234301,
+      "forecast_unavailable_reason": null
+    },
+    "expected": {
+      "action": "off",
+      "reason": "deferred: SOC 80% \u2265 target now, sunrise 10% < target 25% \u2014 charging at 19:00 (near sunrise to minimize drain)",
+      "mode": "active",
+      "decided_at": 1794234301,
+      "current_soc_pct": 80.0,
+      "predicted_sunrise_soc_pct": 10.0,
+      "baseline_predicted_sunrise_soc_pct": 10.0,
+      "target_sunrise_soc_pct": 25.0,
+      "deficit_kwh": 0.756,
+      "window_start": 1794250800,
+      "window_end": 1794258000,
+      "sunrise_ts": 1794261600,
+      "cheapest_rate": 0.3,
+      "planned_hours": [
+        1794250800,
+        1794254400
+      ],
+      "extension_active": false
+    }
+  },
+  {
+    "input": {
+      "config": {
+        "mode": "test",
+        "target_sunrise_soc_pct": 25
+      },
+      "current_soc_pct": 20,
+      "forecast": {
+        "forecast": [
+          {
+            "ts": 1794232800,
+            "solar_w": 0,
+            "load_w": 50,
+            "predicted_soc": 45.0
+          },
+          {
+            "ts": 1794236400,
+            "solar_w": 0,
+            "load_w": 50,
+            "predicted_soc": 40.0
+          },
+          {
+            "ts": 1794240000,
+            "solar_w": 0,
+            "load_w": 50,
+            "predicted_soc": 35.0
+          },
+          {
+            "ts": 1794243600,
+            "solar_w": 0,
+            "load_w": 50,
+            "predicted_soc": 30.0
+          },
+          {
+            "ts": 1794247200,
+            "solar_w": 0,
+            "load_w": 50,
+            "predicted_soc": 25.0
+          },
+          {
+            "ts": 1794250800,
+            "solar_w": 0,
+            "load_w": 50,
+            "predicted_soc": 20.0
+          },
+          {
+            "ts": 1794254400,
+            "solar_w": 0,
+            "load_w": 50,
+            "predicted_soc": 15.0
+          },
+          {
+            "ts": 1794258000,
+            "solar_w": 0,
+            "load_w": 50,
+            "predicted_soc": 10.0
+          },
+          {
+            "ts": 1794261600,
+            "solar_w": 300,
+            "load_w": 50,
+            "predicted_soc": 50.0
+          },
+          {
+            "ts": 1794265200,
+            "solar_w": 300,
+            "load_w": 50,
+            "predicted_soc": 50.0
+          }
+        ]
+      },
+      "cost_plan": {
+        "type": "flat",
+        "rate_per_kwh": 0.3,
+        "currency": "USD"
+      },
+      "capacity_wh": 5040,
+      "baseline_forecast": null,
+      "tz_offset_seconds": 0,
+      "now_ts": 1794234301,
+      "forecast_unavailable_reason": null
+    },
+    "expected": {
+      "action": "off",
+      "reason": "waiting for next planned hour (deficit 15pp, 2 planned hour(s))",
+      "mode": "test",
+      "decided_at": 1794234301,
+      "current_soc_pct": 20.0,
+      "predicted_sunrise_soc_pct": 10.0,
+      "baseline_predicted_sunrise_soc_pct": 10.0,
+      "target_sunrise_soc_pct": 25.0,
+      "deficit_kwh": 0.756,
+      "window_start": 1794250800,
+      "window_end": 1794258000,
+      "sunrise_ts": 1794261600,
+      "cheapest_rate": 0.3,
+      "planned_hours": [
+        1794250800,
+        1794254400
+      ],
+      "extension_active": false
+    }
+  },
+  {
+    "input": {
+      "config": {
+        "mode": "active",
+        "target_sunrise_soc_pct": 25
+      },
+      "current_soc_pct": 20,
+      "forecast": {
+        "forecast": []
+      },
+      "cost_plan": {
+        "type": "flat",
+        "rate_per_kwh": 0.3,
+        "currency": "USD"
+      },
+      "capacity_wh": 5040,
+      "baseline_forecast": null,
+      "tz_offset_seconds": 0,
+      "now_ts": 1794234301,
+      "forecast_unavailable_reason": null
+    },
+    "expected": {
+      "action": "off",
+      "reason": "no forecast yet \u2014 set location first",
+      "mode": "active",
+      "decided_at": 1794234301,
+      "current_soc_pct": 20,
+      "predicted_sunrise_soc_pct": null,
+      "baseline_predicted_sunrise_soc_pct": null,
+      "target_sunrise_soc_pct": 25.0,
+      "deficit_kwh": 0.0,
+      "window_start": null,
+      "window_end": null,
+      "sunrise_ts": null,
+      "cheapest_rate": null,
+      "planned_hours": null,
+      "extension_active": false
+    }
+  },
+  {
+    "input": {
+      "config": {
+        "mode": "active",
+        "target_sunrise_soc_pct": 25,
+        "max_charge_w": 800
+      },
+      "current_soc_pct": 80,
+      "forecast": {
+        "forecast": [
+          {
+            "ts": 1699999200,
+            "solar_w": 0,
+            "predicted_soc": 70
+          },
+          {
+            "ts": 1700002800,
+            "solar_w": 0,
+            "predicted_soc": 60
+          },
+          {
+            "ts": 1700006400,
+            "solar_w": 0,
+            "predicted_soc": 50
+          },
+          {
+            "ts": 1700010000,
+            "solar_w": 0,
+            "predicted_soc": 40
+          },
+          {
+            "ts": 1700013600,
+            "solar_w": 0,
+            "predicted_soc": 30
+          },
+          {
+            "ts": 1700017200,
+            "solar_w": 0,
+            "predicted_soc": 20
+          },
+          {
+            "ts": 1700020800,
+            "solar_w": 0,
+            "predicted_soc": 10
+          },
+          {
+            "ts": 1700024400,
+            "solar_w": 0,
+            "predicted_soc": 0
+          },
+          {
+            "ts": 1700028000,
+            "solar_w": 0,
+            "predicted_soc": 0
+          },
+          {
+            "ts": 1700031600,
+            "solar_w": 0,
+            "predicted_soc": 0
+          },
+          {
+            "ts": 1700035200,
+            "solar_w": 200,
+            "predicted_soc": 5
+          }
+        ]
+      },
+      "cost_plan": {
+        "type": "flat",
+        "rate_per_kwh": 0.3,
+        "currency": "USD"
+      },
+      "capacity_wh": 5040,
+      "baseline_forecast": null,
+      "tz_offset_seconds": 0,
+      "now_ts": 1699999200,
+      "forecast_unavailable_reason": null
+    },
+    "expected": {
+      "action": "off",
+      "reason": "deferred: SOC 80% \u2265 target now, sunrise 0% < target 25% \u2014 charging at 05:00 (near sunrise to minimize drain)",
+      "mode": "active",
+      "decided_at": 1699999200,
+      "current_soc_pct": 80.0,
+      "predicted_sunrise_soc_pct": 0.0,
+      "baseline_predicted_sunrise_soc_pct": 0.0,
+      "target_sunrise_soc_pct": 25.0,
+      "deficit_kwh": 1.26,
+      "window_start": 1700024400,
+      "window_end": 1700031600,
+      "sunrise_ts": 1700035200,
+      "cheapest_rate": 0.3,
+      "planned_hours": [
+        1700024400,
+        1700028000
+      ],
+      "extension_active": false
+    }
+  },
+  {
+    "input": {
+      "config": {
+        "mode": "active",
+        "target_sunrise_soc_pct": 25,
+        "max_charge_w": 800
+      },
+      "current_soc_pct": 10,
+      "forecast": {
+        "forecast": [
+          {
+            "ts": 1699999200,
+            "solar_w": 0,
+            "predicted_soc": 72
+          },
+          {
+            "ts": 1700002800,
+            "solar_w": 0,
+            "predicted_soc": 64
+          },
+          {
+            "ts": 1700006400,
+            "solar_w": 0,
+            "predicted_soc": 56
+          },
+          {
+            "ts": 1700010000,
+            "solar_w": 0,
+            "predicted_soc": 48
+          },
+          {
+            "ts": 1700013600,
+            "solar_w": 0,
+            "predicted_soc": 40
+          },
+          {
+            "ts": 1700017200,
+            "solar_w": 0,
+            "predicted_soc": 32
+          },
+          {
+            "ts": 1700020800,
+            "solar_w": 0,
+            "predicted_soc": 24
+          },
+          {
+            "ts": 1700024400,
+            "solar_w": 0,
+            "predicted_soc": 16
+          },
+          {
+            "ts": 1700028000,
+            "solar_w": 0,
+            "predicted_soc": 8
+          },
+          {
+            "ts": 1700031600,
+            "solar_w": 0,
+            "predicted_soc": 0
+          },
+          {
+            "ts": 1700035200,
+            "solar_w": 200,
+            "predicted_soc": 0
+          }
+        ]
+      },
+      "cost_plan": {
+        "type": "tou",
+        "currency": "USD",
+        "tou_rates": [
+          {
+            "start_hour": 22,
+            "end_hour": 23,
+            "rate": 0.1
+          },
+          {
+            "start_hour": 23,
+            "end_hour": 0,
+            "rate": 0.1
+          },
+          {
+            "start_hour": 0,
+            "end_hour": 1,
+            "rate": 0.1
+          },
+          {
+            "start_hour": 1,
+            "end_hour": 2,
+            "rate": 0.1
+          },
+          {
+            "start_hour": 0,
+            "end_hour": 24,
+            "rate": 0.4
+          }
+        ]
+      },
+      "capacity_wh": 10000,
+      "baseline_forecast": null,
+      "tz_offset_seconds": 0,
+      "now_ts": 1699999200,
+      "forecast_unavailable_reason": null
+    },
+    "expected": {
+      "action": "off",
+      "reason": "waiting for next planned hour (deficit 25pp, 4 planned hour(s))",
+      "mode": "active",
+      "decided_at": 1699999200,
+      "current_soc_pct": 10.0,
+      "predicted_sunrise_soc_pct": 0.0,
+      "baseline_predicted_sunrise_soc_pct": 0.0,
+      "target_sunrise_soc_pct": 25.0,
+      "deficit_kwh": 2.5,
+      "window_start": 1700002800,
+      "window_end": 1700031600,
+      "sunrise_ts": 1700035200,
+      "cheapest_rate": 0.4,
+      "planned_hours": [
+        1700002800,
+        1700006400,
+        1700010000,
+        1700028000
+      ],
+      "extension_active": false
+    }
+  },
+  {
+    "input": {
+      "config": {
+        "mode": "active",
+        "target_sunrise_soc_pct": 25,
+        "max_charge_w": 800
+      },
+      "current_soc_pct": 10,
+      "forecast": {
+        "forecast": [
+          {
+            "ts": 1699999200,
+            "solar_w": 0,
+            "predicted_soc": 70
+          },
+          {
+            "ts": 1700002800,
+            "solar_w": 0,
+            "predicted_soc": 60
+          },
+          {
+            "ts": 1700006400,
+            "solar_w": 0,
+            "predicted_soc": 50
+          },
+          {
+            "ts": 1700010000,
+            "solar_w": 0,
+            "predicted_soc": 40
+          },
+          {
+            "ts": 1700013600,
+            "solar_w": 0,
+            "predicted_soc": 30
+          },
+          {
+            "ts": 1700017200,
+            "solar_w": 0,
+            "predicted_soc": 20
+          },
+          {
+            "ts": 1700020800,
+            "solar_w": 0,
+            "predicted_soc": 10
+          },
+          {
+            "ts": 1700024400,
+            "solar_w": 0,
+            "predicted_soc": 0
+          },
+          {
+            "ts": 1700028000,
+            "solar_w": 200,
+            "predicted_soc": 0
+          }
+        ]
+      },
+      "cost_plan": {
+        "type": "flat",
+        "rate_per_kwh": 0.3,
+        "currency": "USD"
+      },
+      "capacity_wh": 5040,
+      "baseline_forecast": null,
+      "tz_offset_seconds": 0,
+      "now_ts": 1700020900,
+      "forecast_unavailable_reason": null
+    },
+    "expected": {
+      "action": "on",
+      "reason": "charging now: deficit 25pp (1.3 kWh), in cheap window @ $0.30/kWh",
+      "mode": "active",
+      "decided_at": 1700020900,
+      "current_soc_pct": 10.0,
+      "predicted_sunrise_soc_pct": 0.0,
+      "baseline_predicted_sunrise_soc_pct": 0.0,
+      "target_sunrise_soc_pct": 25.0,
+      "deficit_kwh": 1.26,
+      "window_start": 1700020800,
+      "window_end": 1700024400,
+      "sunrise_ts": 1700028000,
+      "cheapest_rate": 0.3,
+      "planned_hours": [
+        1700020800
+      ],
+      "extension_active": false
+    }
+  },
+  {
+    "input": {
+      "config": {
+        "mode": "active",
+        "target_sunrise_soc_pct": 25,
+        "max_charge_w": 800
+      },
+      "current_soc_pct": 18,
+      "forecast": {
+        "forecast": [
+          {
+            "ts": 1699999200,
+            "solar_w": 0,
+            "predicted_soc": 60
+          },
+          {
+            "ts": 1700002800,
+            "solar_w": 0,
+            "predicted_soc": 40
+          },
+          {
+            "ts": 1700006400,
+            "solar_w": 0,
+            "predicted_soc": 20
+          },
+          {
+            "ts": 1700010000,
+            "solar_w": 0,
+            "predicted_soc": 0
+          },
+          {
+            "ts": 1700013600,
+            "solar_w": 200,
+            "predicted_soc": 0
+          }
+        ]
+      },
+      "cost_plan": {
+        "type": "flat",
+        "rate_per_kwh": 0.3,
+        "currency": "USD"
+      },
+      "capacity_wh": 5040,
+      "baseline_forecast": null,
+      "tz_offset_seconds": 0,
+      "now_ts": 1700011800,
+      "forecast_unavailable_reason": null
+    },
+    "expected": {
+      "action": "on",
+      "reason": "extension: baseline sunrise SOC 0.0% < target 25% \u2014 topping up before sunrise",
+      "mode": "active",
+      "decided_at": 1700011800,
+      "current_soc_pct": 18.0,
+      "predicted_sunrise_soc_pct": 0.0,
+      "baseline_predicted_sunrise_soc_pct": 0.0,
+      "target_sunrise_soc_pct": 25.0,
+      "deficit_kwh": 1.26,
+      "window_start": null,
+      "window_end": null,
+      "sunrise_ts": 1700013600,
+      "cheapest_rate": null,
+      "planned_hours": [],
+      "extension_active": true
+    }
+  },
+  {
+    "input": {
+      "config": {
+        "mode": "active",
+        "target_sunrise_soc_pct": 25,
+        "max_charge_w": 800
+      },
+      "current_soc_pct": 26,
+      "forecast": {
+        "forecast": [
+          {
+            "ts": 1699999200,
+            "solar_w": 0,
+            "predicted_soc": 60
+          },
+          {
+            "ts": 1700002800,
+            "solar_w": 0,
+            "predicted_soc": 40
+          },
+          {
+            "ts": 1700006400,
+            "solar_w": 0,
+            "predicted_soc": 20
+          },
+          {
+            "ts": 1700010000,
+            "solar_w": 0,
+            "predicted_soc": 0
+          },
+          {
+            "ts": 1700013600,
+            "solar_w": 200,
+            "predicted_soc": 0
+          }
+        ]
+      },
+      "cost_plan": {
+        "type": "flat",
+        "rate_per_kwh": 0.3,
+        "currency": "USD"
+      },
+      "capacity_wh": 5040,
+      "baseline_forecast": null,
+      "tz_offset_seconds": 0,
+      "now_ts": 1700011800,
+      "forecast_unavailable_reason": null
+    },
+    "expected": {
+      "action": "on",
+      "reason": "extension: baseline sunrise SOC 0.0% < target 25% \u2014 topping up before sunrise",
+      "mode": "active",
+      "decided_at": 1700011800,
+      "current_soc_pct": 26.0,
+      "predicted_sunrise_soc_pct": 0.0,
+      "baseline_predicted_sunrise_soc_pct": 0.0,
+      "target_sunrise_soc_pct": 25.0,
+      "deficit_kwh": 1.26,
+      "window_start": null,
+      "window_end": null,
+      "sunrise_ts": 1700013600,
+      "cheapest_rate": null,
+      "planned_hours": [],
+      "extension_active": true
+    }
+  },
+  {
+    "input": {
+      "config": {
+        "mode": "test",
+        "target_sunrise_soc_pct": 32
+      },
+      "current_soc_pct": 33,
+      "forecast": {
+        "forecast": [
+          {
+            "ts": 1791295200,
+            "duration_h": 1,
+            "solar_w": 0,
+            "predicted_soc": 30
+          },
+          {
+            "ts": 1791298800,
+            "duration_h": 1,
+            "solar_w": 100,
+            "predicted_soc": 30
+          }
+        ]
+      },
+      "cost_plan": {
+        "type": "flat",
+        "rate_per_kwh": 0.3,
+        "currency": "USD"
+      },
+      "capacity_wh": 30240,
+      "baseline_forecast": null,
+      "tz_offset_seconds": 0,
+      "now_ts": 1791295260,
+      "forecast_unavailable_reason": null
+    },
+    "expected": {
+      "action": "off",
+      "reason": "not enough time before sunrise",
+      "mode": "test",
+      "decided_at": 1791295260,
+      "current_soc_pct": 33.0,
+      "predicted_sunrise_soc_pct": 30.0,
+      "baseline_predicted_sunrise_soc_pct": 30.0,
+      "target_sunrise_soc_pct": 32.0,
+      "deficit_kwh": 0.605,
+      "window_start": null,
+      "window_end": null,
+      "sunrise_ts": 1791295200,
+      "cheapest_rate": null,
+      "planned_hours": [],
+      "extension_active": false
+    }
+  },
+  {
+    "input": {
+      "config": {
+        "mode": "test",
+        "target_sunrise_soc_pct": 32
+      },
+      "current_soc_pct": 31,
+      "forecast": {
+        "forecast": [
+          {
+            "ts": 1791295200,
+            "duration_h": 1,
+            "solar_w": 0,
+            "predicted_soc": 30
+          },
+          {
+            "ts": 1791298800,
+            "duration_h": 1,
+            "solar_w": 100,
+            "predicted_soc": 30
+          }
+        ]
+      },
+      "cost_plan": {
+        "type": "flat",
+        "rate_per_kwh": 0.3,
+        "currency": "USD"
+      },
+      "capacity_wh": 30240,
+      "baseline_forecast": null,
+      "tz_offset_seconds": 0,
+      "now_ts": 1791295260,
+      "forecast_unavailable_reason": null
+    },
+    "expected": {
+      "action": "on",
+      "reason": "extension: SOC 31.0% < target 32% \u2014 charging until target hit",
+      "mode": "test",
+      "decided_at": 1791295260,
+      "current_soc_pct": 31.0,
+      "predicted_sunrise_soc_pct": 30.0,
+      "baseline_predicted_sunrise_soc_pct": 30.0,
+      "target_sunrise_soc_pct": 32.0,
+      "deficit_kwh": 0.605,
+      "window_start": null,
+      "window_end": null,
+      "sunrise_ts": 1791295200,
+      "cheapest_rate": null,
+      "planned_hours": [],
+      "extension_active": true
+    }
+  },
+  {
+    "input": {
+      "config": {
+        "mode": "active",
+        "target_sunrise_soc_pct": 25,
+        "max_charge_w": 800
+      },
+      "current_soc_pct": 40,
+      "forecast": {
+        "forecast": [
+          {
+            "ts": 1699999200,
+            "solar_w": 0,
+            "predicted_soc": 73.125
+          },
+          {
+            "ts": 1700002800,
+            "solar_w": 0,
+            "predicted_soc": 66.25
+          },
+          {
+            "ts": 1700006400,
+            "solar_w": 0,
+            "predicted_soc": 59.375
+          },
+          {
+            "ts": 1700010000,
+            "solar_w": 0,
+            "predicted_soc": 52.5
+          },
+          {
+            "ts": 1700013600,
+            "solar_w": 0,
+            "predicted_soc": 45.625
+          },
+          {
+            "ts": 1700017200,
+            "solar_w": 0,
+            "predicted_soc": 38.75
+          },
+          {
+            "ts": 1700020800,
+            "solar_w": 0,
+            "predicted_soc": 31.875
+          },
+          {
+            "ts": 1700024400,
+            "solar_w": 0,
+            "predicted_soc": 25.0
+          },
+          {
+            "ts": 1700028000,
+            "solar_w": 200,
+            "predicted_soc": 50
+          }
+        ]
+      },
+      "cost_plan": {
+        "type": "flat",
+        "rate_per_kwh": 0.3,
+        "currency": "USD"
+      },
+      "capacity_wh": 5040,
+      "baseline_forecast": {
+        "forecast": [
+          {
+            "ts": 1699999200,
+            "solar_w": 0,
+            "predicted_soc": 73.75
+          },
+          {
+            "ts": 1700002800,
+            "solar_w": 0,
+            "predicted_soc": 67.5
+          },
+          {
+            "ts": 1700006400,
+            "solar_w": 0,
+            "predicted_soc": 61.25
+          },
+          {
+            "ts": 1700010000,
+            "solar_w": 0,
+            "predicted_soc": 55.0
+          },
+          {
+            "ts": 1700013600,
+            "solar_w": 0,
+            "predicted_soc": 48.75
+          },
+          {
+            "ts": 1700017200,
+            "solar_w": 0,
+            "predicted_soc": 42.5
+          },
+          {
+            "ts": 1700020800,
+            "solar_w": 0,
+            "predicted_soc": 36.25
+          },
+          {
+            "ts": 1700024400,
+            "solar_w": 0,
+            "predicted_soc": 30.0
+          },
+          {
+            "ts": 1700028000,
+            "solar_w": 200,
+            "predicted_soc": 50
+          }
+        ]
+      },
+      "tz_offset_seconds": 0,
+      "now_ts": 1699999200,
+      "forecast_unavailable_reason": null
+    },
+    "expected": {
+      "action": "off",
+      "reason": "baseline sunrise SOC 30% \u2265 target 25%; AC not needed",
+      "mode": "active",
+      "decided_at": 1699999200,
+      "current_soc_pct": 40,
+      "predicted_sunrise_soc_pct": 25.0,
+      "baseline_predicted_sunrise_soc_pct": 30.0,
+      "target_sunrise_soc_pct": 25.0,
+      "deficit_kwh": 0.0,
+      "window_start": null,
+      "window_end": null,
+      "sunrise_ts": 1700028000,
+      "cheapest_rate": null,
+      "planned_hours": null,
+      "extension_active": false
+    }
+  },
+  {
+    "input": {
+      "config": {
+        "mode": "active",
+        "target_sunrise_soc_pct": 25,
+        "max_charge_w": 800
+      },
+      "current_soc_pct": 40,
+      "forecast": {
+        "forecast": [
+          {
+            "ts": 1699999200,
+            "solar_w": 0,
+            "predicted_soc": 73.125
+          },
+          {
+            "ts": 1700002800,
+            "solar_w": 0,
+            "predicted_soc": 66.25
+          },
+          {
+            "ts": 1700006400,
+            "solar_w": 0,
+            "predicted_soc": 59.375
+          },
+          {
+            "ts": 1700010000,
+            "solar_w": 0,
+            "predicted_soc": 52.5
+          },
+          {
+            "ts": 1700013600,
+            "solar_w": 0,
+            "predicted_soc": 45.625
+          },
+          {
+            "ts": 1700017200,
+            "solar_w": 0,
+            "predicted_soc": 38.75
+          },
+          {
+            "ts": 1700020800,
+            "solar_w": 0,
+            "predicted_soc": 31.875
+          },
+          {
+            "ts": 1700024400,
+            "solar_w": 0,
+            "predicted_soc": 25.0
+          },
+          {
+            "ts": 1700028000,
+            "solar_w": 200,
+            "predicted_soc": 25
+          }
+        ]
+      },
+      "cost_plan": {
+        "type": "flat",
+        "rate_per_kwh": 0.3,
+        "currency": "USD"
+      },
+      "capacity_wh": 5040,
+      "baseline_forecast": {
+        "forecast": [
+          {
+            "ts": 1699999200,
+            "solar_w": 0,
+            "predicted_soc": 70.625
+          },
+          {
+            "ts": 1700002800,
+            "solar_w": 0,
+            "predicted_soc": 61.25
+          },
+          {
+            "ts": 1700006400,
+            "solar_w": 0,
+            "predicted_soc": 51.875
+          },
+          {
+            "ts": 1700010000,
+            "solar_w": 0,
+            "predicted_soc": 42.5
+          },
+          {
+            "ts": 1700013600,
+            "solar_w": 0,
+            "predicted_soc": 33.125
+          },
+          {
+            "ts": 1700017200,
+            "solar_w": 0,
+            "predicted_soc": 23.75
+          },
+          {
+            "ts": 1700020800,
+            "solar_w": 0,
+            "predicted_soc": 14.375
+          },
+          {
+            "ts": 1700024400,
+            "solar_w": 0,
+            "predicted_soc": 5.0
+          },
+          {
+            "ts": 1700028000,
+            "solar_w": 200,
+            "predicted_soc": 25
+          }
+        ]
+      },
+      "tz_offset_seconds": 0,
+      "now_ts": 1699999200,
+      "forecast_unavailable_reason": null
+    },
+    "expected": {
+      "action": "off",
+      "reason": "deferred: SOC 40% \u2265 target now, sunrise 5% < target 25% \u2014 charging at 03:00 (near sunrise to minimize drain)",
+      "mode": "active",
+      "decided_at": 1699999200,
+      "current_soc_pct": 40.0,
+      "predicted_sunrise_soc_pct": 25.0,
+      "baseline_predicted_sunrise_soc_pct": 5.0,
+      "target_sunrise_soc_pct": 25.0,
+      "deficit_kwh": 1.008,
+      "window_start": 1700017200,
+      "window_end": 1700024400,
+      "sunrise_ts": 1700028000,
+      "cheapest_rate": 0.3,
+      "planned_hours": [
+        1700017200,
+        1700020800
+      ],
+      "extension_active": false
+    }
+  },
+  {
+    "input": {
+      "config": {
+        "mode": "active",
+        "target_sunrise_soc_pct": 25,
+        "max_charge_w": 800
+      },
+      "current_soc_pct": 23,
+      "forecast": {
+        "forecast": [
+          {
+            "ts": 1699999200,
+            "solar_w": 0,
+            "predicted_soc": 68
+          },
+          {
+            "ts": 1700002800,
+            "solar_w": 0,
+            "predicted_soc": 56
+          },
+          {
+            "ts": 1700006400,
+            "solar_w": 0,
+            "predicted_soc": 44
+          },
+          {
+            "ts": 1700010000,
+            "solar_w": 0,
+            "predicted_soc": 32
+          },
+          {
+            "ts": 1700013600,
+            "solar_w": 0,
+            "predicted_soc": 20
+          },
+          {
+            "ts": 1700017200,
+            "solar_w": 0,
+            "predicted_soc": 8
+          },
+          {
+            "ts": 1700020800,
+            "solar_w": 0,
+            "predicted_soc": 0
+          },
+          {
+            "ts": 1700024400,
+            "solar_w": 0,
+            "predicted_soc": 0
+          },
+          {
+            "ts": 1700028000,
+            "solar_w": 200,
+            "predicted_soc": 0
+          }
+        ]
+      },
+      "cost_plan": {
+        "type": "flat",
+        "rate_per_kwh": 0.3,
+        "currency": "USD"
+      },
+      "capacity_wh": 5040,
+      "baseline_forecast": null,
+      "tz_offset_seconds": 0,
+      "now_ts": 1700020900,
+      "forecast_unavailable_reason": null
+    },
+    "expected": {
+      "action": "on",
+      "reason": "charging now: deficit 25pp (1.3 kWh), in cheap window @ $0.30/kWh",
+      "mode": "active",
+      "decided_at": 1700020900,
+      "current_soc_pct": 23.0,
+      "predicted_sunrise_soc_pct": 0.0,
+      "baseline_predicted_sunrise_soc_pct": 0.0,
+      "target_sunrise_soc_pct": 25.0,
+      "deficit_kwh": 1.26,
+      "window_start": 1700020800,
+      "window_end": 1700024400,
+      "sunrise_ts": 1700028000,
+      "cheapest_rate": 0.3,
+      "planned_hours": [
+        1700020800
+      ],
+      "extension_active": false
+    }
+  }
+]

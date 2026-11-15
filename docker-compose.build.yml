@@ -1,23 +1,15 @@
-# Default deployment — Synology / generic Linux. Two always-on services, no
-# compose profiles (Container Manager's UI doesn't expose --profile).
-#
-# Synology Container Manager:
-#   Project > Create
-#     Project name: jackery-monitor
-#     Path:         /docker/jackery-monitor
-#     Source:       Use existing docker-compose.yml   (this file is picked up automatically)
-#
-# Any Linux box from the CLI:
-#   docker compose up -d --build
-#
-# For macOS development (host bridge) or mock telemetry, see docker-compose.dev.yml.
+# Transitional Go/PocketBase HTTP server + reference Python cloud bridge.
+# Build: docker compose -f docker-compose.build.yml up -d --build
+# API coverage and rollback instructions: MIGRATION.md
 
 services:
   # Cloud bridge — holds Jackery credentials, polls the Jackery cloud,
   # exposes JSON-RPC on TCP 8766 (internal docker network only, NOT to the LAN).
   jackery-bridge:
-    build: .
-    image: jackery-monitor:latest
+    build:
+      context: .
+      target: legacy
+    image: jackery-monitor-bridge:local
     container_name: jackery-bridge
     restart: unless-stopped
     command: ["python", "bridge.py"]
@@ -45,13 +37,16 @@ services:
       retries: 5
       start_period: 5s
 
-  # FastAPI dashboard — host networking so backup auto-discovery can
+  # Go/PocketBase dashboard — host networking so backup auto-discovery can
   # sweep the LAN directly. See docker-compose.yml for the full notes.
   jackery-monitor:
-    build: .
-    image: jackery-monitor:latest
+    build:
+      context: .
+      target: go-runtime
+    image: jackery-monitor-go:local
     container_name: jackery-monitor
     restart: unless-stopped
+    command: ["serve", "--http=0.0.0.0:${JACKERY_HTTP_PORT:-8123}", "--dir=/data/pb_data"]
     depends_on:
       jackery-bridge:
         condition: service_healthy
@@ -61,7 +56,7 @@ services:
       BRIDGE_URL: 127.0.0.1:8766
       POLL_INTERVAL_S: "10"
       JACKERY_DB: /data/energy.db
-      PORT: "${JACKERY_HTTP_PORT:-8000}"
+      PORT: "${JACKERY_HTTP_PORT:-8123}"
     volumes:
       - jackery-data:/data
       # Host BlueZ D-Bus so bleak can talk to a USB BLE adapter on the NAS.

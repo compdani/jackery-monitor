@@ -1,0 +1,413 @@
+syntax = "proto3";
+
+package ecoflow;
+
+option go_package = "github.com/compdani/jackery-monitor/internal/ecoflow/efpb";
+
+message Delta3Header {
+  optional bytes pdata = 1;
+  optional int32 src = 2;
+  optional int32 dest = 3;
+  optional int32 d_src = 4;
+  optional int32 d_dest = 5;
+  optional int32 enc_type = 6;
+  optional int32 check_type = 7;
+  optional int32 cmd_func = 8;
+  optional int32 cmd_id = 9;
+  optional int32 data_len = 10;
+  optional int32 need_ack = 11;
+  optional int32 is_ack = 12;
+  optional int32 seq = 14;
+  optional int32 product_id = 15;
+  optional int32 version = 16;
+  optional int32 payload_ver = 17;
+  optional int32 time_snap = 18;
+  optional int32 is_rw_cmd = 19;
+  optional int32 is_queue = 20;
+  optional int32 ack_type = 21;
+  optional string code = 22;
+  optional string from = 23;
+  optional string module_sn = 24;
+  optional string device_sn = 25;
+}
+
+message Delta3SendHeaderMsg {
+  repeated Delta3Header msg = 1;
+}
+
+message Delta3DisplayPropertyUpload {
+  optional uint32 errcode = 1;
+  optional float pow_in_sum_w = 3;
+  optional float pow_out_sum_w = 4;
+  optional uint32 energy_backup_en = 7;
+  optional uint32 energy_backup_start_soc = 8;
+  optional float pow_get_qcusb1 = 9;
+  optional float pow_get_qcusb2 = 10;
+  optional float pow_get_typec1 = 11;
+  optional float pow_get_typec2 = 12;
+  optional uint32 flow_info_qcusb1 = 13;
+  optional uint32 flow_info_qcusb2 = 14;
+  optional uint32 flow_info_typec1 = 15;
+  optional uint32 flow_info_typec2 = 16;
+  optional uint32 dev_standby_time = 17;
+  optional uint32 screen_off_time = 18;
+  optional uint32 ac_standby_time = 19;
+  optional uint32 dc_standby_time = 20;
+  optional uint32 ac_always_on_flag = 22;
+  optional uint32 ac_always_on_mini_soc = 23;
+  optional uint32 xboost_en = 25;
+  optional uint32 pcs_fan_level = 30;
+  optional uint32 flow_info_12v = 33;
+  optional float pow_get_12v = 37;
+  optional uint32 flow_info_ac2dc = 45;
+  optional uint32 flow_info_dc2ac = 46;
+  optional uint32 flow_info_ac_in = 47;
+  optional float pow_get_ac = 53;
+  optional float pow_get_ac_in = 54;
+  optional uint32 plug_in_info_ac_in_flag = 61;
+  optional uint32 plug_in_info_ac_in_feq = 62;
+  optional uint32 dc_out_open = 74;
+  optional uint32 cfg_ac_out_open = 76;
+  optional float pow_get_dcp2 = 77;
+  optional uint32 flow_info_dcp2_in = 78;
+  optional uint32 flow_info_dcp2_out = 79;
+  optional uint32 plug_in_info_dcp2_in_flag = 83;
+  optional uint32 plug_in_info_dcp2_dsg_chg_type = 84;
+  optional uint32 plug_in_info_dcp2_charger_flag = 85;
+  optional uint32 plug_in_info_dcp2_type = 86;
+  optional uint32 plug_in_info_dcp2_detail = 87;
+  optional string plug_in_info_dcp2_sn = 88;
+  optional uint32 plug_in_info_dcp2_run_state = 89;
+  optional uint32 plug_in_info_dcp2_firm_ver = 90;
+  optional uint32 bms_err_code = 140;
+  optional uint32 ban_bypass_en = 146;
+  optional uint32 output_power_off_memory = 147;
+  optional uint32 pv_chg_type = 148;
+  optional uint32 flow_info_bms_dsg = 152;
+  optional uint32 flow_info_bms_chg = 153;
+  optional float pow_get_bms = 158;
+  optional uint32 en_beep = 195;
+  optional uint32 plug_in_info_ac_charger_flag = 202;
+  optional uint32 plug_in_info_ac_in_chg_pow_max = 209;
+  optional uint32 ac_out_freq = 211;
+  optional uint32 dev_sleep_state = 212;
+  optional uint32 pd_err_code = 213;
+  optional uint32 mppt_err_code = 215;
+  optional uint32 llc_hv_lv_flag = 227;
+  optional uint32 llc_inv_err_code = 232;
+  optional uint32 plug_in_info_ac_out_dsg_pow_max = 238;
+  optional float bms_batt_soc = 242;
+  optional float bms_batt_soh = 243;
+  optional uint32 bms_design_cap = 248;
+  optional uint32 bms_dsg_rem_time = 254;
+  optional uint32 bms_chg_rem_time = 255;
+  optional int32 bms_min_cell_temp = 258;
+  optional int32 bms_max_cell_temp = 259;
+  optional int32 bms_min_mos_temp = 260;
+  optional int32 bms_max_mos_temp = 261;
+  optional float cms_batt_soc = 262;
+  optional float cms_batt_soh = 263;
+  optional uint32 cms_dsg_rem_time = 268;
+  optional uint32 cms_chg_rem_time = 269;
+  optional uint32 cms_max_chg_soc = 270;
+  optional uint32 cms_min_dsg_soc = 271;
+  optional uint32 cms_bms_run_state = 275;
+  optional uint32 bms_chg_dsg_state = 281;
+  optional uint32 cms_chg_dsg_state = 282;
+  optional uint32 time_task_conflict_flag = 285;
+  optional uint32 time_task_change_cnt = 286;
+  optional uint32 ups_alram = 355;
+  optional uint32 plug_in_info_pv_dc_amp_max = 356;
+  optional uint32 led_mode = 357;
+  optional uint32 low_power_alarm = 358;
+  optional uint32 silence_chg_watt = 359;
+  optional uint32 flow_info_pv = 360;
+  optional float pow_get_pv = 361;
+  optional uint32 plug_in_info_pv_flag = 362;
+  optional uint32 plug_in_info_pv_type = 363;
+  optional uint32 plug_in_info_pv_charger_flag = 364;
+  optional uint32 plug_in_info_pv_chg_amp_max = 365;
+  optional uint32 plug_in_info_pv_chg_vol_max = 366;
+  optional uint32 flow_info_ac_out = 367;
+  optional float pow_get_ac_out = 368;
+  optional Delta3CfgEnergyStrategyOperateMode energy_strategy_operate_mode = 393;
+  optional uint32 self_powered_conflict_flag = 395;
+  optional uint32 tou_mode_conflict_flag = 396;
+  optional uint32 flow_info_dcp_in = 423;
+  optional uint32 flow_info_dcp_out = 424;
+  optional float pow_get_dcp = 425;
+  optional uint32 plug_in_info_dcp_in_flag = 426;
+  optional uint32 plug_in_info_dcp_type = 427;
+  optional uint32 plug_in_info_dcp_detail = 428;
+  optional uint32 plug_in_info_dcp_dsg_chg_type = 431;
+  optional string plug_in_info_dcp_sn = 433;
+  optional uint32 plug_in_info_dcp_firm_ver = 434;
+  optional uint32 plug_in_info_dcp_charger_flag = 435;
+  optional uint32 plug_in_info_dcp_run_state = 436;
+  optional uint32 plug_in_info_dcp_err_code = 438;
+  optional uint32 plug_in_info_dcp2_err_code = 439;
+  optional uint32 plug_in_info_ac_in_chg_mode = 124;
+  optional uint32 plug_in_info_ac_in_chg_hal_pow_max = 458;
+  optional uint32 backup_reverse_soc = 461;
+}
+
+message Delta3RuntimePropertyUpload {
+  optional uint32 ac_phase_type = 21;
+  optional uint32 pcs_work_mode = 24;
+  optional float temp_pcs_dc = 26;
+  optional float temp_pcs_ac = 27;
+  optional uint32 plug_in_info_ac_out_type = 59;
+  optional uint32 plug_in_info_ac_out_freq = 60;
+  optional float plug_in_info_ac_out_vol = 67;
+  optional float plug_in_info_ac_in_vol = 68;
+  optional float plug_in_info_bms_vol = 169;
+  optional uint32 pd_mppt_comm_err = 172;
+  optional uint32 pd_llc_comm_err = 173;
+  optional uint32 pd_bms_comm_err = 174;
+  optional uint32 pd_iot_comm_err = 175;
+  optional uint32 pd_firm_ver = 176;
+  optional uint32 iot_firm_ver = 177;
+  optional uint32 mppt_firm_ver = 178;
+  optional float plug_in_info_ac_in_amp = 223;
+  optional float plug_in_info_ac_out_amp = 224;
+  optional uint32 llc_inv_firm_ver = 231;
+  optional uint32 bms_firm_ver = 241;
+  optional float bms_batt_vol = 244;
+  optional float bms_batt_amp = 245;
+  optional uint32 bms_bal_state = 246;
+  optional uint32 bms_full_cap = 247;
+  optional uint32 bms_remain_cap = 249;
+  optional uint32 bms_alm_state = 250;
+  optional uint32 bms_pro_state = 251;
+  optional uint32 bms_flt_state = 252;
+  optional uint32 bms_err_code = 253;
+  optional uint32 bms_min_cell_vol = 256;
+  optional uint32 bms_max_cell_vol = 257;
+  optional float cms_batt_vol = 264;
+  optional float cms_batt_amp = 265;
+  optional float cms_chg_req_vol = 266;
+  optional float cms_chg_req_amp = 267;
+  optional uint32 bms_overload_icon = 276;
+  optional uint32 bms_warn_icon = 277;
+  optional uint32 bms_high_temp_icon = 278;
+  optional uint32 bms_low_temp_icon = 279;
+  optional uint32 bms_limit_icon = 280;
+  optional uint32 bms_alm_state_2 = 291;
+  optional uint32 bms_pro_state_2 = 292;
+  optional int32 display_property_full_upload_period = 293;
+  optional int32 display_property_incremental_upload_period = 294;
+  optional int32 runtime_property_full_upload_period = 295;
+  optional int32 runtime_property_incremental_upload_period = 296;
+  optional float pv_vin_ref = 338;
+  optional uint32 inv_main_fsmstate = 349;
+  optional uint32 l1_main_fsmstate = 350;
+  optional float dcdc_chg_req_cur = 376;
+  optional float llc_recv_cms_chg_req_vol = 377;
+  optional float temp_pv = 379;
+  optional float plug_in_info_pv_vol = 380;
+  optional float plug_in_info_pv_amp = 381;
+  optional float plug_in_info_12v_vol = 382;
+  optional float plug_in_info_12v_amp = 383;
+  optional float llc_bat_vol = 384;
+  optional float llc_bat_cur = 385;
+  optional float llc_bus_vol = 386;
+  optional float plug_in_info_dcp_vol = 443;
+  optional float plug_in_info_dcp_amp = 448;
+}
+
+message Delta3SetCommand {
+  optional int32 cfg_power_off = 3;
+  optional uint32 cfg_utc_time = 6;
+  optional int32 cfg_utc_timezone = 7;
+  optional int32 en_beep = 9;
+  optional int32 ac_standby_time = 10;
+  optional int32 dc_standby_time = 11;
+  optional int32 screen_off_time = 12;
+  optional int32 dev_standby_time = 13;
+  optional int32 lcd_light = 14;
+  optional int32 cfg_dc12v_out_open = 18;
+  optional int32 cfg_usb_open = 19;
+  optional int32 xboost_en = 25;
+  optional int32 ban_bypass_en = 26;
+  optional int32 cms_max_chg_soc = 33;
+  optional int32 cms_min_dsg_soc = 34;
+  optional Delta3CfgEnergyBackup cfg_energy_backup = 43;
+  optional int32 plug_in_info_ac_in_chg_pow_max = 54;
+  optional uint32 cfg_ac_out_open = 76;
+  optional uint32 plug_in_info_pv_dc_amp_max = 87;
+  optional uint32 cfg_led_mode = 89;
+  optional uint32 pv_chg_type = 90;
+  optional uint32 backup_reverse_soc = 102;
+  optional Delta3CfgEnergyStrategyOperateMode energy_strategy_operate_mode = 106;
+  optional uint32 plug_in_info_ac_in_chg_mode = 125;
+  optional int32 output_power_off_memory = 141;
+}
+
+message Delta3SetReply {
+  optional int32 action_id = 1;
+  optional bool config_ok = 2;
+  optional uint32 cfg_utc_time = 6;
+  optional int32 cfg_utc_timezone = 7;
+  optional int32 en_beep = 9;
+  optional int32 ac_standby_time = 10;
+  optional int32 dc_standby_time = 11;
+  optional int32 screen_off_time = 12;
+  optional int32 dev_standby_time = 13;
+  optional int32 lcd_light = 14;
+  optional int32 cfg_dc12v_out_open = 18;
+  optional int32 cfg_usb_open = 19;
+  optional int32 xboost_en = 25;
+  optional int32 ban_bypass_en = 26;
+  optional int32 cms_max_chg_soc = 33;
+  optional int32 cms_min_dsg_soc = 34;
+  optional Delta3CfgEnergyBackup cfg_energy_backup = 43;
+  optional int32 plug_in_info_ac_in_chg_pow_max = 54;
+  optional uint32 dc_out_open = 74;
+  optional uint32 cfg_ac_out_open = 76;
+  optional uint32 plug_in_info_pv_dc_amp_max = 87;
+  optional uint32 cfg_led_mode = 89;
+  optional uint32 pv_chg_type = 90;
+  optional uint32 backup_reverse_soc = 102;
+  optional Delta3CfgEnergyStrategyOperateMode energy_strategy_operate_mode = 106;
+  optional uint32 plug_in_info_ac_in_chg_mode = 125;
+  optional int32 output_power_off_memory = 141;
+}
+
+message Delta3CfgEnergyBackup {
+  optional uint32 energy_backup_en = 1;
+  optional uint32 energy_backup_start_soc = 2;
+}
+
+message Delta3CfgEnergyStrategyOperateMode {
+  optional int32 operate_self_powered_open = 1;
+  optional int32 operate_scheduled_open = 2;
+  optional int32 operate_tou_mode_open = 3;
+}
+
+message Delta3CMSHeartBeatReport {
+  optional Delta3CMSStatus1 msg32_2_1 = 1;
+  optional Delta3CMSStatus2 msg32_2_2 = 2;
+}
+
+message Delta3CMSStatus1 {
+  optional sint32 cms_status_misc1 = 1;
+  optional sint32 cms_status_misc2 = 2;
+  optional sint32 cms_status_misc3 = 3;
+  optional sint32 cms_batt_vol_mv = 4;
+  optional uint32 cms_chg_req_amp = 5;
+  optional sint32 cms_status_misc4 = 6;
+  optional uint32 cms_max_chg_soc = 7;
+  optional uint32 cms_min_dsg_soc = 8;
+  optional uint32 ac_out_freq = 9;
+  optional sint32 cms_status_misc5 = 10;
+  optional sint32 cms_status_misc6 = 11;
+  optional uint32 cms_chg_rem_time = 12;
+  optional uint32 cms_dsg_rem_time = 13;
+  optional sint32 cms_chg_dsg_state = 14;
+  optional float cms_batt_soc = 15;
+  repeated sint32 bms_is_conn_state = 16;
+  optional sint32 cms_status_misc7 = 17;
+  optional sint32 cms_status_misc8 = 18;
+  optional sint32 cms_status_misc9 = 19;
+  optional sint32 cms_status_misc10 = 20;
+  optional sint32 cms_status_misc11 = 21;
+  optional sint32 cms_status_misc12 = 22;
+  optional uint32 cms_oil_off_soc = 23;
+}
+
+message Delta3CMSStatus2 {
+  optional sint32 cms_status_misc13 = 1;
+  optional sint32 cms_status_misc14 = 2;
+  optional sint32 cms_status_misc15 = 3;
+  optional sint32 cms_status_misc16 = 4;
+  optional sint32 cms_status_misc17 = 5;
+}
+
+message Delta3BMSHeartBeatReport {
+  optional uint32 num = 1;
+  optional uint32 type = 2;
+  optional uint32 cell_id = 3;
+  optional uint32 err_code = 4;
+  optional uint32 sys_ver = 5;
+  optional uint32 soc = 6;
+  optional uint32 vol = 7;
+  optional int32 amp = 8;
+  optional int32 temp = 9;
+  optional uint32 open_bms_flag = 10;
+  optional uint32 design_cap = 11;
+  optional uint32 remain_cap = 12;
+  optional uint32 full_cap = 13;
+  optional uint32 cycles = 14;
+  optional uint32 soh = 15;
+  optional uint32 max_cell_vol = 16;
+  optional uint32 min_cell_vol = 17;
+  optional int32 max_cell_temp = 18;
+  optional int32 min_cell_temp = 19;
+  optional int32 max_mos_temp = 20;
+  optional int32 min_mos_temp = 21;
+  optional uint32 bms_fault = 22;
+  optional uint32 bq_sys_stat_reg = 23;
+  optional uint32 tag_chg_amp = 24;
+  optional float f32_show_soc = 25;
+  optional uint32 input_watts = 26;
+  optional uint32 output_watts = 27;
+  optional uint32 remain_time = 28;
+  optional uint32 mos_state = 29;
+  optional uint32 balance_state = 30;
+  optional uint32 max_vol_diff = 31;
+  optional uint32 cell_series_num = 32;
+  repeated uint32 cell_vol = 33;
+  optional uint32 cell_ntc_num = 34;
+  repeated int32 cell_temp = 35;
+  optional string hw_ver = 36;
+  optional uint32 bms_heartbeat_ver = 37;
+  optional uint32 ecloud_ocv = 38;
+  optional string bms_sn = 39;
+  optional uint32 product_type = 40;
+  optional uint32 product_detail = 41;
+  optional float act_soc = 42;
+  optional float diff_soc = 43;
+  optional float target_soc = 44;
+  optional uint32 sys_loader_ver = 45;
+  optional uint32 sys_state = 46;
+  optional uint32 chg_dsg_state = 47;
+  optional uint32 all_err_code = 48;
+  optional uint32 all_bms_fault = 49;
+  optional uint32 accu_chg_cap = 50;
+  optional uint32 accu_dsg_cap = 51;
+  optional float real_soh = 52;
+  optional float calendar_soh = 53;
+  optional float cycle_soh = 54;
+  optional uint32 mos_ntc_num = 55;
+  repeated int32 mos_temp = 56;
+  optional uint32 env_ntc_num = 57;
+  repeated int32 env_temp = 58;
+  optional uint32 heatfilm_ntc_num = 59;
+  repeated int32 heatfilm_temp = 60;
+  optional uint32 cur_sensor_ntc_num = 61;
+  repeated int32 cur_sensor_temp = 62;
+  optional int32 max_env_temp = 63;
+  optional int32 min_env_temp = 64;
+  optional int32 max_heatfilm_temp = 65;
+  optional int32 min_heatfilm_temp = 66;
+  optional int32 max_cur_sensor_temp = 67;
+  optional int32 min_cur_sensor_temp = 68;
+  optional uint32 balance_cmd = 69;
+  repeated uint32 remain_balance_time = 70;
+  optional uint32 afe_sys_status = 71;
+  optional uint32 mcu_pin_in_status = 72;
+  optional uint32 mcu_pin_out_status = 73;
+  optional uint32 bms_alarm_state1 = 74;
+  optional uint32 bms_alarm_state2 = 75;
+  optional uint32 bms_protect_state1 = 76;
+  optional uint32 bms_protect_state2 = 77;
+  optional uint32 bms_fault_state = 78;
+  optional uint32 accu_chg_energy = 79;
+  optional uint32 accu_dsg_energy = 80;
+  optional string pack_sn = 81;
+  optional uint32 water_in_flag = 82;
+}
+
+message Delta3HeaderMessage {
+  repeated Delta3Header header = 1;
+}

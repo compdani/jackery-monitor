@@ -1,3 +1,4 @@
+# Legacy Python development/rollback profiles. For Go, use docker-compose.build.yml.
 # Three deployment profiles — pick one with `docker compose --profile <name> up`.
 #
 #   mac        -> dashboard in container, bridge on macOS host (host BLE/Keychain)
@@ -13,7 +14,9 @@ services:
   # ===== macOS profile: bridge runs on host =====
   jackery:
     profiles: ["mac"]
-    build: .
+    build:
+      context: .
+      target: legacy
     image: jackery-monitor:latest
     container_name: jackery-monitor
     restart: unless-stopped
@@ -38,7 +41,9 @@ services:
   # ===== mock telemetry: no hardware required =====
   jackery-mock:
     profiles: ["mock"]
-    build: .
+    build:
+      context: .
+      target: legacy
     image: jackery-monitor:latest
     container_name: jackery-monitor
     restart: unless-stopped
@@ -63,7 +68,9 @@ services:
   # environment variables in your .env file (NEVER committed to git).
   jackery-bridge:
     profiles: ["synology"]
-    build: .
+    build:
+      context: .
+      target: legacy
     image: jackery-monitor:latest
     container_name: jackery-bridge
     restart: unless-stopped
@@ -91,7 +98,9 @@ services:
 
   jackery-syn:
     profiles: ["synology"]
-    build: .
+    build:
+      context: .
+      target: legacy
     image: jackery-monitor:latest
     container_name: jackery-monitor
     restart: unless-stopped

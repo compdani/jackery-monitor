@@ -1,26 +1,15 @@
-# Default deployment — Synology / generic Linux. Pulls the pre-built image
-# from GitHub Container Registry (no local build step).
-#
-# Synology Container Manager workflow:
-#   1. Registry tab -> search "ghcr.io/yaniverel-code/jackery-monitor" -> Download (latest)
-#   2. Project -> Create -> path /docker/jackery-monitor (this folder).
-#      Source: "Use existing docker-compose.yml". Container Manager will pull
-#      the image and start both services. Build step is skipped.
-#
-# To update later: Container Manager -> Image -> right-click image ->
-# "Get latest version", then Project -> jackery-monitor -> "Action -> Restart".
-#
-# Variants:
-#   docker-compose.build.yml -> build from local Dockerfile (no registry needed).
-#                               Use this if GHCR is unreachable or you want to
-#                               run uncommitted code on the NAS.
-#   docker-compose.dev.yml   -> macOS host-bridge / mock profiles for dev.
+# Transitional Go/PocketBase HTTP server + reference Python cloud bridge.
+# Build: docker compose -f docker-compose.yml up -d --build
+# API coverage and rollback instructions: MIGRATION.md
 
 services:
   # Cloud bridge — holds Jackery credentials, polls the Jackery cloud,
   # exposes JSON-RPC on TCP 8766 (internal docker network only, NOT to the LAN).
   jackery-bridge:
-    image: jackerymonitor:latest
+    build:
+      context: .
+      target: legacy
+    image: jackery-monitor-bridge:local
     pull_policy: never
     container_name: jackery-bridge
     restart: unless-stopped
@@ -52,15 +41,19 @@ services:
       retries: 5
       start_period: 5s
 
-  # FastAPI dashboard — host networking so the backup auto-discovery
+  # Go/PocketBase dashboard — host networking so the backup auto-discovery
   # feature can sweep the LAN for SMB hosts (the docker bridge would
   # otherwise hide the LAN behind NAT). Reachable on the LAN at
   # http://<nas-ip>:${JACKERY_HTTP_PORT}.
   jackery-monitor:
-    image: jackerymonitor:latest
+    build:
+      context: .
+      target: go-runtime
+    image: jackery-monitor-go:local
     pull_policy: never
     container_name: jackery-monitor
     restart: unless-stopped
+    command: ["serve", "--http=0.0.0.0:${JACKERY_HTTP_PORT:-8123}", "--dir=/data/pb_data"]
     depends_on:
       jackery-bridge:
         condition: service_healthy

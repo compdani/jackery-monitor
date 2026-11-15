@@ -1,0 +1,711 @@
+[
+  {
+    "function": "map_energy_flow_fields",
+    "args": [
+      {
+        "pv1Power": 100,
+        "pv2Power": 50,
+        "load_power": 0.6,
+        "aPhaseMainsPower": -200,
+        "bPhaseMainsPower": 0,
+        "cPhaseMainsPower": 0,
+        "batteryPercentage": 77,
+        "positiveTerminalBatteryCurrent": -12.5,
+        "bmsBatteryVoltage": 51.2
+      }
+    ],
+    "kwargs": {},
+    "expected": {
+      "pvInputPower": 150.0,
+      "batteryVoltage": 51.2,
+      "batterySOC": 77.0,
+      "acOutputActivePower": 600.0,
+      "gridPower": 200.0,
+      "feedInPower": 0.0,
+      "batteryChargingCurrent": 12.5,
+      "batteryDischargeCurrent": 0.0
+    }
+  },
+  {
+    "function": "map_energy_flow_fields",
+    "args": [
+      {
+        "aPhaseMainsPower": 495
+      }
+    ],
+    "kwargs": {},
+    "expected": {
+      "gridPower": 0.0,
+      "feedInPower": 495.0
+    }
+  },
+  {
+    "function": "to_telemetry",
+    "args": [
+      {
+        "pvInputPower": 1200,
+        "loadPower": 400,
+        "gridPower": 100,
+        "feedInPower": 0,
+        "batterySOC": 88.4,
+        "batteryChargingCurrent": 3.2,
+        "batteryDischargeCurrent": 0,
+        "batteryVoltage": 52.1
+      }
+    ],
+    "kwargs": {},
+    "expected": {
+      "battery_percent": 88,
+      "solar_input_w": 1200,
+      "solar_inputs": [
+        {
+          "id": "siseli:pv",
+          "label": "Siseli solar",
+          "source": "siseli",
+          "watts": 1200
+        }
+      ],
+      "ac_input_w": 100,
+      "feed_in_w": 0,
+      "output_power_w": 400,
+      "input_power_w": 1300,
+      "car_input_w": 0,
+      "battery_status": 1,
+      "battery_voltage_v": 52.1,
+      "battery_charge_a": 3.2,
+      "battery_discharge_a": 0.0,
+      "pv_voltage_v": null,
+      "pv_current_a": null,
+      "battery_power_w": null,
+      "battery_temp_c": null,
+      "ac_on": false,
+      "dc_on": false,
+      "usb_on": false,
+      "car_on": false,
+      "source": "siseli"
+    }
+  },
+  {
+    "function": "to_telemetry",
+    "args": [
+      {
+        "pvInputPower": 1000,
+        "pv1Power": 400,
+        "pv2Power": 600,
+        "pv3Power": 0,
+        "pv4Power": null,
+        "loadPower": 200,
+        "gridPower": 0,
+        "batterySOC": 55
+      }
+    ],
+    "kwargs": {},
+    "expected": {
+      "battery_percent": 55,
+      "solar_input_w": 1000,
+      "solar_inputs": [
+        {
+          "id": "siseli:pv1",
+          "label": "Siseli PV1",
+          "source": "siseli",
+          "watts": 400
+        },
+        {
+          "id": "siseli:pv2",
+          "label": "Siseli PV2",
+          "source": "siseli",
+          "watts": 600
+        }
+      ],
+      "ac_input_w": 0,
+      "feed_in_w": 0,
+      "output_power_w": 200,
+      "input_power_w": 1000,
+      "car_input_w": 0,
+      "battery_status": 0,
+      "battery_voltage_v": null,
+      "battery_charge_a": 0.0,
+      "battery_discharge_a": 0.0,
+      "pv_voltage_v": null,
+      "pv_current_a": null,
+      "battery_power_w": null,
+      "battery_temp_c": null,
+      "ac_on": false,
+      "dc_on": false,
+      "usb_on": false,
+      "car_on": false,
+      "source": "siseli"
+    }
+  },
+  {
+    "function": "apply_derived_values",
+    "args": [
+      {
+        "batteryVoltage": 50,
+        "batteryDischargeCurrent": 2,
+        "batteryChargingCurrent": 0,
+        "acOutputActivePower": 800,
+        "pvInputPower": 200,
+        "feedInPower": 0
+      }
+    ],
+    "kwargs": {},
+    "expected": {
+      "batteryVoltage": 50,
+      "batteryDischargeCurrent": 2,
+      "batteryChargingCurrent": 0,
+      "acOutputActivePower": 800,
+      "pvInputPower": 200,
+      "feedInPower": 0,
+      "batteryPower": 100.0,
+      "loadPower": 800.0
+    }
+  },
+  {
+    "function": "normalize_device",
+    "args": [
+      {
+        "id": "42",
+        "name": "House inverter",
+        "model": "Sumry"
+      }
+    ],
+    "kwargs": {},
+    "expected": {
+      "device_id": "siseli:42",
+      "device_sn": "siseli:42",
+      "portal_device_id": "42",
+      "name": "House inverter",
+      "model_name": "Sumry",
+      "model_code": null,
+      "source": "siseli"
+    }
+  },
+  {
+    "function": "normalize_device",
+    "args": [
+      {}
+    ],
+    "kwargs": {},
+    "expected": null
+  },
+  {
+    "function": "normalize_controls",
+    "args": [
+      {
+        "outputSourcePrioritySetting": {
+          "value": 1
+        },
+        "acInputRangeSetting": {
+          "value": 0
+        }
+      }
+    ],
+    "kwargs": {},
+    "expected": [
+      {
+        "canonical": "outputSourcePrioritySetting",
+        "kind": "select",
+        "name": "Output source priority",
+        "options": [
+          {
+            "value": 0,
+            "label": "Utility First (USO)"
+          },
+          {
+            "value": 1,
+            "label": "Solar First (SUB)"
+          },
+          {
+            "value": 2,
+            "label": "Solar+Battery First (SBU)"
+          }
+        ],
+        "resolved_key": "outputSourcePrioritySetting",
+        "write_canonical": "outputSourcePrioritySetting",
+        "dynamic": false,
+        "value": 1
+      },
+      {
+        "canonical": "acInputRangeSetting",
+        "kind": "switch",
+        "name": "Grid charging (AC input range)",
+        "on_value": 0,
+        "off_value": 1,
+        "resolved_key": "acInputRangeSetting",
+        "write_canonical": "acInputRangeSetting",
+        "dynamic": false,
+        "value": true
+      },
+      {
+        "canonical": "backupMode",
+        "kind": "switch",
+        "name": "Backup mode (SBU priority)",
+        "on_value": 2,
+        "off_value": 1,
+        "resolved_key": "outputSourcePrioritySetting",
+        "write_canonical": "outputSourcePrioritySetting",
+        "dynamic": false,
+        "value": false
+      }
+    ]
+  },
+  {
+    "function": "normalize_controls",
+    "args": [
+      {
+        "LoadSwitchSetting": {
+          "value": "0",
+          "valueDisplay": "Off",
+          "name": "Load Switch Setting"
+        }
+      }
+    ],
+    "kwargs": {},
+    "expected": [
+      {
+        "canonical": "LoadSwitchSetting",
+        "kind": "switch",
+        "name": "Load",
+        "on_value": "1",
+        "off_value": "0",
+        "resolved_key": "LoadSwitchSetting",
+        "write_canonical": "LoadSwitchSetting",
+        "dynamic": false,
+        "value": false
+      }
+    ]
+  },
+  {
+    "function": "normalize_controls",
+    "args": [
+      {
+        "ChargeLimitVoltage": {
+          "value": 15,
+          "unit": "V",
+          "name": "Charge Limit Voltage",
+          "valueTypeDict": "Numeric"
+        },
+        "BatteryType": {
+          "value": "4",
+          "name": "Battery Type",
+          "valueDisplay": "Lithium Battery",
+          "valueTypeDict": "Enumeration"
+        },
+        "outputSourcePrioritySetting": {
+          "value": 1
+        }
+      }
+    ],
+    "kwargs": {},
+    "expected": [
+      {
+        "canonical": "outputSourcePrioritySetting",
+        "kind": "select",
+        "name": "Output source priority",
+        "options": [
+          {
+            "value": 0,
+            "label": "Utility First (USO)"
+          },
+          {
+            "value": 1,
+            "label": "Solar First (SUB)"
+          },
+          {
+            "value": 2,
+            "label": "Solar+Battery First (SBU)"
+          }
+        ],
+        "resolved_key": "outputSourcePrioritySetting",
+        "write_canonical": "outputSourcePrioritySetting",
+        "dynamic": false,
+        "value": 1
+      },
+      {
+        "canonical": "backupMode",
+        "kind": "switch",
+        "name": "Backup mode (SBU priority)",
+        "on_value": 2,
+        "off_value": 1,
+        "resolved_key": "outputSourcePrioritySetting",
+        "write_canonical": "outputSourcePrioritySetting",
+        "dynamic": false,
+        "value": false
+      },
+      {
+        "canonical": "BatteryType",
+        "kind": "number",
+        "name": "Battery Type",
+        "unit": "",
+        "hint": "Lithium Battery",
+        "value": 4,
+        "resolved_key": "BatteryType",
+        "write_canonical": "BatteryType",
+        "dynamic": true
+      },
+      {
+        "canonical": "ChargeLimitVoltage",
+        "kind": "number",
+        "name": "Charge Limit Voltage",
+        "unit": "V",
+        "hint": "",
+        "value": 15,
+        "resolved_key": "ChargeLimitVoltage",
+        "write_canonical": "ChargeLimitVoltage",
+        "dynamic": true
+      }
+    ]
+  },
+  {
+    "function": "default_live_control_keys",
+    "args": [
+      [
+        {
+          "canonical": "outputSourcePrioritySetting",
+          "kind": "select",
+          "name": "Output source priority",
+          "options": [
+            {
+              "value": 0,
+              "label": "Utility First (USO)"
+            },
+            {
+              "value": 1,
+              "label": "Solar First (SUB)"
+            },
+            {
+              "value": 2,
+              "label": "Solar+Battery First (SBU)"
+            }
+          ],
+          "resolved_key": "outputSourcePrioritySetting",
+          "write_canonical": "outputSourcePrioritySetting",
+          "dynamic": false,
+          "value": 1
+        },
+        {
+          "canonical": "backupMode",
+          "kind": "switch",
+          "name": "Backup mode (SBU priority)",
+          "on_value": 2,
+          "off_value": 1,
+          "resolved_key": "outputSourcePrioritySetting",
+          "write_canonical": "outputSourcePrioritySetting",
+          "dynamic": false,
+          "value": false
+        },
+        {
+          "canonical": "BatteryType",
+          "kind": "number",
+          "name": "Battery Type",
+          "unit": "",
+          "hint": "Lithium Battery",
+          "value": 4,
+          "resolved_key": "BatteryType",
+          "write_canonical": "BatteryType",
+          "dynamic": true
+        },
+        {
+          "canonical": "ChargeLimitVoltage",
+          "kind": "number",
+          "name": "Charge Limit Voltage",
+          "unit": "V",
+          "hint": "",
+          "value": 15,
+          "resolved_key": "ChargeLimitVoltage",
+          "write_canonical": "ChargeLimitVoltage",
+          "dynamic": true
+        }
+      ]
+    ],
+    "kwargs": {},
+    "expected": [
+      "outputSourcePrioritySetting",
+      "backupMode"
+    ]
+  },
+  {
+    "function": "decoded_to_canonical",
+    "args": [
+      {
+        "generation_power_w": 800,
+        "pv_w": 500,
+        "pv2_power_w": 300,
+        "load_w": 267,
+        "mains_power_w": 40,
+        "mains_current_flow_direction": "Inverter To Mains",
+        "bat_v": 53.3,
+        "bat_cap": 88,
+        "bat_charge_current": 5.0,
+        "dischg_current": 0.0
+      }
+    ],
+    "kwargs": {},
+    "expected": {
+      "pvInputPower": 800.0,
+      "loadPower": 267.0,
+      "gridPower": 0.0,
+      "feedInPower": 40.0,
+      "batteryVoltage": 53.3,
+      "batteryChargingCurrent": 5.0,
+      "batteryDischargeCurrent": 0.0,
+      "batterySOC": 88.0,
+      "pv1Power": 500.0,
+      "pv2Power": 300.0
+    }
+  },
+  {
+    "function": "to_telemetry",
+    "args": [
+      {
+        "pvInputPower": 800.0,
+        "loadPower": 267.0,
+        "gridPower": 0.0,
+        "feedInPower": 40.0,
+        "batteryVoltage": 53.3,
+        "batteryChargingCurrent": 5.0,
+        "batteryDischargeCurrent": 0.0,
+        "batterySOC": 88.0,
+        "pv1Power": 500.0,
+        "pv2Power": 300.0
+      }
+    ],
+    "kwargs": {},
+    "expected": {
+      "battery_percent": 88,
+      "solar_input_w": 800,
+      "solar_inputs": [
+        {
+          "id": "siseli:pv1",
+          "label": "Siseli PV1",
+          "source": "siseli",
+          "watts": 500
+        },
+        {
+          "id": "siseli:pv2",
+          "label": "Siseli PV2",
+          "source": "siseli",
+          "watts": 300
+        }
+      ],
+      "ac_input_w": 0,
+      "feed_in_w": 40,
+      "output_power_w": 267,
+      "input_power_w": 800,
+      "car_input_w": 0,
+      "battery_status": 1,
+      "battery_voltage_v": 53.3,
+      "battery_charge_a": 5.0,
+      "battery_discharge_a": 0.0,
+      "pv_voltage_v": null,
+      "pv_current_a": null,
+      "battery_power_w": null,
+      "battery_temp_c": null,
+      "ac_on": false,
+      "dc_on": false,
+      "usb_on": false,
+      "car_on": false,
+      "source": "siseli"
+    }
+  },
+  {
+    "function": "probe_outcome",
+    "args": [],
+    "kwargs": {
+      "error": "permission denied",
+      "running": false,
+      "packets": false,
+      "decoded": false,
+      "readings": null
+    },
+    "expected": {
+      "ok": false,
+      "outcome": "capture-failed",
+      "detail": "permission denied",
+      "readings": null
+    }
+  },
+  {
+    "function": "probe_outcome",
+    "args": [],
+    "kwargs": {
+      "error": null,
+      "running": true,
+      "packets": true,
+      "decoded": false,
+      "readings": null
+    },
+    "expected": {
+      "ok": true,
+      "outcome": "packets",
+      "detail": "Packets from the inverter are on the path, but no MQTT publish arrived yet. The dongle often waits a few minutes.",
+      "readings": null
+    }
+  },
+  {
+    "function": "probe_outcome",
+    "args": [],
+    "kwargs": {
+      "error": null,
+      "running": true,
+      "packets": true,
+      "decoded": true,
+      "readings": {
+        "solar_w": 10
+      }
+    },
+    "expected": {
+      "ok": true,
+      "outcome": "decoded",
+      "detail": "Decoded an MQTT publish from the inverter.",
+      "readings": {
+        "solar_w": 10
+      }
+    }
+  },
+  {
+    "function": "describe_mqtt_streams",
+    "args": [
+      [
+        {
+          "ip": "203.0.113.10",
+          "port": 1883,
+          "encrypted": false,
+          "readings": {
+            "solar_w": 12
+          },
+          "readings_ts": 20.0
+        },
+        {
+          "ip": "203.0.113.11",
+          "port": 1883,
+          "encrypted": false
+        },
+        {
+          "ip": "203.0.113.12",
+          "port": 8883,
+          "encrypted": true
+        }
+      ]
+    ],
+    "kwargs": {
+      "since": 10.0
+    },
+    "expected": "Decoded an MQTT publish from 203.0.113.10:1883. Saw MQTT to 203.0.113.11:1883, but no publish decoded yet. The dongle often waits a few minutes. Saw encrypted MQTT to 203.0.113.12:8883. That stream cannot be decoded."
+  },
+  {
+    "function": "describe_mqtt_streams",
+    "args": [
+      [
+        {
+          "ip": "203.0.113.10",
+          "port": 1883,
+          "encrypted": false,
+          "readings": {
+            "solar_w": 12
+          },
+          "readings_ts": 1.0
+        }
+      ]
+    ],
+    "kwargs": {
+      "since": 10.0
+    },
+    "expected": "Saw MQTT to 203.0.113.10:1883, but no publish decoded yet. The dongle often waits a few minutes."
+  },
+  {
+    "function": "should_skip_portal_latest",
+    "args": [],
+    "kwargs": {
+      "running": true,
+      "entry": {
+        "origin": "local",
+        "ts": 1000.0
+      },
+      "now": 1100.0
+    },
+    "expected": true
+  },
+  {
+    "function": "should_skip_portal_latest",
+    "args": [],
+    "kwargs": {
+      "running": false,
+      "entry": {
+        "origin": "local",
+        "ts": 1000.0
+      },
+      "now": 1100.0
+    },
+    "expected": false
+  },
+  {
+    "function": "should_skip_portal_latest",
+    "args": [],
+    "kwargs": {
+      "running": true,
+      "entry": {
+        "origin": "http",
+        "ts": 1000.0
+      },
+      "now": 1100.0
+    },
+    "expected": false
+  },
+  {
+    "function": "should_skip_portal_latest",
+    "args": [],
+    "kwargs": {
+      "running": true,
+      "entry": {
+        "origin": "local",
+        "ts": 1000.0
+      },
+      "now": 2800.0
+    },
+    "expected": false
+  },
+  {
+    "function": "should_skip_portal_latest",
+    "args": [],
+    "kwargs": {
+      "running": true,
+      "entry": {
+        "origin": "local",
+        "ts": 1000.0
+      },
+      "now": 1299.0,
+      "stale_s": 300
+    },
+    "expected": true
+  },
+  {
+    "function": "should_skip_portal_latest",
+    "args": [],
+    "kwargs": {
+      "running": true,
+      "entry": {
+        "origin": "local",
+        "ts": 1000.0
+      },
+      "now": 1300.0,
+      "stale_s": 300
+    },
+    "expected": false
+  },
+  {
+    "function": "should_skip_portal_latest",
+    "args": [],
+    "kwargs": {
+      "running": true,
+      "entry": {
+        "origin": "local",
+        "ts": 1000.0
+      },
+      "now": 1400.0,
+      "stale_s": 1800
+    },
+    "expected": true
+  }
+]

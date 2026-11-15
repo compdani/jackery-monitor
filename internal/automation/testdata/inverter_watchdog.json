@@ -1,0 +1,2888 @@
+[
+  {
+    "input": {
+      "state": {
+        "consecutive_attempts": 0,
+        "last_attempt_ts": 0.0,
+        "last_user_off_ts": 0.0,
+        "error_message": null,
+        "last_high_output_ts": 0.0,
+        "first_low_ts": 0.0,
+        "low_samples": 0,
+        "last_sample_ts": 0.0,
+        "hw_trip_active": false,
+        "episode_cycles": 0,
+        "pending_count": 0
+      },
+      "ac_on": true,
+      "output_w": null,
+      "sample_ts": null,
+      "collapse_floor_w": 0.0,
+      "now_ts": 1000.0,
+      "retry_interval_s": 10.0,
+      "user_grace_s": 60.0
+    },
+    "action": "idle",
+    "expected": {
+      "consecutive_attempts": 0,
+      "last_attempt_ts": 0.0,
+      "last_user_off_ts": 0.0,
+      "error_message": null,
+      "last_high_output_ts": 0.0,
+      "first_low_ts": 0.0,
+      "low_samples": 0,
+      "last_sample_ts": 0.0,
+      "hw_trip_active": false,
+      "episode_cycles": 0
+    }
+  },
+  {
+    "input": {
+      "state": {
+        "consecutive_attempts": 3,
+        "last_attempt_ts": 950.0,
+        "last_user_off_ts": 0.0,
+        "error_message": "stale message that should clear",
+        "last_high_output_ts": 0.0,
+        "first_low_ts": 0.0,
+        "low_samples": 0,
+        "last_sample_ts": 0.0,
+        "hw_trip_active": false,
+        "episode_cycles": 0,
+        "pending_count": 0
+      },
+      "ac_on": true,
+      "output_w": null,
+      "sample_ts": null,
+      "collapse_floor_w": 0.0,
+      "now_ts": 1000.0,
+      "retry_interval_s": 10.0,
+      "user_grace_s": 60.0
+    },
+    "action": "idle",
+    "expected": {
+      "consecutive_attempts": 0,
+      "last_attempt_ts": 950.0,
+      "last_user_off_ts": 0.0,
+      "error_message": null,
+      "last_high_output_ts": 0.0,
+      "first_low_ts": 0.0,
+      "low_samples": 0,
+      "last_sample_ts": 0.0,
+      "hw_trip_active": false,
+      "episode_cycles": 0
+    }
+  },
+  {
+    "input": {
+      "state": {
+        "consecutive_attempts": 0,
+        "last_attempt_ts": 0.0,
+        "last_user_off_ts": 0.0,
+        "error_message": null,
+        "last_high_output_ts": 0.0,
+        "first_low_ts": 0.0,
+        "low_samples": 0,
+        "last_sample_ts": 0.0,
+        "hw_trip_active": false,
+        "episode_cycles": 0,
+        "pending_count": 0
+      },
+      "ac_on": false,
+      "output_w": null,
+      "sample_ts": null,
+      "collapse_floor_w": 0.0,
+      "now_ts": 1000.0,
+      "retry_interval_s": 10.0,
+      "user_grace_s": 60.0
+    },
+    "action": "idle",
+    "expected": {
+      "consecutive_attempts": 0,
+      "last_attempt_ts": 0.0,
+      "last_user_off_ts": 0.0,
+      "error_message": null,
+      "last_high_output_ts": 0.0,
+      "first_low_ts": 0.0,
+      "low_samples": 0,
+      "last_sample_ts": 0.0,
+      "hw_trip_active": false,
+      "episode_cycles": 0
+    }
+  },
+  {
+    "input": {
+      "state": {
+        "consecutive_attempts": 0,
+        "last_attempt_ts": 0.0,
+        "last_user_off_ts": 0.0,
+        "error_message": null,
+        "last_high_output_ts": 0.0,
+        "first_low_ts": 0.0,
+        "low_samples": 0,
+        "last_sample_ts": 0.0,
+        "hw_trip_active": false,
+        "episode_cycles": 0,
+        "pending_count": 0
+      },
+      "ac_on": false,
+      "output_w": null,
+      "sample_ts": null,
+      "collapse_floor_w": 0.0,
+      "now_ts": 1000.0,
+      "retry_interval_s": 10.0,
+      "user_grace_s": 60.0
+    },
+    "action": "idle",
+    "expected": {
+      "consecutive_attempts": 0,
+      "last_attempt_ts": 0.0,
+      "last_user_off_ts": 0.0,
+      "error_message": null,
+      "last_high_output_ts": 0.0,
+      "first_low_ts": 0.0,
+      "low_samples": 0,
+      "last_sample_ts": 0.0,
+      "hw_trip_active": false,
+      "episode_cycles": 0
+    }
+  },
+  {
+    "input": {
+      "state": {
+        "consecutive_attempts": 0,
+        "last_attempt_ts": 0.0,
+        "last_user_off_ts": 0.0,
+        "error_message": null,
+        "last_high_output_ts": 0.0,
+        "first_low_ts": 0.0,
+        "low_samples": 0,
+        "last_sample_ts": 0.0,
+        "hw_trip_active": false,
+        "episode_cycles": 0,
+        "pending_count": 0
+      },
+      "ac_on": false,
+      "output_w": null,
+      "sample_ts": null,
+      "collapse_floor_w": 0.0,
+      "now_ts": 1005.0,
+      "retry_interval_s": 10.0,
+      "user_grace_s": 60.0
+    },
+    "action": "idle",
+    "expected": {
+      "consecutive_attempts": 0,
+      "last_attempt_ts": 0.0,
+      "last_user_off_ts": 0.0,
+      "error_message": null,
+      "last_high_output_ts": 0.0,
+      "first_low_ts": 0.0,
+      "low_samples": 0,
+      "last_sample_ts": 0.0,
+      "hw_trip_active": false,
+      "episode_cycles": 0
+    }
+  },
+  {
+    "input": {
+      "state": {
+        "consecutive_attempts": 0,
+        "last_attempt_ts": 0.0,
+        "last_user_off_ts": 0.0,
+        "error_message": null,
+        "last_high_output_ts": 0.0,
+        "first_low_ts": 0.0,
+        "low_samples": 0,
+        "last_sample_ts": 0.0,
+        "hw_trip_active": false,
+        "episode_cycles": 0,
+        "pending_count": 0
+      },
+      "ac_on": false,
+      "output_w": null,
+      "sample_ts": null,
+      "collapse_floor_w": 0.0,
+      "now_ts": 1010.0,
+      "retry_interval_s": 10.0,
+      "user_grace_s": 60.0
+    },
+    "action": "idle",
+    "expected": {
+      "consecutive_attempts": 0,
+      "last_attempt_ts": 0.0,
+      "last_user_off_ts": 0.0,
+      "error_message": null,
+      "last_high_output_ts": 0.0,
+      "first_low_ts": 0.0,
+      "low_samples": 0,
+      "last_sample_ts": 0.0,
+      "hw_trip_active": false,
+      "episode_cycles": 0
+    }
+  },
+  {
+    "input": {
+      "state": {
+        "consecutive_attempts": 0,
+        "last_attempt_ts": 0.0,
+        "last_user_off_ts": 0.0,
+        "error_message": null,
+        "last_high_output_ts": 0.0,
+        "first_low_ts": 0.0,
+        "low_samples": 0,
+        "last_sample_ts": 0.0,
+        "hw_trip_active": false,
+        "episode_cycles": 0,
+        "pending_count": 0
+      },
+      "ac_on": false,
+      "output_w": null,
+      "sample_ts": null,
+      "collapse_floor_w": 0.0,
+      "now_ts": 2000.0,
+      "retry_interval_s": 10.0,
+      "user_grace_s": 60.0
+    },
+    "action": "idle",
+    "expected": {
+      "consecutive_attempts": 0,
+      "last_attempt_ts": 0.0,
+      "last_user_off_ts": 0.0,
+      "error_message": null,
+      "last_high_output_ts": 0.0,
+      "first_low_ts": 0.0,
+      "low_samples": 0,
+      "last_sample_ts": 0.0,
+      "hw_trip_active": false,
+      "episode_cycles": 0
+    }
+  },
+  {
+    "input": {
+      "state": {
+        "consecutive_attempts": 2,
+        "last_attempt_ts": 0.0,
+        "last_user_off_ts": 0.0,
+        "error_message": "stale hardware trip",
+        "last_high_output_ts": 0.0,
+        "first_low_ts": 900.0,
+        "low_samples": 3,
+        "last_sample_ts": 0.0,
+        "hw_trip_active": true,
+        "episode_cycles": 2,
+        "pending_count": 0
+      },
+      "ac_on": false,
+      "output_w": null,
+      "sample_ts": null,
+      "collapse_floor_w": 0.0,
+      "now_ts": 1000.0,
+      "retry_interval_s": 10.0,
+      "user_grace_s": 60.0
+    },
+    "action": "idle",
+    "expected": {
+      "consecutive_attempts": 0,
+      "last_attempt_ts": 0.0,
+      "last_user_off_ts": 0.0,
+      "error_message": null,
+      "last_high_output_ts": 0.0,
+      "first_low_ts": 0.0,
+      "low_samples": 0,
+      "last_sample_ts": 0.0,
+      "hw_trip_active": false,
+      "episode_cycles": 0
+    }
+  },
+  {
+    "input": {
+      "state": {
+        "consecutive_attempts": 5,
+        "last_attempt_ts": 0.0,
+        "last_user_off_ts": 0.0,
+        "error_message": "old error",
+        "last_high_output_ts": 0.0,
+        "first_low_ts": 0.0,
+        "low_samples": 0,
+        "last_sample_ts": 0.0,
+        "hw_trip_active": false,
+        "episode_cycles": 0,
+        "pending_count": 0
+      },
+      "ac_on": true,
+      "output_w": null,
+      "sample_ts": null,
+      "collapse_floor_w": 0.0,
+      "now_ts": 2000.0,
+      "retry_interval_s": 10.0,
+      "user_grace_s": 60.0
+    },
+    "action": "idle",
+    "expected": {
+      "consecutive_attempts": 0,
+      "last_attempt_ts": 0.0,
+      "last_user_off_ts": 0.0,
+      "error_message": null,
+      "last_high_output_ts": 0.0,
+      "first_low_ts": 0.0,
+      "low_samples": 0,
+      "last_sample_ts": 0.0,
+      "hw_trip_active": false,
+      "episode_cycles": 0
+    }
+  },
+  {
+    "input": {
+      "state": {
+        "consecutive_attempts": 0,
+        "last_attempt_ts": 0.0,
+        "last_user_off_ts": 1000.0,
+        "error_message": null,
+        "last_high_output_ts": 0.0,
+        "first_low_ts": 0.0,
+        "low_samples": 0,
+        "last_sample_ts": 0.0,
+        "hw_trip_active": false,
+        "episode_cycles": 0,
+        "pending_count": 0
+      },
+      "ac_on": false,
+      "output_w": null,
+      "sample_ts": null,
+      "collapse_floor_w": 0.0,
+      "now_ts": 1030.0,
+      "retry_interval_s": 10.0,
+      "user_grace_s": 60.0
+    },
+    "action": "idle",
+    "expected": {
+      "consecutive_attempts": 0,
+      "last_attempt_ts": 0.0,
+      "last_user_off_ts": 1000.0,
+      "error_message": null,
+      "last_high_output_ts": 0.0,
+      "first_low_ts": 0.0,
+      "low_samples": 0,
+      "last_sample_ts": 0.0,
+      "hw_trip_active": false,
+      "episode_cycles": 0
+    }
+  },
+  {
+    "input": {
+      "state": {
+        "consecutive_attempts": 0,
+        "last_attempt_ts": 0.0,
+        "last_user_off_ts": 1000.0,
+        "error_message": null,
+        "last_high_output_ts": 0.0,
+        "first_low_ts": 0.0,
+        "low_samples": 0,
+        "last_sample_ts": 0.0,
+        "hw_trip_active": false,
+        "episode_cycles": 0,
+        "pending_count": 0
+      },
+      "ac_on": false,
+      "output_w": null,
+      "sample_ts": null,
+      "collapse_floor_w": 0.0,
+      "now_ts": 1059.0,
+      "retry_interval_s": 10.0,
+      "user_grace_s": 60.0
+    },
+    "action": "idle",
+    "expected": {
+      "consecutive_attempts": 0,
+      "last_attempt_ts": 0.0,
+      "last_user_off_ts": 1000.0,
+      "error_message": null,
+      "last_high_output_ts": 0.0,
+      "first_low_ts": 0.0,
+      "low_samples": 0,
+      "last_sample_ts": 0.0,
+      "hw_trip_active": false,
+      "episode_cycles": 0
+    }
+  },
+  {
+    "input": {
+      "state": {
+        "consecutive_attempts": 0,
+        "last_attempt_ts": 0.0,
+        "last_user_off_ts": 1000.0,
+        "error_message": null,
+        "last_high_output_ts": 0.0,
+        "first_low_ts": 0.0,
+        "low_samples": 0,
+        "last_sample_ts": 0.0,
+        "hw_trip_active": false,
+        "episode_cycles": 0,
+        "pending_count": 0
+      },
+      "ac_on": false,
+      "output_w": null,
+      "sample_ts": null,
+      "collapse_floor_w": 0.0,
+      "now_ts": 1061.0,
+      "retry_interval_s": 10.0,
+      "user_grace_s": 60.0
+    },
+    "action": "idle",
+    "expected": {
+      "consecutive_attempts": 0,
+      "last_attempt_ts": 0.0,
+      "last_user_off_ts": 1000.0,
+      "error_message": null,
+      "last_high_output_ts": 0.0,
+      "first_low_ts": 0.0,
+      "low_samples": 0,
+      "last_sample_ts": 0.0,
+      "hw_trip_active": false,
+      "episode_cycles": 0
+    }
+  },
+  {
+    "input": {
+      "state": {
+        "consecutive_attempts": 0,
+        "last_attempt_ts": 990.0,
+        "last_user_off_ts": 1000.0,
+        "error_message": null,
+        "last_high_output_ts": 0.0,
+        "first_low_ts": 0.0,
+        "low_samples": 0,
+        "last_sample_ts": 0.0,
+        "hw_trip_active": true,
+        "episode_cycles": 1,
+        "pending_count": 0
+      },
+      "ac_on": true,
+      "output_w": 0.0,
+      "sample_ts": null,
+      "collapse_floor_w": 0.0,
+      "now_ts": 1005.0,
+      "retry_interval_s": 10.0,
+      "user_grace_s": 60.0
+    },
+    "action": "user_grace",
+    "expected": {
+      "consecutive_attempts": 0,
+      "last_attempt_ts": 990.0,
+      "last_user_off_ts": 1000.0,
+      "error_message": null,
+      "last_high_output_ts": 0.0,
+      "first_low_ts": 0.0,
+      "low_samples": 0,
+      "last_sample_ts": 0.0,
+      "hw_trip_active": true,
+      "episode_cycles": 1
+    }
+  },
+  {
+    "input": {
+      "state": {
+        "consecutive_attempts": 0,
+        "last_attempt_ts": 0.0,
+        "last_user_off_ts": 0.0,
+        "error_message": null,
+        "last_high_output_ts": 0.0,
+        "first_low_ts": 0.0,
+        "low_samples": 0,
+        "last_sample_ts": 0.0,
+        "hw_trip_active": false,
+        "episode_cycles": 0,
+        "pending_count": 0
+      },
+      "ac_on": false,
+      "output_w": null,
+      "sample_ts": null,
+      "collapse_floor_w": 0.0,
+      "now_ts": 2000.0,
+      "retry_interval_s": 10.0,
+      "user_grace_s": 60.0
+    },
+    "action": "idle",
+    "expected": {
+      "consecutive_attempts": 0,
+      "last_attempt_ts": 0.0,
+      "last_user_off_ts": 0.0,
+      "error_message": null,
+      "last_high_output_ts": 0.0,
+      "first_low_ts": 0.0,
+      "low_samples": 0,
+      "last_sample_ts": 0.0,
+      "hw_trip_active": false,
+      "episode_cycles": 0
+    }
+  },
+  {
+    "input": {
+      "state": {
+        "consecutive_attempts": 0,
+        "last_attempt_ts": 0.0,
+        "last_user_off_ts": 0.0,
+        "error_message": null,
+        "last_high_output_ts": 0.0,
+        "first_low_ts": 0.0,
+        "low_samples": 0,
+        "last_sample_ts": 0.0,
+        "hw_trip_active": false,
+        "episode_cycles": 0,
+        "pending_count": 0
+      },
+      "ac_on": true,
+      "output_w": 900.0,
+      "sample_ts": 1000.0,
+      "collapse_floor_w": 0.0,
+      "now_ts": 1000.0,
+      "retry_interval_s": 10.0,
+      "user_grace_s": 60.0
+    },
+    "action": "idle",
+    "expected": {
+      "consecutive_attempts": 0,
+      "last_attempt_ts": 0.0,
+      "last_user_off_ts": 0.0,
+      "error_message": null,
+      "last_high_output_ts": 0.0,
+      "first_low_ts": 0.0,
+      "low_samples": 0,
+      "last_sample_ts": 0.0,
+      "hw_trip_active": false,
+      "episode_cycles": 0
+    }
+  },
+  {
+    "input": {
+      "state": {
+        "consecutive_attempts": 0,
+        "last_attempt_ts": 0.0,
+        "last_user_off_ts": 0.0,
+        "error_message": null,
+        "last_high_output_ts": 0.0,
+        "first_low_ts": 0.0,
+        "low_samples": 0,
+        "last_sample_ts": 0.0,
+        "hw_trip_active": false,
+        "episode_cycles": 0,
+        "pending_count": 0
+      },
+      "ac_on": true,
+      "output_w": 0.0,
+      "sample_ts": 1002.0,
+      "collapse_floor_w": 0.0,
+      "now_ts": 1002.0,
+      "retry_interval_s": 10.0,
+      "user_grace_s": 60.0
+    },
+    "action": "idle",
+    "expected": {
+      "consecutive_attempts": 0,
+      "last_attempt_ts": 0.0,
+      "last_user_off_ts": 0.0,
+      "error_message": null,
+      "last_high_output_ts": 0.0,
+      "first_low_ts": 0.0,
+      "low_samples": 0,
+      "last_sample_ts": 0.0,
+      "hw_trip_active": false,
+      "episode_cycles": 0
+    }
+  },
+  {
+    "input": {
+      "state": {
+        "consecutive_attempts": 0,
+        "last_attempt_ts": 0.0,
+        "last_user_off_ts": 0.0,
+        "error_message": null,
+        "last_high_output_ts": 0.0,
+        "first_low_ts": 0.0,
+        "low_samples": 0,
+        "last_sample_ts": 0.0,
+        "hw_trip_active": false,
+        "episode_cycles": 0,
+        "pending_count": 0
+      },
+      "ac_on": true,
+      "output_w": 0.0,
+      "sample_ts": 1004.0,
+      "collapse_floor_w": 0.0,
+      "now_ts": 1004.0,
+      "retry_interval_s": 10.0,
+      "user_grace_s": 60.0
+    },
+    "action": "idle",
+    "expected": {
+      "consecutive_attempts": 0,
+      "last_attempt_ts": 0.0,
+      "last_user_off_ts": 0.0,
+      "error_message": null,
+      "last_high_output_ts": 0.0,
+      "first_low_ts": 0.0,
+      "low_samples": 0,
+      "last_sample_ts": 0.0,
+      "hw_trip_active": false,
+      "episode_cycles": 0
+    }
+  },
+  {
+    "input": {
+      "state": {
+        "consecutive_attempts": 0,
+        "last_attempt_ts": 0.0,
+        "last_user_off_ts": 0.0,
+        "error_message": null,
+        "last_high_output_ts": 0.0,
+        "first_low_ts": 0.0,
+        "low_samples": 0,
+        "last_sample_ts": 0.0,
+        "hw_trip_active": false,
+        "episode_cycles": 0,
+        "pending_count": 0
+      },
+      "ac_on": true,
+      "output_w": 0.0,
+      "sample_ts": 1006.0,
+      "collapse_floor_w": 0.0,
+      "now_ts": 1006.0,
+      "retry_interval_s": 10.0,
+      "user_grace_s": 60.0
+    },
+    "action": "idle",
+    "expected": {
+      "consecutive_attempts": 0,
+      "last_attempt_ts": 0.0,
+      "last_user_off_ts": 0.0,
+      "error_message": null,
+      "last_high_output_ts": 0.0,
+      "first_low_ts": 0.0,
+      "low_samples": 0,
+      "last_sample_ts": 0.0,
+      "hw_trip_active": false,
+      "episode_cycles": 0
+    }
+  },
+  {
+    "input": {
+      "state": {
+        "consecutive_attempts": 0,
+        "last_attempt_ts": 0.0,
+        "last_user_off_ts": 0.0,
+        "error_message": null,
+        "last_high_output_ts": 0.0,
+        "first_low_ts": 0.0,
+        "low_samples": 0,
+        "last_sample_ts": 0.0,
+        "hw_trip_active": false,
+        "episode_cycles": 0,
+        "pending_count": 0
+      },
+      "ac_on": true,
+      "output_w": 0.0,
+      "sample_ts": 1008.0,
+      "collapse_floor_w": 0.0,
+      "now_ts": 1008.0,
+      "retry_interval_s": 10.0,
+      "user_grace_s": 60.0
+    },
+    "action": "idle",
+    "expected": {
+      "consecutive_attempts": 0,
+      "last_attempt_ts": 0.0,
+      "last_user_off_ts": 0.0,
+      "error_message": null,
+      "last_high_output_ts": 0.0,
+      "first_low_ts": 0.0,
+      "low_samples": 0,
+      "last_sample_ts": 0.0,
+      "hw_trip_active": false,
+      "episode_cycles": 0
+    }
+  },
+  {
+    "input": {
+      "state": {
+        "consecutive_attempts": 0,
+        "last_attempt_ts": 0.0,
+        "last_user_off_ts": 0.0,
+        "error_message": null,
+        "last_high_output_ts": 0.0,
+        "first_low_ts": 0.0,
+        "low_samples": 0,
+        "last_sample_ts": 0.0,
+        "hw_trip_active": false,
+        "episode_cycles": 0,
+        "pending_count": 0
+      },
+      "ac_on": true,
+      "output_w": 0.0,
+      "sample_ts": 1010.0,
+      "collapse_floor_w": 0.0,
+      "now_ts": 1010.0,
+      "retry_interval_s": 10.0,
+      "user_grace_s": 60.0
+    },
+    "action": "idle",
+    "expected": {
+      "consecutive_attempts": 0,
+      "last_attempt_ts": 0.0,
+      "last_user_off_ts": 0.0,
+      "error_message": null,
+      "last_high_output_ts": 0.0,
+      "first_low_ts": 0.0,
+      "low_samples": 0,
+      "last_sample_ts": 0.0,
+      "hw_trip_active": false,
+      "episode_cycles": 0
+    }
+  },
+  {
+    "input": {
+      "state": {
+        "consecutive_attempts": 0,
+        "last_attempt_ts": 0.0,
+        "last_user_off_ts": 0.0,
+        "error_message": null,
+        "last_high_output_ts": 0.0,
+        "first_low_ts": 0.0,
+        "low_samples": 0,
+        "last_sample_ts": 0.0,
+        "hw_trip_active": false,
+        "episode_cycles": 0,
+        "pending_count": 0
+      },
+      "ac_on": true,
+      "output_w": 0.0,
+      "sample_ts": 1012.0,
+      "collapse_floor_w": 0.0,
+      "now_ts": 1012.0,
+      "retry_interval_s": 10.0,
+      "user_grace_s": 60.0
+    },
+    "action": "idle",
+    "expected": {
+      "consecutive_attempts": 0,
+      "last_attempt_ts": 0.0,
+      "last_user_off_ts": 0.0,
+      "error_message": null,
+      "last_high_output_ts": 0.0,
+      "first_low_ts": 0.0,
+      "low_samples": 0,
+      "last_sample_ts": 0.0,
+      "hw_trip_active": false,
+      "episode_cycles": 0
+    }
+  },
+  {
+    "input": {
+      "state": {
+        "consecutive_attempts": 0,
+        "last_attempt_ts": 0.0,
+        "last_user_off_ts": 0.0,
+        "error_message": null,
+        "last_high_output_ts": 0.0,
+        "first_low_ts": 0.0,
+        "low_samples": 0,
+        "last_sample_ts": 0.0,
+        "hw_trip_active": false,
+        "episode_cycles": 0,
+        "pending_count": 0
+      },
+      "ac_on": true,
+      "output_w": 0.0,
+      "sample_ts": 1014.0,
+      "collapse_floor_w": 0.0,
+      "now_ts": 1014.0,
+      "retry_interval_s": 10.0,
+      "user_grace_s": 60.0
+    },
+    "action": "idle",
+    "expected": {
+      "consecutive_attempts": 0,
+      "last_attempt_ts": 0.0,
+      "last_user_off_ts": 0.0,
+      "error_message": null,
+      "last_high_output_ts": 0.0,
+      "first_low_ts": 0.0,
+      "low_samples": 0,
+      "last_sample_ts": 0.0,
+      "hw_trip_active": false,
+      "episode_cycles": 0
+    }
+  },
+  {
+    "input": {
+      "state": {
+        "consecutive_attempts": 0,
+        "last_attempt_ts": 0.0,
+        "last_user_off_ts": 0.0,
+        "error_message": null,
+        "last_high_output_ts": 0.0,
+        "first_low_ts": 0.0,
+        "low_samples": 0,
+        "last_sample_ts": 0.0,
+        "hw_trip_active": false,
+        "episode_cycles": 0,
+        "pending_count": 0
+      },
+      "ac_on": true,
+      "output_w": 1795.0,
+      "sample_ts": 1000.0,
+      "collapse_floor_w": 20.0,
+      "now_ts": 1000.0,
+      "retry_interval_s": 10.0,
+      "user_grace_s": 60.0
+    },
+    "action": "idle",
+    "expected": {
+      "consecutive_attempts": 0,
+      "last_attempt_ts": 0.0,
+      "last_user_off_ts": 0.0,
+      "error_message": null,
+      "last_high_output_ts": 1000.0,
+      "first_low_ts": 0.0,
+      "low_samples": 0,
+      "last_sample_ts": 1000.0,
+      "hw_trip_active": false,
+      "episode_cycles": 0
+    }
+  },
+  {
+    "input": {
+      "state": {
+        "consecutive_attempts": 0,
+        "last_attempt_ts": 0.0,
+        "last_user_off_ts": 0.0,
+        "error_message": null,
+        "last_high_output_ts": 1000.0,
+        "first_low_ts": 0.0,
+        "low_samples": 0,
+        "last_sample_ts": 1000.0,
+        "hw_trip_active": false,
+        "episode_cycles": 0,
+        "pending_count": 0
+      },
+      "ac_on": true,
+      "output_w": 0.0,
+      "sample_ts": 1002.0,
+      "collapse_floor_w": 20.0,
+      "now_ts": 1002.0,
+      "retry_interval_s": 10.0,
+      "user_grace_s": 60.0
+    },
+    "action": "idle",
+    "expected": {
+      "consecutive_attempts": 0,
+      "last_attempt_ts": 0.0,
+      "last_user_off_ts": 0.0,
+      "error_message": null,
+      "last_high_output_ts": 1000.0,
+      "first_low_ts": 1002.0,
+      "low_samples": 1,
+      "last_sample_ts": 1002.0,
+      "hw_trip_active": false,
+      "episode_cycles": 0
+    }
+  },
+  {
+    "input": {
+      "state": {
+        "consecutive_attempts": 0,
+        "last_attempt_ts": 0.0,
+        "last_user_off_ts": 0.0,
+        "error_message": null,
+        "last_high_output_ts": 1000.0,
+        "first_low_ts": 1002.0,
+        "low_samples": 1,
+        "last_sample_ts": 1002.0,
+        "hw_trip_active": false,
+        "episode_cycles": 0,
+        "pending_count": 0
+      },
+      "ac_on": true,
+      "output_w": 0.0,
+      "sample_ts": 1004.0,
+      "collapse_floor_w": 20.0,
+      "now_ts": 1004.0,
+      "retry_interval_s": 10.0,
+      "user_grace_s": 60.0
+    },
+    "action": "idle",
+    "expected": {
+      "consecutive_attempts": 0,
+      "last_attempt_ts": 0.0,
+      "last_user_off_ts": 0.0,
+      "error_message": null,
+      "last_high_output_ts": 1000.0,
+      "first_low_ts": 1002.0,
+      "low_samples": 2,
+      "last_sample_ts": 1004.0,
+      "hw_trip_active": false,
+      "episode_cycles": 0
+    }
+  },
+  {
+    "input": {
+      "state": {
+        "consecutive_attempts": 0,
+        "last_attempt_ts": 0.0,
+        "last_user_off_ts": 0.0,
+        "error_message": null,
+        "last_high_output_ts": 1000.0,
+        "first_low_ts": 1002.0,
+        "low_samples": 2,
+        "last_sample_ts": 1004.0,
+        "hw_trip_active": false,
+        "episode_cycles": 0,
+        "pending_count": 0
+      },
+      "ac_on": true,
+      "output_w": 0.0,
+      "sample_ts": 1008.0,
+      "collapse_floor_w": 20.0,
+      "now_ts": 1008.0,
+      "retry_interval_s": 10.0,
+      "user_grace_s": 60.0
+    },
+    "action": "cycle",
+    "expected": {
+      "consecutive_attempts": 1,
+      "last_attempt_ts": 1008.0,
+      "last_user_off_ts": 0.0,
+      "error_message": null,
+      "last_high_output_ts": 1000.0,
+      "first_low_ts": 1002.0,
+      "low_samples": 3,
+      "last_sample_ts": 1008.0,
+      "hw_trip_active": true,
+      "episode_cycles": 1
+    }
+  },
+  {
+    "input": {
+      "state": {
+        "consecutive_attempts": 1,
+        "last_attempt_ts": 1008.0,
+        "last_user_off_ts": 0.0,
+        "error_message": null,
+        "last_high_output_ts": 1000.0,
+        "first_low_ts": 1002.0,
+        "low_samples": 3,
+        "last_sample_ts": 1008.0,
+        "hw_trip_active": true,
+        "episode_cycles": 1,
+        "pending_count": 0
+      },
+      "ac_on": true,
+      "output_w": 0.0,
+      "sample_ts": 1010.0,
+      "collapse_floor_w": 20.0,
+      "now_ts": 1010.0,
+      "retry_interval_s": 10.0,
+      "user_grace_s": 60.0
+    },
+    "action": "waiting",
+    "expected": {
+      "consecutive_attempts": 1,
+      "last_attempt_ts": 1008.0,
+      "last_user_off_ts": 0.0,
+      "error_message": null,
+      "last_high_output_ts": 1000.0,
+      "first_low_ts": 1002.0,
+      "low_samples": 4,
+      "last_sample_ts": 1010.0,
+      "hw_trip_active": true,
+      "episode_cycles": 1
+    }
+  },
+  {
+    "input": {
+      "state": {
+        "consecutive_attempts": 1,
+        "last_attempt_ts": 1008.0,
+        "last_user_off_ts": 0.0,
+        "error_message": null,
+        "last_high_output_ts": 1000.0,
+        "first_low_ts": 1002.0,
+        "low_samples": 4,
+        "last_sample_ts": 1010.0,
+        "hw_trip_active": true,
+        "episode_cycles": 1,
+        "pending_count": 0
+      },
+      "ac_on": true,
+      "output_w": 0.0,
+      "sample_ts": 1019.0,
+      "collapse_floor_w": 20.0,
+      "now_ts": 1019.0,
+      "retry_interval_s": 10.0,
+      "user_grace_s": 60.0
+    },
+    "action": "cycle",
+    "expected": {
+      "consecutive_attempts": 2,
+      "last_attempt_ts": 1019.0,
+      "last_user_off_ts": 0.0,
+      "error_message": null,
+      "last_high_output_ts": 1000.0,
+      "first_low_ts": 1002.0,
+      "low_samples": 5,
+      "last_sample_ts": 1019.0,
+      "hw_trip_active": true,
+      "episode_cycles": 2
+    }
+  },
+  {
+    "input": {
+      "state": {
+        "consecutive_attempts": 0,
+        "last_attempt_ts": 0.0,
+        "last_user_off_ts": 0.0,
+        "error_message": null,
+        "last_high_output_ts": 0.0,
+        "first_low_ts": 0.0,
+        "low_samples": 0,
+        "last_sample_ts": 0.0,
+        "hw_trip_active": false,
+        "episode_cycles": 0,
+        "pending_count": 0
+      },
+      "ac_on": true,
+      "output_w": 900.0,
+      "sample_ts": 1000.0,
+      "collapse_floor_w": 20.0,
+      "now_ts": 1000.0,
+      "retry_interval_s": 10.0,
+      "user_grace_s": 60.0
+    },
+    "action": "idle",
+    "expected": {
+      "consecutive_attempts": 0,
+      "last_attempt_ts": 0.0,
+      "last_user_off_ts": 0.0,
+      "error_message": null,
+      "last_high_output_ts": 1000.0,
+      "first_low_ts": 0.0,
+      "low_samples": 0,
+      "last_sample_ts": 1000.0,
+      "hw_trip_active": false,
+      "episode_cycles": 0
+    }
+  },
+  {
+    "input": {
+      "state": {
+        "consecutive_attempts": 0,
+        "last_attempt_ts": 0.0,
+        "last_user_off_ts": 0.0,
+        "error_message": null,
+        "last_high_output_ts": 1000.0,
+        "first_low_ts": 0.0,
+        "low_samples": 0,
+        "last_sample_ts": 1000.0,
+        "hw_trip_active": false,
+        "episode_cycles": 0,
+        "pending_count": 0
+      },
+      "ac_on": true,
+      "output_w": 0.0,
+      "sample_ts": 1002.0,
+      "collapse_floor_w": 20.0,
+      "now_ts": 1002.0,
+      "retry_interval_s": 10.0,
+      "user_grace_s": 60.0
+    },
+    "action": "idle",
+    "expected": {
+      "consecutive_attempts": 0,
+      "last_attempt_ts": 0.0,
+      "last_user_off_ts": 0.0,
+      "error_message": null,
+      "last_high_output_ts": 1000.0,
+      "first_low_ts": 1002.0,
+      "low_samples": 1,
+      "last_sample_ts": 1002.0,
+      "hw_trip_active": false,
+      "episode_cycles": 0
+    }
+  },
+  {
+    "input": {
+      "state": {
+        "consecutive_attempts": 0,
+        "last_attempt_ts": 0.0,
+        "last_user_off_ts": 0.0,
+        "error_message": null,
+        "last_high_output_ts": 1000.0,
+        "first_low_ts": 1002.0,
+        "low_samples": 1,
+        "last_sample_ts": 1002.0,
+        "hw_trip_active": false,
+        "episode_cycles": 0,
+        "pending_count": 0
+      },
+      "ac_on": true,
+      "output_w": 0.0,
+      "sample_ts": 1004.0,
+      "collapse_floor_w": 20.0,
+      "now_ts": 1004.0,
+      "retry_interval_s": 10.0,
+      "user_grace_s": 60.0
+    },
+    "action": "idle",
+    "expected": {
+      "consecutive_attempts": 0,
+      "last_attempt_ts": 0.0,
+      "last_user_off_ts": 0.0,
+      "error_message": null,
+      "last_high_output_ts": 1000.0,
+      "first_low_ts": 1002.0,
+      "low_samples": 2,
+      "last_sample_ts": 1004.0,
+      "hw_trip_active": false,
+      "episode_cycles": 0
+    }
+  },
+  {
+    "input": {
+      "state": {
+        "consecutive_attempts": 0,
+        "last_attempt_ts": 0.0,
+        "last_user_off_ts": 0.0,
+        "error_message": null,
+        "last_high_output_ts": 1000.0,
+        "first_low_ts": 1002.0,
+        "low_samples": 2,
+        "last_sample_ts": 1004.0,
+        "hw_trip_active": false,
+        "episode_cycles": 0,
+        "pending_count": 0
+      },
+      "ac_on": true,
+      "output_w": 0.0,
+      "sample_ts": 1008.0,
+      "collapse_floor_w": 20.0,
+      "now_ts": 1008.0,
+      "retry_interval_s": 10.0,
+      "user_grace_s": 60.0
+    },
+    "action": "cycle",
+    "expected": {
+      "consecutive_attempts": 1,
+      "last_attempt_ts": 1008.0,
+      "last_user_off_ts": 0.0,
+      "error_message": null,
+      "last_high_output_ts": 1000.0,
+      "first_low_ts": 1002.0,
+      "low_samples": 3,
+      "last_sample_ts": 1008.0,
+      "hw_trip_active": true,
+      "episode_cycles": 1
+    }
+  },
+  {
+    "input": {
+      "state": {
+        "consecutive_attempts": 1,
+        "last_attempt_ts": 1008.0,
+        "last_user_off_ts": 0.0,
+        "error_message": null,
+        "last_high_output_ts": 1000.0,
+        "first_low_ts": 1002.0,
+        "low_samples": 3,
+        "last_sample_ts": 1008.0,
+        "hw_trip_active": true,
+        "episode_cycles": 1,
+        "pending_count": 0
+      },
+      "ac_on": true,
+      "output_w": 0.0,
+      "sample_ts": 1019.0,
+      "collapse_floor_w": 20.0,
+      "now_ts": 1019.0,
+      "retry_interval_s": 10.0,
+      "user_grace_s": 60.0
+    },
+    "action": "cycle",
+    "expected": {
+      "consecutive_attempts": 2,
+      "last_attempt_ts": 1019.0,
+      "last_user_off_ts": 0.0,
+      "error_message": null,
+      "last_high_output_ts": 1000.0,
+      "first_low_ts": 1002.0,
+      "low_samples": 4,
+      "last_sample_ts": 1019.0,
+      "hw_trip_active": true,
+      "episode_cycles": 2
+    }
+  },
+  {
+    "input": {
+      "state": {
+        "consecutive_attempts": 2,
+        "last_attempt_ts": 1019.0,
+        "last_user_off_ts": 0.0,
+        "error_message": null,
+        "last_high_output_ts": 1000.0,
+        "first_low_ts": 1002.0,
+        "low_samples": 4,
+        "last_sample_ts": 1019.0,
+        "hw_trip_active": true,
+        "episode_cycles": 2,
+        "pending_count": 0
+      },
+      "ac_on": true,
+      "output_w": 0.0,
+      "sample_ts": 1030.0,
+      "collapse_floor_w": 20.0,
+      "now_ts": 1030.0,
+      "retry_interval_s": 10.0,
+      "user_grace_s": 60.0
+    },
+    "action": "error",
+    "expected": {
+      "consecutive_attempts": 2,
+      "last_attempt_ts": 1019.0,
+      "last_user_off_ts": 0.0,
+      "error_message": "Output collapsed while the AC port still reports ON \u2014 hardware trip suspected. Cycled AC off/on 2x without output returning; stopped to avoid repeated power cuts. Check the unit. Recovery resumes automatically when output returns (or the port reports OFF).",
+      "last_high_output_ts": 1000.0,
+      "first_low_ts": 1002.0,
+      "low_samples": 5,
+      "last_sample_ts": 1030.0,
+      "hw_trip_active": true,
+      "episode_cycles": 2
+    }
+  },
+  {
+    "input": {
+      "state": {
+        "consecutive_attempts": 2,
+        "last_attempt_ts": 1019.0,
+        "last_user_off_ts": 0.0,
+        "error_message": "Output collapsed while the AC port still reports ON \u2014 hardware trip suspected. Cycled AC off/on 2x without output returning; stopped to avoid repeated power cuts. Check the unit. Recovery resumes automatically when output returns (or the port reports OFF).",
+        "last_high_output_ts": 1000.0,
+        "first_low_ts": 1002.0,
+        "low_samples": 5,
+        "last_sample_ts": 1030.0,
+        "hw_trip_active": true,
+        "episode_cycles": 2,
+        "pending_count": 0
+      },
+      "ac_on": true,
+      "output_w": 0.0,
+      "sample_ts": 2000.0,
+      "collapse_floor_w": 20.0,
+      "now_ts": 2000.0,
+      "retry_interval_s": 10.0,
+      "user_grace_s": 60.0
+    },
+    "action": "error",
+    "expected": {
+      "consecutive_attempts": 2,
+      "last_attempt_ts": 1019.0,
+      "last_user_off_ts": 0.0,
+      "error_message": "Output collapsed while the AC port still reports ON \u2014 hardware trip suspected. Cycled AC off/on 2x without output returning; stopped to avoid repeated power cuts. Check the unit. Recovery resumes automatically when output returns (or the port reports OFF).",
+      "last_high_output_ts": 1000.0,
+      "first_low_ts": 1002.0,
+      "low_samples": 6,
+      "last_sample_ts": 2000.0,
+      "hw_trip_active": true,
+      "episode_cycles": 2
+    }
+  },
+  {
+    "input": {
+      "state": {
+        "consecutive_attempts": 0,
+        "last_attempt_ts": 0.0,
+        "last_user_off_ts": 0.0,
+        "error_message": null,
+        "last_high_output_ts": 0.0,
+        "first_low_ts": 0.0,
+        "low_samples": 0,
+        "last_sample_ts": 0.0,
+        "hw_trip_active": false,
+        "episode_cycles": 0,
+        "pending_count": 0
+      },
+      "ac_on": true,
+      "output_w": 900.0,
+      "sample_ts": 1000.0,
+      "collapse_floor_w": 20.0,
+      "now_ts": 1000.0,
+      "retry_interval_s": 10.0,
+      "user_grace_s": 60.0
+    },
+    "action": "idle",
+    "expected": {
+      "consecutive_attempts": 0,
+      "last_attempt_ts": 0.0,
+      "last_user_off_ts": 0.0,
+      "error_message": null,
+      "last_high_output_ts": 1000.0,
+      "first_low_ts": 0.0,
+      "low_samples": 0,
+      "last_sample_ts": 1000.0,
+      "hw_trip_active": false,
+      "episode_cycles": 0
+    }
+  },
+  {
+    "input": {
+      "state": {
+        "consecutive_attempts": 0,
+        "last_attempt_ts": 0.0,
+        "last_user_off_ts": 0.0,
+        "error_message": null,
+        "last_high_output_ts": 1000.0,
+        "first_low_ts": 0.0,
+        "low_samples": 0,
+        "last_sample_ts": 1000.0,
+        "hw_trip_active": false,
+        "episode_cycles": 0,
+        "pending_count": 0
+      },
+      "ac_on": true,
+      "output_w": 0.0,
+      "sample_ts": 1002.0,
+      "collapse_floor_w": 20.0,
+      "now_ts": 1002.0,
+      "retry_interval_s": 10.0,
+      "user_grace_s": 60.0
+    },
+    "action": "idle",
+    "expected": {
+      "consecutive_attempts": 0,
+      "last_attempt_ts": 0.0,
+      "last_user_off_ts": 0.0,
+      "error_message": null,
+      "last_high_output_ts": 1000.0,
+      "first_low_ts": 1002.0,
+      "low_samples": 1,
+      "last_sample_ts": 1002.0,
+      "hw_trip_active": false,
+      "episode_cycles": 0
+    }
+  },
+  {
+    "input": {
+      "state": {
+        "consecutive_attempts": 0,
+        "last_attempt_ts": 0.0,
+        "last_user_off_ts": 0.0,
+        "error_message": null,
+        "last_high_output_ts": 1000.0,
+        "first_low_ts": 1002.0,
+        "low_samples": 1,
+        "last_sample_ts": 1002.0,
+        "hw_trip_active": false,
+        "episode_cycles": 0,
+        "pending_count": 0
+      },
+      "ac_on": true,
+      "output_w": 0.0,
+      "sample_ts": 1004.0,
+      "collapse_floor_w": 20.0,
+      "now_ts": 1004.0,
+      "retry_interval_s": 10.0,
+      "user_grace_s": 60.0
+    },
+    "action": "idle",
+    "expected": {
+      "consecutive_attempts": 0,
+      "last_attempt_ts": 0.0,
+      "last_user_off_ts": 0.0,
+      "error_message": null,
+      "last_high_output_ts": 1000.0,
+      "first_low_ts": 1002.0,
+      "low_samples": 2,
+      "last_sample_ts": 1004.0,
+      "hw_trip_active": false,
+      "episode_cycles": 0
+    }
+  },
+  {
+    "input": {
+      "state": {
+        "consecutive_attempts": 0,
+        "last_attempt_ts": 0.0,
+        "last_user_off_ts": 0.0,
+        "error_message": null,
+        "last_high_output_ts": 1000.0,
+        "first_low_ts": 1002.0,
+        "low_samples": 2,
+        "last_sample_ts": 1004.0,
+        "hw_trip_active": false,
+        "episode_cycles": 0,
+        "pending_count": 0
+      },
+      "ac_on": true,
+      "output_w": 0.0,
+      "sample_ts": 1008.0,
+      "collapse_floor_w": 20.0,
+      "now_ts": 1008.0,
+      "retry_interval_s": 10.0,
+      "user_grace_s": 60.0
+    },
+    "action": "cycle",
+    "expected": {
+      "consecutive_attempts": 1,
+      "last_attempt_ts": 1008.0,
+      "last_user_off_ts": 0.0,
+      "error_message": null,
+      "last_high_output_ts": 1000.0,
+      "first_low_ts": 1002.0,
+      "low_samples": 3,
+      "last_sample_ts": 1008.0,
+      "hw_trip_active": true,
+      "episode_cycles": 1
+    }
+  },
+  {
+    "input": {
+      "state": {
+        "consecutive_attempts": 1,
+        "last_attempt_ts": 1008.0,
+        "last_user_off_ts": 0.0,
+        "error_message": null,
+        "last_high_output_ts": 1000.0,
+        "first_low_ts": 1002.0,
+        "low_samples": 3,
+        "last_sample_ts": 1008.0,
+        "hw_trip_active": true,
+        "episode_cycles": 1,
+        "pending_count": 0
+      },
+      "ac_on": true,
+      "output_w": 0.0,
+      "sample_ts": 1019.0,
+      "collapse_floor_w": 20.0,
+      "now_ts": 1019.0,
+      "retry_interval_s": 10.0,
+      "user_grace_s": 60.0
+    },
+    "action": "cycle",
+    "expected": {
+      "consecutive_attempts": 2,
+      "last_attempt_ts": 1019.0,
+      "last_user_off_ts": 0.0,
+      "error_message": null,
+      "last_high_output_ts": 1000.0,
+      "first_low_ts": 1002.0,
+      "low_samples": 4,
+      "last_sample_ts": 1019.0,
+      "hw_trip_active": true,
+      "episode_cycles": 2
+    }
+  },
+  {
+    "input": {
+      "state": {
+        "consecutive_attempts": 2,
+        "last_attempt_ts": 1019.0,
+        "last_user_off_ts": 0.0,
+        "error_message": null,
+        "last_high_output_ts": 1000.0,
+        "first_low_ts": 1002.0,
+        "low_samples": 4,
+        "last_sample_ts": 1019.0,
+        "hw_trip_active": true,
+        "episode_cycles": 2,
+        "pending_count": 0
+      },
+      "ac_on": true,
+      "output_w": 0.0,
+      "sample_ts": 1030.0,
+      "collapse_floor_w": 20.0,
+      "now_ts": 1030.0,
+      "retry_interval_s": 10.0,
+      "user_grace_s": 60.0
+    },
+    "action": "error",
+    "expected": {
+      "consecutive_attempts": 2,
+      "last_attempt_ts": 1019.0,
+      "last_user_off_ts": 0.0,
+      "error_message": "Output collapsed while the AC port still reports ON \u2014 hardware trip suspected. Cycled AC off/on 2x without output returning; stopped to avoid repeated power cuts. Check the unit. Recovery resumes automatically when output returns (or the port reports OFF).",
+      "last_high_output_ts": 1000.0,
+      "first_low_ts": 1002.0,
+      "low_samples": 5,
+      "last_sample_ts": 1030.0,
+      "hw_trip_active": true,
+      "episode_cycles": 2
+    }
+  },
+  {
+    "input": {
+      "state": {
+        "consecutive_attempts": 2,
+        "last_attempt_ts": 1019.0,
+        "last_user_off_ts": 0.0,
+        "error_message": "Output collapsed while the AC port still reports ON \u2014 hardware trip suspected. Cycled AC off/on 2x without output returning; stopped to avoid repeated power cuts. Check the unit. Recovery resumes automatically when output returns (or the port reports OFF).",
+        "last_high_output_ts": 1000.0,
+        "first_low_ts": 1002.0,
+        "low_samples": 5,
+        "last_sample_ts": 1030.0,
+        "hw_trip_active": true,
+        "episode_cycles": 2,
+        "pending_count": 0
+      },
+      "ac_on": true,
+      "output_w": 0.0,
+      "sample_ts": 2200.0,
+      "collapse_floor_w": 20.0,
+      "now_ts": 2200.0,
+      "retry_interval_s": 10.0,
+      "user_grace_s": 60.0
+    },
+    "action": "error",
+    "expected": {
+      "consecutive_attempts": 2,
+      "last_attempt_ts": 1019.0,
+      "last_user_off_ts": 0.0,
+      "error_message": "Output collapsed while the AC port still reports ON \u2014 hardware trip suspected. Cycled AC off/on 2x without output returning; stopped to avoid repeated power cuts. Check the unit. Recovery resumes automatically when output returns (or the port reports OFF).",
+      "last_high_output_ts": 1000.0,
+      "first_low_ts": 1002.0,
+      "low_samples": 6,
+      "last_sample_ts": 2200.0,
+      "hw_trip_active": true,
+      "episode_cycles": 2
+    }
+  },
+  {
+    "input": {
+      "state": {
+        "consecutive_attempts": 2,
+        "last_attempt_ts": 1019.0,
+        "last_user_off_ts": 0.0,
+        "error_message": "Output collapsed while the AC port still reports ON \u2014 hardware trip suspected. Cycled AC off/on 2x without output returning; stopped to avoid repeated power cuts. Check the unit. Recovery resumes automatically when output returns (or the port reports OFF).",
+        "last_high_output_ts": 1000.0,
+        "first_low_ts": 1002.0,
+        "low_samples": 6,
+        "last_sample_ts": 2200.0,
+        "hw_trip_active": true,
+        "episode_cycles": 2,
+        "pending_count": 0
+      },
+      "ac_on": true,
+      "output_w": 850.0,
+      "sample_ts": 2300.0,
+      "collapse_floor_w": 20.0,
+      "now_ts": 2300.0,
+      "retry_interval_s": 10.0,
+      "user_grace_s": 60.0
+    },
+    "action": "idle",
+    "expected": {
+      "consecutive_attempts": 0,
+      "last_attempt_ts": 1019.0,
+      "last_user_off_ts": 0.0,
+      "error_message": null,
+      "last_high_output_ts": 2300.0,
+      "first_low_ts": 0.0,
+      "low_samples": 0,
+      "last_sample_ts": 2300.0,
+      "hw_trip_active": false,
+      "episode_cycles": 0
+    }
+  },
+  {
+    "input": {
+      "state": {
+        "consecutive_attempts": 0,
+        "last_attempt_ts": 0.0,
+        "last_user_off_ts": 0.0,
+        "error_message": null,
+        "last_high_output_ts": 0.0,
+        "first_low_ts": 0.0,
+        "low_samples": 0,
+        "last_sample_ts": 0.0,
+        "hw_trip_active": false,
+        "episode_cycles": 0,
+        "pending_count": 0
+      },
+      "ac_on": true,
+      "output_w": 900.0,
+      "sample_ts": 1000.0,
+      "collapse_floor_w": 20.0,
+      "now_ts": 1000.0,
+      "retry_interval_s": 10.0,
+      "user_grace_s": 60.0
+    },
+    "action": "idle",
+    "expected": {
+      "consecutive_attempts": 0,
+      "last_attempt_ts": 0.0,
+      "last_user_off_ts": 0.0,
+      "error_message": null,
+      "last_high_output_ts": 1000.0,
+      "first_low_ts": 0.0,
+      "low_samples": 0,
+      "last_sample_ts": 1000.0,
+      "hw_trip_active": false,
+      "episode_cycles": 0
+    }
+  },
+  {
+    "input": {
+      "state": {
+        "consecutive_attempts": 0,
+        "last_attempt_ts": 0.0,
+        "last_user_off_ts": 0.0,
+        "error_message": null,
+        "last_high_output_ts": 1000.0,
+        "first_low_ts": 0.0,
+        "low_samples": 0,
+        "last_sample_ts": 1000.0,
+        "hw_trip_active": false,
+        "episode_cycles": 0,
+        "pending_count": 0
+      },
+      "ac_on": true,
+      "output_w": 0.0,
+      "sample_ts": 1002.0,
+      "collapse_floor_w": 20.0,
+      "now_ts": 1002.0,
+      "retry_interval_s": 10.0,
+      "user_grace_s": 60.0
+    },
+    "action": "idle",
+    "expected": {
+      "consecutive_attempts": 0,
+      "last_attempt_ts": 0.0,
+      "last_user_off_ts": 0.0,
+      "error_message": null,
+      "last_high_output_ts": 1000.0,
+      "first_low_ts": 1002.0,
+      "low_samples": 1,
+      "last_sample_ts": 1002.0,
+      "hw_trip_active": false,
+      "episode_cycles": 0
+    }
+  },
+  {
+    "input": {
+      "state": {
+        "consecutive_attempts": 0,
+        "last_attempt_ts": 0.0,
+        "last_user_off_ts": 0.0,
+        "error_message": null,
+        "last_high_output_ts": 1000.0,
+        "first_low_ts": 1002.0,
+        "low_samples": 1,
+        "last_sample_ts": 1002.0,
+        "hw_trip_active": false,
+        "episode_cycles": 0,
+        "pending_count": 0
+      },
+      "ac_on": true,
+      "output_w": 0.0,
+      "sample_ts": 1002.0,
+      "collapse_floor_w": 20.0,
+      "now_ts": 1004.0,
+      "retry_interval_s": 10.0,
+      "user_grace_s": 60.0
+    },
+    "action": "idle",
+    "expected": {
+      "consecutive_attempts": 0,
+      "last_attempt_ts": 0.0,
+      "last_user_off_ts": 0.0,
+      "error_message": null,
+      "last_high_output_ts": 1000.0,
+      "first_low_ts": 1002.0,
+      "low_samples": 1,
+      "last_sample_ts": 1002.0,
+      "hw_trip_active": false,
+      "episode_cycles": 0
+    }
+  },
+  {
+    "input": {
+      "state": {
+        "consecutive_attempts": 0,
+        "last_attempt_ts": 0.0,
+        "last_user_off_ts": 0.0,
+        "error_message": null,
+        "last_high_output_ts": 1000.0,
+        "first_low_ts": 1002.0,
+        "low_samples": 1,
+        "last_sample_ts": 1002.0,
+        "hw_trip_active": false,
+        "episode_cycles": 0,
+        "pending_count": 0
+      },
+      "ac_on": true,
+      "output_w": 0.0,
+      "sample_ts": 1002.0,
+      "collapse_floor_w": 20.0,
+      "now_ts": 1006.0,
+      "retry_interval_s": 10.0,
+      "user_grace_s": 60.0
+    },
+    "action": "idle",
+    "expected": {
+      "consecutive_attempts": 0,
+      "last_attempt_ts": 0.0,
+      "last_user_off_ts": 0.0,
+      "error_message": null,
+      "last_high_output_ts": 1000.0,
+      "first_low_ts": 1002.0,
+      "low_samples": 1,
+      "last_sample_ts": 1002.0,
+      "hw_trip_active": false,
+      "episode_cycles": 0
+    }
+  },
+  {
+    "input": {
+      "state": {
+        "consecutive_attempts": 0,
+        "last_attempt_ts": 0.0,
+        "last_user_off_ts": 0.0,
+        "error_message": null,
+        "last_high_output_ts": 1000.0,
+        "first_low_ts": 1002.0,
+        "low_samples": 1,
+        "last_sample_ts": 1002.0,
+        "hw_trip_active": false,
+        "episode_cycles": 0,
+        "pending_count": 0
+      },
+      "ac_on": true,
+      "output_w": 0.0,
+      "sample_ts": 1002.0,
+      "collapse_floor_w": 20.0,
+      "now_ts": 1008.0,
+      "retry_interval_s": 10.0,
+      "user_grace_s": 60.0
+    },
+    "action": "idle",
+    "expected": {
+      "consecutive_attempts": 0,
+      "last_attempt_ts": 0.0,
+      "last_user_off_ts": 0.0,
+      "error_message": null,
+      "last_high_output_ts": 1000.0,
+      "first_low_ts": 1002.0,
+      "low_samples": 1,
+      "last_sample_ts": 1002.0,
+      "hw_trip_active": false,
+      "episode_cycles": 0
+    }
+  },
+  {
+    "input": {
+      "state": {
+        "consecutive_attempts": 0,
+        "last_attempt_ts": 0.0,
+        "last_user_off_ts": 0.0,
+        "error_message": null,
+        "last_high_output_ts": 1000.0,
+        "first_low_ts": 1002.0,
+        "low_samples": 1,
+        "last_sample_ts": 1002.0,
+        "hw_trip_active": false,
+        "episode_cycles": 0,
+        "pending_count": 0
+      },
+      "ac_on": true,
+      "output_w": 0.0,
+      "sample_ts": 1002.0,
+      "collapse_floor_w": 20.0,
+      "now_ts": 1010.0,
+      "retry_interval_s": 10.0,
+      "user_grace_s": 60.0
+    },
+    "action": "idle",
+    "expected": {
+      "consecutive_attempts": 0,
+      "last_attempt_ts": 0.0,
+      "last_user_off_ts": 0.0,
+      "error_message": null,
+      "last_high_output_ts": 1000.0,
+      "first_low_ts": 1002.0,
+      "low_samples": 1,
+      "last_sample_ts": 1002.0,
+      "hw_trip_active": false,
+      "episode_cycles": 0
+    }
+  },
+  {
+    "input": {
+      "state": {
+        "consecutive_attempts": 0,
+        "last_attempt_ts": 0.0,
+        "last_user_off_ts": 0.0,
+        "error_message": null,
+        "last_high_output_ts": 1000.0,
+        "first_low_ts": 1002.0,
+        "low_samples": 1,
+        "last_sample_ts": 1002.0,
+        "hw_trip_active": false,
+        "episode_cycles": 0,
+        "pending_count": 0
+      },
+      "ac_on": true,
+      "output_w": 0.0,
+      "sample_ts": 1002.0,
+      "collapse_floor_w": 20.0,
+      "now_ts": 1012.0,
+      "retry_interval_s": 10.0,
+      "user_grace_s": 60.0
+    },
+    "action": "idle",
+    "expected": {
+      "consecutive_attempts": 0,
+      "last_attempt_ts": 0.0,
+      "last_user_off_ts": 0.0,
+      "error_message": null,
+      "last_high_output_ts": 1000.0,
+      "first_low_ts": 1002.0,
+      "low_samples": 1,
+      "last_sample_ts": 1002.0,
+      "hw_trip_active": false,
+      "episode_cycles": 0
+    }
+  },
+  {
+    "input": {
+      "state": {
+        "consecutive_attempts": 0,
+        "last_attempt_ts": 0.0,
+        "last_user_off_ts": 0.0,
+        "error_message": null,
+        "last_high_output_ts": 0.0,
+        "first_low_ts": 0.0,
+        "low_samples": 0,
+        "last_sample_ts": 0.0,
+        "hw_trip_active": false,
+        "episode_cycles": 0,
+        "pending_count": 0
+      },
+      "ac_on": true,
+      "output_w": 900.0,
+      "sample_ts": 1000.0,
+      "collapse_floor_w": 20.0,
+      "now_ts": 1000.0,
+      "retry_interval_s": 10.0,
+      "user_grace_s": 60.0
+    },
+    "action": "idle",
+    "expected": {
+      "consecutive_attempts": 0,
+      "last_attempt_ts": 0.0,
+      "last_user_off_ts": 0.0,
+      "error_message": null,
+      "last_high_output_ts": 1000.0,
+      "first_low_ts": 0.0,
+      "low_samples": 0,
+      "last_sample_ts": 1000.0,
+      "hw_trip_active": false,
+      "episode_cycles": 0
+    }
+  },
+  {
+    "input": {
+      "state": {
+        "consecutive_attempts": 0,
+        "last_attempt_ts": 0.0,
+        "last_user_off_ts": 0.0,
+        "error_message": null,
+        "last_high_output_ts": 1000.0,
+        "first_low_ts": 0.0,
+        "low_samples": 0,
+        "last_sample_ts": 1000.0,
+        "hw_trip_active": false,
+        "episode_cycles": 0,
+        "pending_count": 0
+      },
+      "ac_on": false,
+      "output_w": 0.0,
+      "sample_ts": 1002.0,
+      "collapse_floor_w": 20.0,
+      "now_ts": 1002.0,
+      "retry_interval_s": 10.0,
+      "user_grace_s": 60.0
+    },
+    "action": "idle",
+    "expected": {
+      "consecutive_attempts": 0,
+      "last_attempt_ts": 0.0,
+      "last_user_off_ts": 0.0,
+      "error_message": null,
+      "last_high_output_ts": 1000.0,
+      "first_low_ts": 0.0,
+      "low_samples": 0,
+      "last_sample_ts": 1002.0,
+      "hw_trip_active": false,
+      "episode_cycles": 0
+    }
+  },
+  {
+    "input": {
+      "state": {
+        "consecutive_attempts": 0,
+        "last_attempt_ts": 0.0,
+        "last_user_off_ts": 0.0,
+        "error_message": null,
+        "last_high_output_ts": 1000.0,
+        "first_low_ts": 0.0,
+        "low_samples": 0,
+        "last_sample_ts": 1002.0,
+        "hw_trip_active": false,
+        "episode_cycles": 0,
+        "pending_count": 0
+      },
+      "ac_on": false,
+      "output_w": 0.0,
+      "sample_ts": 1004.0,
+      "collapse_floor_w": 20.0,
+      "now_ts": 1004.0,
+      "retry_interval_s": 10.0,
+      "user_grace_s": 60.0
+    },
+    "action": "idle",
+    "expected": {
+      "consecutive_attempts": 0,
+      "last_attempt_ts": 0.0,
+      "last_user_off_ts": 0.0,
+      "error_message": null,
+      "last_high_output_ts": 1000.0,
+      "first_low_ts": 0.0,
+      "low_samples": 0,
+      "last_sample_ts": 1004.0,
+      "hw_trip_active": false,
+      "episode_cycles": 0
+    }
+  },
+  {
+    "input": {
+      "state": {
+        "consecutive_attempts": 0,
+        "last_attempt_ts": 0.0,
+        "last_user_off_ts": 0.0,
+        "error_message": null,
+        "last_high_output_ts": 1000.0,
+        "first_low_ts": 0.0,
+        "low_samples": 0,
+        "last_sample_ts": 1004.0,
+        "hw_trip_active": false,
+        "episode_cycles": 0,
+        "pending_count": 0
+      },
+      "ac_on": true,
+      "output_w": 0.0,
+      "sample_ts": 1020.0,
+      "collapse_floor_w": 20.0,
+      "now_ts": 1020.0,
+      "retry_interval_s": 10.0,
+      "user_grace_s": 60.0
+    },
+    "action": "idle",
+    "expected": {
+      "consecutive_attempts": 0,
+      "last_attempt_ts": 0.0,
+      "last_user_off_ts": 0.0,
+      "error_message": null,
+      "last_high_output_ts": 1000.0,
+      "first_low_ts": 1020.0,
+      "low_samples": 1,
+      "last_sample_ts": 1020.0,
+      "hw_trip_active": false,
+      "episode_cycles": 0
+    }
+  },
+  {
+    "input": {
+      "state": {
+        "consecutive_attempts": 0,
+        "last_attempt_ts": 0.0,
+        "last_user_off_ts": 0.0,
+        "error_message": null,
+        "last_high_output_ts": 0.0,
+        "first_low_ts": 0.0,
+        "low_samples": 0,
+        "last_sample_ts": 0.0,
+        "hw_trip_active": false,
+        "episode_cycles": 0,
+        "pending_count": 0
+      },
+      "ac_on": true,
+      "output_w": 900.0,
+      "sample_ts": 1000.0,
+      "collapse_floor_w": 20.0,
+      "now_ts": 1000.0,
+      "retry_interval_s": 10.0,
+      "user_grace_s": 60.0
+    },
+    "action": "idle",
+    "expected": {
+      "consecutive_attempts": 0,
+      "last_attempt_ts": 0.0,
+      "last_user_off_ts": 0.0,
+      "error_message": null,
+      "last_high_output_ts": 1000.0,
+      "first_low_ts": 0.0,
+      "low_samples": 0,
+      "last_sample_ts": 1000.0,
+      "hw_trip_active": false,
+      "episode_cycles": 0
+    }
+  },
+  {
+    "input": {
+      "state": {
+        "consecutive_attempts": 0,
+        "last_attempt_ts": 0.0,
+        "last_user_off_ts": 0.0,
+        "error_message": null,
+        "last_high_output_ts": 1000.0,
+        "first_low_ts": 0.0,
+        "low_samples": 0,
+        "last_sample_ts": 1000.0,
+        "hw_trip_active": false,
+        "episode_cycles": 0,
+        "pending_count": 0
+      },
+      "ac_on": true,
+      "output_w": 150.0,
+      "sample_ts": 1020.0,
+      "collapse_floor_w": 20.0,
+      "now_ts": 1020.0,
+      "retry_interval_s": 10.0,
+      "user_grace_s": 60.0
+    },
+    "action": "idle",
+    "expected": {
+      "consecutive_attempts": 0,
+      "last_attempt_ts": 0.0,
+      "last_user_off_ts": 0.0,
+      "error_message": null,
+      "last_high_output_ts": 1000.0,
+      "first_low_ts": 0.0,
+      "low_samples": 0,
+      "last_sample_ts": 1020.0,
+      "hw_trip_active": false,
+      "episode_cycles": 0
+    }
+  },
+  {
+    "input": {
+      "state": {
+        "consecutive_attempts": 0,
+        "last_attempt_ts": 0.0,
+        "last_user_off_ts": 0.0,
+        "error_message": null,
+        "last_high_output_ts": 1000.0,
+        "first_low_ts": 0.0,
+        "low_samples": 0,
+        "last_sample_ts": 1020.0,
+        "hw_trip_active": false,
+        "episode_cycles": 0,
+        "pending_count": 0
+      },
+      "ac_on": true,
+      "output_w": 90.0,
+      "sample_ts": 1030.0,
+      "collapse_floor_w": 20.0,
+      "now_ts": 1030.0,
+      "retry_interval_s": 10.0,
+      "user_grace_s": 60.0
+    },
+    "action": "idle",
+    "expected": {
+      "consecutive_attempts": 0,
+      "last_attempt_ts": 0.0,
+      "last_user_off_ts": 0.0,
+      "error_message": null,
+      "last_high_output_ts": 1000.0,
+      "first_low_ts": 0.0,
+      "low_samples": 0,
+      "last_sample_ts": 1030.0,
+      "hw_trip_active": false,
+      "episode_cycles": 0
+    }
+  },
+  {
+    "input": {
+      "state": {
+        "consecutive_attempts": 0,
+        "last_attempt_ts": 0.0,
+        "last_user_off_ts": 0.0,
+        "error_message": null,
+        "last_high_output_ts": 1000.0,
+        "first_low_ts": 0.0,
+        "low_samples": 0,
+        "last_sample_ts": 1030.0,
+        "hw_trip_active": false,
+        "episode_cycles": 0,
+        "pending_count": 0
+      },
+      "ac_on": true,
+      "output_w": 0.0,
+      "sample_ts": 1032.0,
+      "collapse_floor_w": 20.0,
+      "now_ts": 1032.0,
+      "retry_interval_s": 10.0,
+      "user_grace_s": 60.0
+    },
+    "action": "idle",
+    "expected": {
+      "consecutive_attempts": 0,
+      "last_attempt_ts": 0.0,
+      "last_user_off_ts": 0.0,
+      "error_message": null,
+      "last_high_output_ts": 1000.0,
+      "first_low_ts": 1032.0,
+      "low_samples": 1,
+      "last_sample_ts": 1032.0,
+      "hw_trip_active": false,
+      "episode_cycles": 0
+    }
+  },
+  {
+    "input": {
+      "state": {
+        "consecutive_attempts": 0,
+        "last_attempt_ts": 0.0,
+        "last_user_off_ts": 0.0,
+        "error_message": null,
+        "last_high_output_ts": 1000.0,
+        "first_low_ts": 1032.0,
+        "low_samples": 1,
+        "last_sample_ts": 1032.0,
+        "hw_trip_active": false,
+        "episode_cycles": 0,
+        "pending_count": 0
+      },
+      "ac_on": true,
+      "output_w": 0.0,
+      "sample_ts": 1034.0,
+      "collapse_floor_w": 20.0,
+      "now_ts": 1034.0,
+      "retry_interval_s": 10.0,
+      "user_grace_s": 60.0
+    },
+    "action": "idle",
+    "expected": {
+      "consecutive_attempts": 0,
+      "last_attempt_ts": 0.0,
+      "last_user_off_ts": 0.0,
+      "error_message": null,
+      "last_high_output_ts": 1000.0,
+      "first_low_ts": 1032.0,
+      "low_samples": 2,
+      "last_sample_ts": 1034.0,
+      "hw_trip_active": false,
+      "episode_cycles": 0
+    }
+  },
+  {
+    "input": {
+      "state": {
+        "consecutive_attempts": 0,
+        "last_attempt_ts": 0.0,
+        "last_user_off_ts": 0.0,
+        "error_message": null,
+        "last_high_output_ts": 1000.0,
+        "first_low_ts": 1032.0,
+        "low_samples": 2,
+        "last_sample_ts": 1034.0,
+        "hw_trip_active": false,
+        "episode_cycles": 0,
+        "pending_count": 0
+      },
+      "ac_on": true,
+      "output_w": 0.0,
+      "sample_ts": 1040.0,
+      "collapse_floor_w": 20.0,
+      "now_ts": 1040.0,
+      "retry_interval_s": 10.0,
+      "user_grace_s": 60.0
+    },
+    "action": "idle",
+    "expected": {
+      "consecutive_attempts": 0,
+      "last_attempt_ts": 0.0,
+      "last_user_off_ts": 0.0,
+      "error_message": null,
+      "last_high_output_ts": 1000.0,
+      "first_low_ts": 1032.0,
+      "low_samples": 3,
+      "last_sample_ts": 1040.0,
+      "hw_trip_active": false,
+      "episode_cycles": 0
+    }
+  },
+  {
+    "input": {
+      "state": {
+        "consecutive_attempts": 0,
+        "last_attempt_ts": 0.0,
+        "last_user_off_ts": 0.0,
+        "error_message": null,
+        "last_high_output_ts": 0.0,
+        "first_low_ts": 0.0,
+        "low_samples": 0,
+        "last_sample_ts": 0.0,
+        "hw_trip_active": false,
+        "episode_cycles": 0,
+        "pending_count": 0
+      },
+      "ac_on": true,
+      "output_w": 900.0,
+      "sample_ts": 1000.0,
+      "collapse_floor_w": 20.0,
+      "now_ts": 1000.0,
+      "retry_interval_s": 10.0,
+      "user_grace_s": 60.0
+    },
+    "action": "idle",
+    "expected": {
+      "consecutive_attempts": 0,
+      "last_attempt_ts": 0.0,
+      "last_user_off_ts": 0.0,
+      "error_message": null,
+      "last_high_output_ts": 1000.0,
+      "first_low_ts": 0.0,
+      "low_samples": 0,
+      "last_sample_ts": 1000.0,
+      "hw_trip_active": false,
+      "episode_cycles": 0
+    }
+  },
+  {
+    "input": {
+      "state": {
+        "consecutive_attempts": 0,
+        "last_attempt_ts": 0.0,
+        "last_user_off_ts": 0.0,
+        "error_message": null,
+        "last_high_output_ts": 1000.0,
+        "first_low_ts": 0.0,
+        "low_samples": 0,
+        "last_sample_ts": 1000.0,
+        "hw_trip_active": false,
+        "episode_cycles": 0,
+        "pending_count": 0
+      },
+      "ac_on": true,
+      "output_w": 0.0,
+      "sample_ts": 1002.0,
+      "collapse_floor_w": 20.0,
+      "now_ts": 1002.0,
+      "retry_interval_s": 10.0,
+      "user_grace_s": 60.0
+    },
+    "action": "idle",
+    "expected": {
+      "consecutive_attempts": 0,
+      "last_attempt_ts": 0.0,
+      "last_user_off_ts": 0.0,
+      "error_message": null,
+      "last_high_output_ts": 1000.0,
+      "first_low_ts": 1002.0,
+      "low_samples": 1,
+      "last_sample_ts": 1002.0,
+      "hw_trip_active": false,
+      "episode_cycles": 0
+    }
+  },
+  {
+    "input": {
+      "state": {
+        "consecutive_attempts": 0,
+        "last_attempt_ts": 0.0,
+        "last_user_off_ts": 0.0,
+        "error_message": null,
+        "last_high_output_ts": 1000.0,
+        "first_low_ts": 1002.0,
+        "low_samples": 1,
+        "last_sample_ts": 1002.0,
+        "hw_trip_active": false,
+        "episode_cycles": 0,
+        "pending_count": 0
+      },
+      "ac_on": true,
+      "output_w": 0.0,
+      "sample_ts": 1004.0,
+      "collapse_floor_w": 20.0,
+      "now_ts": 1004.0,
+      "retry_interval_s": 10.0,
+      "user_grace_s": 60.0
+    },
+    "action": "idle",
+    "expected": {
+      "consecutive_attempts": 0,
+      "last_attempt_ts": 0.0,
+      "last_user_off_ts": 0.0,
+      "error_message": null,
+      "last_high_output_ts": 1000.0,
+      "first_low_ts": 1002.0,
+      "low_samples": 2,
+      "last_sample_ts": 1004.0,
+      "hw_trip_active": false,
+      "episode_cycles": 0
+    }
+  },
+  {
+    "input": {
+      "state": {
+        "consecutive_attempts": 0,
+        "last_attempt_ts": 0.0,
+        "last_user_off_ts": 0.0,
+        "error_message": null,
+        "last_high_output_ts": 1000.0,
+        "first_low_ts": 1002.0,
+        "low_samples": 2,
+        "last_sample_ts": 1004.0,
+        "hw_trip_active": false,
+        "episode_cycles": 0,
+        "pending_count": 0
+      },
+      "ac_on": true,
+      "output_w": 0.0,
+      "sample_ts": 1008.0,
+      "collapse_floor_w": 20.0,
+      "now_ts": 1008.0,
+      "retry_interval_s": 10.0,
+      "user_grace_s": 60.0
+    },
+    "action": "cycle",
+    "expected": {
+      "consecutive_attempts": 1,
+      "last_attempt_ts": 1008.0,
+      "last_user_off_ts": 0.0,
+      "error_message": null,
+      "last_high_output_ts": 1000.0,
+      "first_low_ts": 1002.0,
+      "low_samples": 3,
+      "last_sample_ts": 1008.0,
+      "hw_trip_active": true,
+      "episode_cycles": 1
+    }
+  },
+  {
+    "input": {
+      "state": {
+        "consecutive_attempts": 1,
+        "last_attempt_ts": 1008.0,
+        "last_user_off_ts": 0.0,
+        "error_message": null,
+        "last_high_output_ts": 1000.0,
+        "first_low_ts": 1002.0,
+        "low_samples": 3,
+        "last_sample_ts": 1008.0,
+        "hw_trip_active": true,
+        "episode_cycles": 1,
+        "pending_count": 0
+      },
+      "ac_on": true,
+      "output_w": 120.0,
+      "sample_ts": 1012.0,
+      "collapse_floor_w": 20.0,
+      "now_ts": 1012.0,
+      "retry_interval_s": 10.0,
+      "user_grace_s": 60.0
+    },
+    "action": "idle",
+    "expected": {
+      "consecutive_attempts": 0,
+      "last_attempt_ts": 1008.0,
+      "last_user_off_ts": 0.0,
+      "error_message": null,
+      "last_high_output_ts": 1000.0,
+      "first_low_ts": 0.0,
+      "low_samples": 0,
+      "last_sample_ts": 1012.0,
+      "hw_trip_active": false,
+      "episode_cycles": 0
+    }
+  },
+  {
+    "input": {
+      "state": {
+        "consecutive_attempts": 0,
+        "last_attempt_ts": 0.0,
+        "last_user_off_ts": 0.0,
+        "error_message": null,
+        "last_high_output_ts": 0.0,
+        "first_low_ts": 0.0,
+        "low_samples": 0,
+        "last_sample_ts": 0.0,
+        "hw_trip_active": false,
+        "episode_cycles": 0,
+        "pending_count": 0
+      },
+      "ac_on": true,
+      "output_w": 900.0,
+      "sample_ts": 1000.0,
+      "collapse_floor_w": 20.0,
+      "now_ts": 1000.0,
+      "retry_interval_s": 10.0,
+      "user_grace_s": 60.0
+    },
+    "action": "idle",
+    "expected": {
+      "consecutive_attempts": 0,
+      "last_attempt_ts": 0.0,
+      "last_user_off_ts": 0.0,
+      "error_message": null,
+      "last_high_output_ts": 1000.0,
+      "first_low_ts": 0.0,
+      "low_samples": 0,
+      "last_sample_ts": 1000.0,
+      "hw_trip_active": false,
+      "episode_cycles": 0
+    }
+  },
+  {
+    "input": {
+      "state": {
+        "consecutive_attempts": 0,
+        "last_attempt_ts": 0.0,
+        "last_user_off_ts": 1001.0,
+        "error_message": null,
+        "last_high_output_ts": 1000.0,
+        "first_low_ts": 0.0,
+        "low_samples": 0,
+        "last_sample_ts": 1000.0,
+        "hw_trip_active": false,
+        "episode_cycles": 0,
+        "pending_count": 0
+      },
+      "ac_on": true,
+      "output_w": 0.0,
+      "sample_ts": 1002.0,
+      "collapse_floor_w": 20.0,
+      "now_ts": 1002.0,
+      "retry_interval_s": 10.0,
+      "user_grace_s": 60.0
+    },
+    "action": "idle",
+    "expected": {
+      "consecutive_attempts": 0,
+      "last_attempt_ts": 0.0,
+      "last_user_off_ts": 1001.0,
+      "error_message": null,
+      "last_high_output_ts": 1000.0,
+      "first_low_ts": 0.0,
+      "low_samples": 0,
+      "last_sample_ts": 1000.0,
+      "hw_trip_active": false,
+      "episode_cycles": 0
+    }
+  },
+  {
+    "input": {
+      "state": {
+        "consecutive_attempts": 0,
+        "last_attempt_ts": 0.0,
+        "last_user_off_ts": 1001.0,
+        "error_message": null,
+        "last_high_output_ts": 1000.0,
+        "first_low_ts": 0.0,
+        "low_samples": 0,
+        "last_sample_ts": 1000.0,
+        "hw_trip_active": false,
+        "episode_cycles": 0,
+        "pending_count": 0
+      },
+      "ac_on": true,
+      "output_w": 0.0,
+      "sample_ts": 1004.0,
+      "collapse_floor_w": 20.0,
+      "now_ts": 1004.0,
+      "retry_interval_s": 10.0,
+      "user_grace_s": 60.0
+    },
+    "action": "idle",
+    "expected": {
+      "consecutive_attempts": 0,
+      "last_attempt_ts": 0.0,
+      "last_user_off_ts": 1001.0,
+      "error_message": null,
+      "last_high_output_ts": 1000.0,
+      "first_low_ts": 0.0,
+      "low_samples": 0,
+      "last_sample_ts": 1000.0,
+      "hw_trip_active": false,
+      "episode_cycles": 0
+    }
+  },
+  {
+    "input": {
+      "state": {
+        "consecutive_attempts": 0,
+        "last_attempt_ts": 0.0,
+        "last_user_off_ts": 1001.0,
+        "error_message": null,
+        "last_high_output_ts": 1000.0,
+        "first_low_ts": 0.0,
+        "low_samples": 0,
+        "last_sample_ts": 1000.0,
+        "hw_trip_active": false,
+        "episode_cycles": 0,
+        "pending_count": 0
+      },
+      "ac_on": true,
+      "output_w": 0.0,
+      "sample_ts": 1008.0,
+      "collapse_floor_w": 20.0,
+      "now_ts": 1008.0,
+      "retry_interval_s": 10.0,
+      "user_grace_s": 60.0
+    },
+    "action": "idle",
+    "expected": {
+      "consecutive_attempts": 0,
+      "last_attempt_ts": 0.0,
+      "last_user_off_ts": 1001.0,
+      "error_message": null,
+      "last_high_output_ts": 1000.0,
+      "first_low_ts": 0.0,
+      "low_samples": 0,
+      "last_sample_ts": 1000.0,
+      "hw_trip_active": false,
+      "episode_cycles": 0
+    }
+  },
+  {
+    "input": {
+      "state": {
+        "consecutive_attempts": 0,
+        "last_attempt_ts": 0.0,
+        "last_user_off_ts": 1001.0,
+        "error_message": null,
+        "last_high_output_ts": 1000.0,
+        "first_low_ts": 0.0,
+        "low_samples": 0,
+        "last_sample_ts": 1000.0,
+        "hw_trip_active": false,
+        "episode_cycles": 0,
+        "pending_count": 0
+      },
+      "ac_on": true,
+      "output_w": 0.0,
+      "sample_ts": 1010.0,
+      "collapse_floor_w": 20.0,
+      "now_ts": 1010.0,
+      "retry_interval_s": 10.0,
+      "user_grace_s": 60.0
+    },
+    "action": "idle",
+    "expected": {
+      "consecutive_attempts": 0,
+      "last_attempt_ts": 0.0,
+      "last_user_off_ts": 1001.0,
+      "error_message": null,
+      "last_high_output_ts": 1000.0,
+      "first_low_ts": 0.0,
+      "low_samples": 0,
+      "last_sample_ts": 1000.0,
+      "hw_trip_active": false,
+      "episode_cycles": 0
+    }
+  },
+  {
+    "input": {
+      "state": {
+        "consecutive_attempts": 0,
+        "last_attempt_ts": 0.0,
+        "last_user_off_ts": 0.0,
+        "error_message": null,
+        "last_high_output_ts": 0.0,
+        "first_low_ts": 0.0,
+        "low_samples": 0,
+        "last_sample_ts": 0.0,
+        "hw_trip_active": false,
+        "episode_cycles": 0,
+        "pending_count": 0
+      },
+      "ac_on": true,
+      "output_w": null,
+      "sample_ts": null,
+      "collapse_floor_w": 0.0,
+      "now_ts": 1000.0,
+      "retry_interval_s": 10.0,
+      "user_grace_s": 60.0
+    },
+    "action": "idle",
+    "expected": {
+      "consecutive_attempts": 0,
+      "last_attempt_ts": 0.0,
+      "last_user_off_ts": 0.0,
+      "error_message": null,
+      "last_high_output_ts": 0.0,
+      "first_low_ts": 0.0,
+      "low_samples": 0,
+      "last_sample_ts": 0.0,
+      "hw_trip_active": false,
+      "episode_cycles": 0
+    }
+  },
+  {
+    "input": {
+      "state": {
+        "consecutive_attempts": 0,
+        "last_attempt_ts": 0.0,
+        "last_user_off_ts": 0.0,
+        "error_message": null,
+        "last_high_output_ts": 0.0,
+        "first_low_ts": 0.0,
+        "low_samples": 0,
+        "last_sample_ts": 0.0,
+        "hw_trip_active": false,
+        "episode_cycles": 0,
+        "pending_count": 0
+      },
+      "ac_on": false,
+      "output_w": null,
+      "sample_ts": null,
+      "collapse_floor_w": 0.0,
+      "now_ts": 1002.0,
+      "retry_interval_s": 10.0,
+      "user_grace_s": 60.0
+    },
+    "action": "idle",
+    "expected": {
+      "consecutive_attempts": 0,
+      "last_attempt_ts": 0.0,
+      "last_user_off_ts": 0.0,
+      "error_message": null,
+      "last_high_output_ts": 0.0,
+      "first_low_ts": 0.0,
+      "low_samples": 0,
+      "last_sample_ts": 0.0,
+      "hw_trip_active": false,
+      "episode_cycles": 0
+    }
+  },
+  {
+    "input": {
+      "state": {
+        "consecutive_attempts": 0,
+        "last_attempt_ts": 0.0,
+        "last_user_off_ts": 0.0,
+        "error_message": null,
+        "last_high_output_ts": 0.0,
+        "first_low_ts": 0.0,
+        "low_samples": 0,
+        "last_sample_ts": 0.0,
+        "hw_trip_active": false,
+        "episode_cycles": 0,
+        "pending_count": 0
+      },
+      "ac_on": true,
+      "output_w": 1795.0,
+      "sample_ts": 1000.0,
+      "collapse_floor_w": 20.0,
+      "now_ts": 1000.0,
+      "retry_interval_s": 10.0,
+      "user_grace_s": 60.0
+    },
+    "action": "idle",
+    "expected": {
+      "consecutive_attempts": 0,
+      "last_attempt_ts": 0.0,
+      "last_user_off_ts": 0.0,
+      "error_message": null,
+      "last_high_output_ts": 1000.0,
+      "first_low_ts": 0.0,
+      "low_samples": 0,
+      "last_sample_ts": 1000.0,
+      "hw_trip_active": false,
+      "episode_cycles": 0
+    }
+  },
+  {
+    "input": {
+      "state": {
+        "consecutive_attempts": 0,
+        "last_attempt_ts": 0.0,
+        "last_user_off_ts": 0.0,
+        "error_message": null,
+        "last_high_output_ts": 1000.0,
+        "first_low_ts": 0.0,
+        "low_samples": 0,
+        "last_sample_ts": 1000.0,
+        "hw_trip_active": false,
+        "episode_cycles": 0,
+        "pending_count": 0
+      },
+      "ac_on": true,
+      "output_w": 0.0,
+      "sample_ts": 1002.0,
+      "collapse_floor_w": 20.0,
+      "now_ts": 1002.0,
+      "retry_interval_s": 10.0,
+      "user_grace_s": 60.0
+    },
+    "action": "idle",
+    "expected": {
+      "consecutive_attempts": 0,
+      "last_attempt_ts": 0.0,
+      "last_user_off_ts": 0.0,
+      "error_message": null,
+      "last_high_output_ts": 1000.0,
+      "first_low_ts": 1002.0,
+      "low_samples": 1,
+      "last_sample_ts": 1002.0,
+      "hw_trip_active": false,
+      "episode_cycles": 0
+    }
+  },
+  {
+    "input": {
+      "state": {
+        "consecutive_attempts": 0,
+        "last_attempt_ts": 0.0,
+        "last_user_off_ts": 0.0,
+        "error_message": null,
+        "last_high_output_ts": 1000.0,
+        "first_low_ts": 1002.0,
+        "low_samples": 1,
+        "last_sample_ts": 1002.0,
+        "hw_trip_active": false,
+        "episode_cycles": 0,
+        "pending_count": 0
+      },
+      "ac_on": true,
+      "output_w": 0.0,
+      "sample_ts": 1004.0,
+      "collapse_floor_w": 20.0,
+      "now_ts": 1004.0,
+      "retry_interval_s": 10.0,
+      "user_grace_s": 60.0
+    },
+    "action": "idle",
+    "expected": {
+      "consecutive_attempts": 0,
+      "last_attempt_ts": 0.0,
+      "last_user_off_ts": 0.0,
+      "error_message": null,
+      "last_high_output_ts": 1000.0,
+      "first_low_ts": 1002.0,
+      "low_samples": 2,
+      "last_sample_ts": 1004.0,
+      "hw_trip_active": false,
+      "episode_cycles": 0
+    }
+  },
+  {
+    "input": {
+      "state": {
+        "consecutive_attempts": 0,
+        "last_attempt_ts": 0.0,
+        "last_user_off_ts": 0.0,
+        "error_message": null,
+        "last_high_output_ts": 1000.0,
+        "first_low_ts": 1002.0,
+        "low_samples": 2,
+        "last_sample_ts": 1004.0,
+        "hw_trip_active": false,
+        "episode_cycles": 0,
+        "pending_count": 0
+      },
+      "ac_on": true,
+      "output_w": 0.0,
+      "sample_ts": 1008.0,
+      "collapse_floor_w": 20.0,
+      "now_ts": 1008.0,
+      "retry_interval_s": 10.0,
+      "user_grace_s": 60.0
+    },
+    "action": "cycle",
+    "expected": {
+      "consecutive_attempts": 1,
+      "last_attempt_ts": 1008.0,
+      "last_user_off_ts": 0.0,
+      "error_message": null,
+      "last_high_output_ts": 1000.0,
+      "first_low_ts": 1002.0,
+      "low_samples": 3,
+      "last_sample_ts": 1008.0,
+      "hw_trip_active": true,
+      "episode_cycles": 1
+    }
+  },
+  {
+    "input": {
+      "state": {
+        "consecutive_attempts": 1,
+        "last_attempt_ts": 1008.0,
+        "last_user_off_ts": 0.0,
+        "error_message": null,
+        "last_high_output_ts": 1000.0,
+        "first_low_ts": 1002.0,
+        "low_samples": 3,
+        "last_sample_ts": 1008.0,
+        "hw_trip_active": true,
+        "episode_cycles": 1,
+        "pending_count": 1
+      },
+      "ac_on": true,
+      "output_w": 0.0,
+      "sample_ts": 1020.0,
+      "collapse_floor_w": 20.0,
+      "now_ts": 1020.0,
+      "retry_interval_s": 10.0,
+      "user_grace_s": 60.0
+    },
+    "action": "user_grace",
+    "expected": {
+      "consecutive_attempts": 1,
+      "last_attempt_ts": 1008.0,
+      "last_user_off_ts": 0.0,
+      "error_message": null,
+      "last_high_output_ts": 1000.0,
+      "first_low_ts": 0.0,
+      "low_samples": 0,
+      "last_sample_ts": 1008.0,
+      "hw_trip_active": true,
+      "episode_cycles": 1
+    }
+  },
+  {
+    "input": {
+      "state": {
+        "consecutive_attempts": 1,
+        "last_attempt_ts": 1008.0,
+        "last_user_off_ts": 1020.0,
+        "error_message": null,
+        "last_high_output_ts": 1000.0,
+        "first_low_ts": 0.0,
+        "low_samples": 0,
+        "last_sample_ts": 1008.0,
+        "hw_trip_active": true,
+        "episode_cycles": 1,
+        "pending_count": 0
+      },
+      "ac_on": true,
+      "output_w": 0.0,
+      "sample_ts": 1021.0,
+      "collapse_floor_w": 20.0,
+      "now_ts": 1021.0,
+      "retry_interval_s": 10.0,
+      "user_grace_s": 60.0
+    },
+    "action": "user_grace",
+    "expected": {
+      "consecutive_attempts": 1,
+      "last_attempt_ts": 1008.0,
+      "last_user_off_ts": 1020.0,
+      "error_message": null,
+      "last_high_output_ts": 1000.0,
+      "first_low_ts": 0.0,
+      "low_samples": 0,
+      "last_sample_ts": 1008.0,
+      "hw_trip_active": true,
+      "episode_cycles": 1
+    }
+  }
+]
