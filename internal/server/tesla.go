@@ -48,6 +48,7 @@ type teslaRuntime struct {
 	loginNeeded bool
 	job         *teslaJob
 	pollNow     chan struct{}
+	places      *tesla.PlaceResolver // keeps its lookup cache across batches
 
 	// HTTP overrides the Fleet API transport in tests.
 	HTTP tesla.HTTPDoer
@@ -187,7 +188,7 @@ func (s *Server) saveTeslaSessionCache(c *cache.SessionCache) {
 }
 
 func (s *Server) teslaClient(cfg tesla.Config, withKey bool) (*tesla.Client, error) {
-	c := &tesla.Client{Config: cfg, HTTP: s.tesla.http(), Tokens: teslaTokenSource{s: s, cfg: cfg}}
+	c := &tesla.Client{Config: cfg, HTTP: s.tesla.http(), Tokens: teslaTokenSource{s: s, cfg: cfg}, Places: s.teslaPlaces(cfg.GoogleAPIKey)}
 	if withKey {
 		k, err := s.teslaPrivateKey()
 		if err != nil {
@@ -197,6 +198,17 @@ func (s *Server) teslaClient(cfg tesla.Config, withKey bool) (*tesla.Client, err
 		c.Sessions = s.teslaSessionCache()
 	}
 	return c, nil
+}
+
+// teslaPlaces returns the shared place resolver for this API key.
+func (s *Server) teslaPlaces(key string) *tesla.PlaceResolver {
+	rt := &s.tesla
+	rt.mu.Lock()
+	defer rt.mu.Unlock()
+	if rt.places == nil || rt.places.APIKey != key {
+		rt.places = &tesla.PlaceResolver{HTTP: rt.http(), APIKey: key}
+	}
+	return rt.places
 }
 
 // costRate returns the monitor's home electricity rate function.
@@ -333,11 +345,12 @@ func (s *Server) teslaRoutes(w http.ResponseWriter, r *http.Request, b map[strin
 			storageError(w, err)
 			return true
 		}
-		hasSecret := cfg.ClientSecret != ""
-		cfg.ClientSecret = ""
+		hasSecret, hasGoogle := cfg.ClientSecret != "", cfg.GoogleAPIKey != ""
+		cfg.ClientSecret, cfg.GoogleAPIKey = "", ""
 		out, _ := toMap(cfg)
 		out["configured"] = true
 		out["has_client_secret"] = hasSecret
+		out["has_google_api_key"] = hasGoogle
 		jsonOut(w, 200, out)
 	case "POST /config":
 		s.teslaSaveConfig(w, b)
@@ -424,6 +437,11 @@ func (s *Server) teslaSaveConfig(w http.ResponseWriter, b map[string]any) {
 	// Keep the stored secret unless a new one is supplied.
 	if next.ClientSecret == "" {
 		next.ClientSecret = prev.ClientSecret
+	}
+	if next.GoogleAPIKey == "" {
+		next.GoogleAPIKey = prev.GoogleAPIKey
+	} else if next.GoogleAPIKey == "-" { // explicit removal
+		next.GoogleAPIKey = ""
 	}
 	next = next.WithDefaults()
 	if err := next.Validate(); err != nil {
@@ -589,6 +607,14 @@ func (s *Server) teslaNavigate(w http.ResponseWriter, r *http.Request, b map[str
 		fail(w, 400, err.Error())
 		return
 	}
+	method, err := optString(b, "method", tesla.MethodWaypoints, tesla.MethodGPS)
+	if err != nil {
+		fail(w, 400, err.Error())
+		return
+	}
+	if method != "" {
+		cfg.NavMethod = method
+	}
 	if transport != "" {
 		cfg.NavTransport = transport
 	}
@@ -601,7 +627,7 @@ func (s *Server) teslaNavigate(w http.ResponseWriter, r *http.Request, b map[str
 	}
 	buf := make([]byte, 6)
 	_, _ = rand.Read(buf)
-	job := &teslaJob{ID: base64.RawURLEncoding.EncodeToString(buf), Status: "running", Started: time.Now().Unix(), Stops: req.Stops, Options: map[string]string{"transport": cfg.NavTransport, "order_mode": cfg.NavOrderMode}}
+	job := &teslaJob{ID: base64.RawURLEncoding.EncodeToString(buf), Status: "running", Started: time.Now().Unix(), Stops: req.Stops, Options: map[string]string{"method": cfg.NavMethod, "transport": cfg.NavTransport, "order_mode": cfg.NavOrderMode}}
 	if !s.tesla.cmdMu.TryLock() {
 		fail(w, 409, "another navigation batch is being sent")
 		return
@@ -713,6 +739,8 @@ func (s *Server) teslaStatus() map[string]any {
 		out["redirect_uri"] = cfg.RedirectURI
 		out["nav_transport"] = cfg.NavTransport
 		out["nav_order_mode"] = cfg.NavOrderMode
+		out["nav_method"] = cfg.NavMethod
+		out["has_google_api_key"] = cfg.GoogleAPIKey != ""
 		out["polling_disabled"] = cfg.PollingDisabled
 	}
 	_, keyErr := s.teslaPrivateKey()

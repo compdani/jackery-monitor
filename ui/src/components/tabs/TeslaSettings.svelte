@@ -12,7 +12,10 @@
     domain?: string;
     redirect_uri?: string;
     nav_transport?: string;
+    nav_method?: string;
     nav_order_mode?: string;
+    google_api_key?: string;
+    has_google_api_key?: boolean;
     charge_efficiency?: number;
     home_radius_m?: number;
     poll_idle_minutes?: number;
@@ -60,11 +63,20 @@
     scope?: string;
     charge?: Sample;
     active_session?: Session;
+    last_navigation?: NavJob;
+  };
+  type NavJob = {
+    status: string;
+    started: number;
+    error?: string;
+    options?: Record<string, string>;
+    results?: { index: number; order: number; ok: boolean; error?: string; place_id?: string; address?: string }[];
   };
 
   let status = $state<Status | null>(null);
-  let cfg = $state<Config>({ region: 'na', nav_transport: 'signed', nav_order_mode: 'enum' });
+  let cfg = $state<Config>({ region: 'na', nav_transport: 'signed', nav_method: 'gps', nav_order_mode: 'enum' });
   let secret = $state('');
+  let googleKey = $state('');
   let msg = $state('');
   let busy = $state(false);
   let appToken = $state('');
@@ -121,11 +133,17 @@
   function saveConfig(e: SubmitEvent) {
     e.preventDefault();
     return run('Save', async () => {
-      const body: Config = { ...cfg, client_secret: secret.trim() || undefined };
+      const body: Config = {
+        ...cfg,
+        client_secret: secret.trim() || undefined,
+        google_api_key: googleKey.trim() || undefined,
+      };
       delete body.configured;
       delete body.has_client_secret;
+      delete body.has_google_api_key;
       await apiPost('/tesla/config', body);
       secret = '';
+      googleKey = '';
       return 'Saved.';
     });
   }
@@ -289,14 +307,35 @@
         </div>
       </div>
       <div class="settings-row">
+        <label class="settings-label" for="t-method">
+          <span class="settings-label-text">Route method</span>
+          <span class="settings-hint">One GPS command per stop, or one route of Google places (needs the key below).</span>
+        </label>
+        <div class="settings-control">
+          <select id="t-method" class="device-select" bind:value={cfg.nav_method}>
+            <option value="gps">GPS command per stop</option>
+            <option value="waypoints">One route (Google places)</option>
+          </select>
+        </div>
+      </div>
+      <div class="settings-row">
+        <label class="settings-label" for="t-gkey">
+          <span class="settings-label-text">Google Maps API key</span>
+          <span class="settings-hint">{cfg.has_google_api_key ? 'Saved. Leave blank to keep it.' : 'Geocoding API. Only for the route method.'}</span>
+        </label>
+        <div class="settings-control">
+          <input id="t-gkey" class="device-select" type="password" autocomplete="off" bind:value={googleKey} />
+        </div>
+      </div>
+      <div class="settings-row">
         <label class="settings-label" for="t-order">
           <span class="settings-label-text">Stop order field</span>
           <span class="settings-hint">How the car reads "order": replace/append, or stop position.</span>
         </label>
         <div class="settings-control">
           <select id="t-order" class="device-select" bind:value={cfg.nav_order_mode}>
-            <option value="enum">Replace, then append</option>
-            <option value="position">Position number</option>
+            <option value="enum">Replace, then append (0, 2, 2…)</option>
+            <option value="position">Position number (1, 2, 3…)</option>
           </select>
         </div>
       </div>
@@ -351,6 +390,26 @@
     {/if}
   </div>
 </section>
+
+{#if status?.last_navigation}
+  {@const job = status.last_navigation}
+  <section class="card device-card">
+    <div class="card-header">
+      <h2>Last send</h2>
+      <span class="hint">{job.status} · {fmtTime(job.started)}</span>
+    </div>
+    <p class="hint" style="margin:6px 0 8px">
+      {job.options?.method ?? 'gps'} · {job.options?.transport} · order {job.options?.order_mode}
+      {#if job.error}<br />{job.error}{/if}
+    </p>
+    {#each job.results ?? [] as r (r.index)}
+      <p class="hint" style="margin:2px 0">
+        Stop {r.index + 1}: {job.options?.method === 'waypoints' ? (r.address ?? r.place_id) : `order ${r.order}`} ·
+        {r.ok ? 'accepted' : (r.error ?? 'failed')}
+      </p>
+    {/each}
+  </section>
+{/if}
 
 <section class="card device-card">
   <div class="card-header"><h2>TeslaHelper app token</h2></div>

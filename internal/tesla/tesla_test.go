@@ -189,6 +189,7 @@ func TestNavigateRESTSendsOrdersAndStopsOnFailure(t *testing.T) {
 		return 200, `{"response":{"result":true,"reason":""}}`
 	}}
 	c := testClient(h, TransportREST)
+	c.Config.NavMethod = MethodGPS
 	stops := []Stop{{Lat: 1, Lng: 1}, {Lat: 2, Lng: 2}, {Lat: 3, Lng: 3}, {Lat: 4, Lng: 4}}
 	res, err := c.Navigate(context.Background(), stops)
 	if err != nil {
@@ -208,6 +209,84 @@ func TestNavigateRESTSendsOrdersAndStopsOnFailure(t *testing.T) {
 	}
 	if !strings.HasSuffix(h.reqs[0].URL.Path, "/api/1/vehicles/5YJ3E1EA7KF000000/command/navigation_gps_request") {
 		t.Errorf("path %s", h.reqs[0].URL.Path)
+	}
+}
+
+func geocodeFake(t *testing.T, fleet func(*http.Request) (int, string)) *fakeHTTP {
+	return &fakeHTTP{handle: func(r *http.Request) (int, string) {
+		if strings.HasPrefix(r.URL.String(), GeocodeURL) {
+			q := r.URL.Query()
+			if q.Get("key") != "gkey" {
+				return 200, `{"status":"REQUEST_DENIED","error_message":"bad key"}`
+			}
+			ll := q.Get("latlng")
+			if ll == "3.00000,3.00000" && q.Get("result_type") != "" {
+				return 200, `{"status":"ZERO_RESULTS","results":[]}`
+			}
+			return 200, `{"status":"OK","results":[{"place_id":"P` + ll + `","formatted_address":"addr ` + ll + `"}]}`
+		}
+		return fleet(r)
+	}}
+}
+
+func TestNavigateWaypointsSendsOneOrderedRoute(t *testing.T) {
+	h := geocodeFake(t, func(r *http.Request) (int, string) { return 200, `{"response":{"result":true,"reason":""}}` })
+	c := testClient(h, TransportREST)
+	c.Config.NavMethod = MethodWaypoints
+	c.Places = &PlaceResolver{HTTP: h, APIKey: "gkey"}
+	stops := []Stop{{Lat: 1, Lng: 1}, {Lat: 2, Lng: 2.5}, {Lat: 3, Lng: 3}}
+	res, err := c.Navigate(context.Background(), stops)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res) != 3 || !res[0].OK || !res[2].OK || res[1].PlaceID != "P2.00000,2.50000" {
+		t.Fatalf("results %+v", res)
+	}
+	var cmds []string
+	for i, r := range h.reqs {
+		if strings.Contains(r.URL.Path, "/command/") {
+			cmds = append(cmds, r.URL.Path)
+			var body map[string]any
+			_ = json.Unmarshal([]byte(h.bodies[i]), &body)
+			want := "refId:P1.00000,1.00000,refId:P2.00000,2.50000,refId:P3.00000,3.00000"
+			if body["waypoints"] != want {
+				t.Fatalf("waypoints %v", body["waypoints"])
+			}
+		}
+	}
+	if len(cmds) != 1 || !strings.HasSuffix(cmds[0], "/command/navigation_waypoints_request") {
+		t.Fatalf("commands %v", cmds)
+	}
+	// A resend uses the cache: no more geocoding requests.
+	n := len(h.reqs)
+	if _, err := c.Navigate(context.Background(), stops); err != nil {
+		t.Fatal(err)
+	}
+	if len(h.reqs) != n+1 {
+		t.Fatalf("resend made %d requests", len(h.reqs)-n)
+	}
+}
+
+func TestNavigateWaypointsSendsNothingIfAStopFails(t *testing.T) {
+	h := geocodeFake(t, func(r *http.Request) (int, string) { return 200, `{"response":{"result":true}}` })
+	c := testClient(h, TransportREST)
+	c.Config.NavMethod = MethodWaypoints
+	c.Places = &PlaceResolver{HTTP: h, APIKey: "wrong"}
+	res, err := c.Navigate(context.Background(), []Stop{{Lat: 1, Lng: 1}, {Lat: 2, Lng: 2}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res) != 1 || res[0].OK || !strings.Contains(res[0].Error, "REQUEST_DENIED") {
+		t.Fatalf("results %+v", res)
+	}
+	for _, r := range h.reqs {
+		if strings.Contains(r.URL.Path, "/command/") {
+			t.Fatal("command sent despite failed lookup")
+		}
+	}
+	c.Places = nil
+	if _, err := c.Navigate(context.Background(), []Stop{{Lat: 1, Lng: 1}}); err == nil || !strings.Contains(err.Error(), "Google Maps API key") {
+		t.Fatalf("missing key err %v", err)
 	}
 }
 

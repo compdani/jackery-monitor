@@ -37,6 +37,9 @@ func (f *teslaFake) Do(r *http.Request) (*http.Response, error) {
 		form, _ := url.ParseQuery(string(body))
 		f.forms = append(f.forms, form)
 		return reply(200, `{"access_token":"acc","refresh_token":"ref","expires_in":28800,"scope":"openid vehicle_cmds"}`)
+	case strings.HasSuffix(p, "/maps/api/geocode/json"):
+		ll := r.URL.Query().Get("latlng")
+		return reply(200, `{"status":"OK","results":[{"place_id":"P`+ll+`","formatted_address":"addr"}]}`)
 	case strings.HasSuffix(p, "/wake_up"):
 		f.state = "online"
 		return reply(200, `{"response":{"state":"asleep"}}`)
@@ -157,7 +160,25 @@ func TestTeslaOAuthAndNavigateREST(t *testing.T) {
 	if w := request(h, "POST", "/api/tesla/navigate", nine, token); w.Code != 400 {
 		t.Fatalf("9 stops accepted: %d", w.Code)
 	}
-	w = request(h, "POST", "/api/tesla/navigate", `{"stops":[{"lat":30.1,"lng":-97.1},{"lat":30.2,"lng":-97.2},{"lat":30.3,"lng":-97.3}]}`, token)
+	// Without a Google key the waypoints method refuses.
+	w = request(h, "POST", "/api/tesla/navigate", `{"method":"waypoints","stops":[{"lat":30.1,"lng":-97.1},{"lat":30.2,"lng":-97.2}]}`, token)
+	if w.Code != 502 || !strings.Contains(w.Body.String(), "Google Maps API key") {
+		t.Fatalf("no-key navigate %d %s", w.Code, w.Body)
+	}
+	if w := request(h, "POST", "/api/tesla/config", `{"client_id":"cid","vin":"5YJ3E1EA7KF000000","domain":"j.cdani.net","nav_transport":"rest","google_api_key":"gk"}`, token); w.Code != 200 {
+		t.Fatalf("config %d %s", w.Code, w.Body)
+	}
+	if w := request(h, "GET", "/api/tesla/config", "", token); strings.Contains(w.Body.String(), `"gk"`) || !strings.Contains(w.Body.String(), `"has_google_api_key":true`) || !strings.Contains(w.Body.String(), `"has_client_secret":true`) {
+		t.Fatalf("config leaks or lost secrets: %s", w.Body)
+	}
+	fake.commands = nil
+	w = request(h, "POST", "/api/tesla/navigate", `{"method":"waypoints","stops":[{"lat":30.1,"lng":-97.1},{"lat":30.2,"lng":-97.2}]}`, token)
+	if w.Code != 200 || len(fake.commands) != 1 || fake.commands[0]["waypoints"] != "refId:P30.10000,-97.10000,refId:P30.20000,-97.20000" {
+		t.Fatalf("waypoints navigate %d %s %v", w.Code, w.Body, fake.commands)
+	}
+
+	fake.commands = nil
+	w = request(h, "POST", "/api/tesla/navigate", `{"method":"gps","stops":[{"lat":30.1,"lng":-97.1},{"lat":30.2,"lng":-97.2},{"lat":30.3,"lng":-97.3}]}`, token)
 	if w.Code != 200 {
 		t.Fatalf("navigate %d %s", w.Code, w.Body)
 	}
@@ -171,7 +192,7 @@ func TestTeslaOAuthAndNavigateREST(t *testing.T) {
 	}
 	// Per-request override of the order semantics.
 	fake.commands = nil
-	request(h, "POST", "/api/tesla/navigate", `{"stops":[{"lat":30.1,"lng":-97.1},{"lat":30.2,"lng":-97.2}],"order_mode":"position"}`, token)
+	request(h, "POST", "/api/tesla/navigate", `{"method":"gps","stops":[{"lat":30.1,"lng":-97.1},{"lat":30.2,"lng":-97.2}],"order_mode":"position"}`, token)
 	if fake.commands[0]["order"] != 1.0 || fake.commands[1]["order"] != 2.0 {
 		t.Fatalf("position orders %v", fake.commands)
 	}

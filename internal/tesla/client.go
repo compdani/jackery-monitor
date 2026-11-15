@@ -45,7 +45,9 @@ type Client struct {
 	PrivateKeyHex string
 	// Sessions caches signed-command sessions between calls, avoiding a
 	// handshake round trip. Optional.
-	Sessions  *cache.SessionCache
+	Sessions *cache.SessionCache
+	// Places resolves stops to Google place IDs for MethodWaypoints.
+	Places    *PlaceResolver
 	UserAgent string
 	Now       func() time.Time
 	// PollInterval is how often Wake checks whether the car came online.
@@ -221,95 +223,143 @@ func (c *Client) ChargeState(ctx context.Context) (ChargeSample, error) {
 
 // StopResult is the outcome for one stop of a navigation batch.
 type StopResult struct {
-	Index int    `json:"index"`
-	Order int32  `json:"order"`
-	OK    bool   `json:"ok"`
-	Error string `json:"error,omitempty"`
+	Index   int    `json:"index"`
+	Order   int32  `json:"order"`
+	PlaceID string `json:"place_id,omitempty"`
+	Address string `json:"address,omitempty"`
+	OK      bool   `json:"ok"`
+	Error   string `json:"error,omitempty"`
 }
 
 // Navigate sends up to MaxStops stops, in order, through the configured
-// transport. It stops at the first failure, because later stops would be
-// appended out of order; resend from the failed stop. The car must be awake.
+// method and transport. The car must be awake.
+//
+// MethodWaypoints resolves every stop to a place first and sends nothing
+// unless all resolve; the batch then goes as one command. MethodGPS sends a
+// command per stop and stops at the first failure.
 func (c *Client) Navigate(ctx context.Context, stops []Stop) ([]StopResult, error) {
 	if err := ValidateStops(stops); err != nil {
 		return nil, err
 	}
-	if c.Config.NavTransport == TransportREST {
-		return c.navigateREST(ctx, stops)
+	if c.Config.NavMethod == MethodWaypoints {
+		return c.navigateWaypoints(ctx, stops)
 	}
-	return c.navigateSigned(ctx, stops)
+	return c.navigateGPS(ctx, stops)
 }
 
-func (c *Client) navigateREST(ctx context.Context, stops []Stop) ([]StopResult, error) {
-	results := make([]StopResult, 0, len(stops))
+func (c *Client) navigateWaypoints(ctx context.Context, stops []Stop) ([]StopResult, error) {
+	if c.Places == nil || c.Places.APIKey == "" {
+		return nil, errors.New("multi-stop routes need a Google Maps API key (Geocoding API) in the Tesla settings")
+	}
+	results := make([]StopResult, len(stops))
+	places := make([]Place, len(stops))
 	for i, s := range stops {
-		order := OrderFor(c.Config.NavOrderMode, i)
-		res := StopResult{Index: i, Order: order}
-		raw, err := c.do(ctx, "POST", c.vinPath()+"/command/navigation_gps_request", map[string]any{"lat": s.Lat, "lon": s.Lng, "order": order})
-		if err == nil {
-			var r struct {
-				Result bool   `json:"result"`
-				Reason string `json:"reason"`
-			}
-			if jerr := json.Unmarshal(raw, &r); jerr != nil {
-				err = jerr
-			} else if !r.Result {
-				err = fmt.Errorf("car rejected stop: %s", r.Reason)
-			}
-		}
+		results[i].Index = i
+		pl, err := c.Places.Resolve(ctx, s)
 		if err != nil {
-			res.Error = err.Error()
-			results = append(results, res)
-			return results, nil
+			results[i].Error = err.Error()
+			return results[:i+1], nil
 		}
-		res.OK = true
-		results = append(results, res)
+		places[i] = pl
+		results[i].PlaceID, results[i].Address = pl.ID, pl.Address
+	}
+	waypoints := WaypointsString(places)
+	var err error
+	if c.Config.NavTransport == TransportREST {
+		err = c.restCommand(ctx, "navigation_waypoints_request", map[string]any{"waypoints": waypoints})
+	} else {
+		err = c.withInfotainment(ctx, func(send func([]byte) error) error {
+			return send(EncodeWaypointsAction(waypoints))
+		})
+	}
+	for i := range results {
+		if err != nil {
+			results[i].Error = err.Error()
+		} else {
+			results[i].OK = true
+		}
 	}
 	return results, nil
 }
 
-func (c *Client) navigateSigned(ctx context.Context, stops []Stop) ([]StopResult, error) {
+func (c *Client) navigateGPS(ctx context.Context, stops []Stop) ([]StopResult, error) {
+	results := make([]StopResult, 0, len(stops))
+	sendAll := func(send func(Stop, int32) error) {
+		for i, s := range stops {
+			order := OrderFor(c.Config.NavOrderMode, i)
+			res := StopResult{Index: i, Order: order}
+			if err := send(s, order); err != nil {
+				res.Error = err.Error()
+				results = append(results, res)
+				return
+			}
+			res.OK = true
+			results = append(results, res)
+		}
+	}
+	if c.Config.NavTransport == TransportREST {
+		sendAll(func(s Stop, order int32) error {
+			return c.restCommand(ctx, "navigation_gps_request", map[string]any{"lat": s.Lat, "lon": s.Lng, "order": order})
+		})
+		return results, nil
+	}
+	err := c.withInfotainment(ctx, func(send func([]byte) error) error {
+		sendAll(func(s Stop, order int32) error { return send(EncodeGPSAction(s, order)) })
+		return nil
+	})
+	return results, err
+}
+
+// restCommand posts a plain Fleet API command and checks its result.
+func (c *Client) restCommand(ctx context.Context, name string, body map[string]any) error {
+	raw, err := c.do(ctx, "POST", c.vinPath()+"/command/"+name, body)
+	if err != nil {
+		return err
+	}
+	var r struct {
+		Result bool   `json:"result"`
+		Reason string `json:"reason"`
+	}
+	if err := json.Unmarshal(raw, &r); err != nil {
+		return err
+	}
+	if !r.Result {
+		return fmt.Errorf("car rejected command: %s", r.Reason)
+	}
+	return nil
+}
+
+// withInfotainment opens a signed infotainment session and runs fn with a
+// sender for serialized carserver.Action payloads.
+func (c *Client) withInfotainment(ctx context.Context, fn func(send func([]byte) error) error) error {
 	if c.PrivateKeyHex == "" {
-		return nil, errors.New("no virtual key generated")
+		return errors.New("no virtual key generated")
 	}
 	key, err := commandKey(c.PrivateKeyHex)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	token, err := c.Tokens.AccessToken(ctx)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	conn := inet.NewConnection(c.Config.VIN, "Bearer "+token, c.Config.Host(), c.userAgent())
 	defer conn.Close()
 	car, err := vehicle.NewVehicle(conn, key, c.Sessions)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	if err := car.Connect(ctx); err != nil {
-		return nil, fmt.Errorf("connect: %w", err)
+		return fmt.Errorf("connect: %w", err)
 	}
 	defer car.Disconnect()
 	if err := car.StartSession(ctx, []universal.Domain{universal.Domain_DOMAIN_INFOTAINMENT}); err != nil {
-		return nil, fmt.Errorf("start session (is the key paired with the car?): %w", err)
+		return fmt.Errorf("start session (is the key paired with the car?): %w", err)
 	}
 	if c.Sessions != nil {
 		defer func() { _ = car.UpdateCachedSessions(c.Sessions) }()
 	}
-	results := make([]StopResult, 0, len(stops))
-	for i, s := range stops {
-		order := OrderFor(c.Config.NavOrderMode, i)
-		res := StopResult{Index: i, Order: order}
-		err := sendInfotainment(ctx, car, conn, EncodeGPSAction(s, order))
-		if err != nil {
-			res.Error = err.Error()
-			results = append(results, res)
-			return results, nil
-		}
-		res.OK = true
-		results = append(results, res)
-	}
-	return results, nil
+	return fn(func(payload []byte) error { return sendInfotainment(ctx, car, conn, payload) })
 }
 
 func sendInfotainment(ctx context.Context, car *vehicle.Vehicle, conn *inet.Connection, payload []byte) error {
