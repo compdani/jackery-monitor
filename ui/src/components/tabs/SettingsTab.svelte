@@ -1,5 +1,6 @@
 <script lang="ts">
   import LocalBackups from "./LocalBackups.svelte";
+  import TeslaSettings from "./TeslaSettings.svelte";
   import { onMount } from 'svelte';
   import { api, apiPost } from '$lib/api';
   import {
@@ -28,7 +29,7 @@
     step?: number;
   };
 
-  type Subtab = 'general' | 'intelligence' | 'rates' | 'backup';
+  type Subtab = 'general' | 'intelligence' | 'rates' | 'tesla' | 'backup';
   type AiModel = { id: string; display_name?: string; supports_1m?: boolean };
   type TouSlot = {
     start_hour: number;
@@ -636,7 +637,7 @@
 
 <section class="tab-panel">
   <div class="settings-subtabs" role="tablist" aria-label="Settings sections">
-    {#each ['general', 'intelligence', 'rates', 'backup'] as name (name)}
+    {#each ['general', 'intelligence', 'rates', 'tesla', 'backup'] as name (name)}
       <button
         class="settings-subtab"
         class:on={subtab === name}
@@ -1265,6 +1266,10 @@
         </form>
       {/if}
     </section>
+  {/if}
+
+  {#if subtab === 'tesla'}
+    <TeslaSettings />
   {/if}
 
   {#if subtab === 'backup'}
