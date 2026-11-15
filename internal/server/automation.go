@@ -2,9 +2,7 @@ package server
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
-	"errors"
 	"github.com/compdani/jackery-monitor/internal/automation"
 	"github.com/compdani/jackery-monitor/internal/devices"
 	"github.com/compdani/jackery-monitor/internal/kasa"
@@ -32,6 +30,9 @@ func (s *Server) initControllers() {
 			}
 			return &kasa.Credentials{Email: str(m, "email"), Password: str(m, "password")}
 		})
+		if s.KasaBackend != nil {
+			client.Backend = s.KasaBackend
+		}
 		s.controllers.client = client
 		s.controllers.engine.Switch = devices.KasaSwitch{Client: client}
 	})
@@ -102,67 +103,6 @@ func (s *Server) evaluateRules(ctx context.Context, sn string, tele map[string]a
 	}
 }
 func (s *Server) automationRoutes(w http.ResponseWriter, r *http.Request, b map[string]any) bool {
-	if r.URL.Path == "/api/kasa/credentials" {
-		switch r.Method {
-		case "GET":
-			m, e := s.Store.Secret(s.Key, "kasa")
-			if e != nil && !errors.Is(e, sql.ErrNoRows) {
-				storageError(w, e)
-			} else {
-				jsonOut(w, 200, map[string]any{"email": str(m, "email"), "has_password": str(m, "password") != ""})
-			}
-		case "POST":
-			m, e := s.Store.Secret(s.Key, "kasa")
-			if e != nil && !errors.Is(e, sql.ErrNoRows) {
-				storageError(w, e)
-				return true
-			}
-			if m == nil {
-				m = map[string]any{}
-			}
-			if email := str(b, "email"); email != "" {
-				m["email"] = strings.TrimSpace(email)
-			}
-			if password := str(b, "password"); password != "" {
-				m["password"] = password
-			}
-			if str(m, "email") == "" || str(m, "password") == "" {
-				fail(w, 400, "email and password required")
-			} else if e = s.Store.SaveSecret(s.Key, "kasa", m); e != nil {
-				storageError(w, e)
-			} else {
-				jsonOut(w, 200, map[string]any{"ok": true})
-			}
-		case "DELETE":
-			e := s.Store.Delete("credentials", "kasa")
-			if e != nil && !errors.Is(e, sql.ErrNoRows) {
-				storageError(w, e)
-			} else {
-				jsonOut(w, 200, map[string]any{"ok": true})
-			}
-		default:
-			fail(w, 405, "method not allowed")
-		}
-		return true
-	}
-	if (r.URL.Path == "/api/kasa/test" && r.Method == "POST") || (r.URL.Path == "/api/kasa/status" && r.Method == "GET") {
-		host := str(b, "host")
-		if host == "" {
-			host = r.URL.Query().Get("host")
-		}
-		if host == "" {
-			fail(w, 400, "host required")
-			return true
-		}
-		s.initControllers()
-		info, e := s.controllers.client.Status(r.Context(), host)
-		if e != nil {
-			fail(w, 502, e.Error())
-		} else {
-			jsonOut(w, 200, info)
-		}
-		return true
-	}
 	const base = "/api/automation/rules"
 	if r.URL.Path != base && !strings.HasPrefix(r.URL.Path, base+"/") {
 		return false

@@ -22,6 +22,7 @@ import (
 	"github.com/compdani/jackery-monitor/internal/automation"
 	"github.com/compdani/jackery-monitor/internal/bridge"
 	"github.com/compdani/jackery-monitor/internal/forecast"
+	"github.com/compdani/jackery-monitor/internal/kasa"
 	"github.com/compdani/jackery-monitor/internal/store"
 	"github.com/pocketbase/pocketbase/core"
 )
@@ -52,6 +53,9 @@ type Server struct {
 	Weather       *forecast.WeatherClient
 	SolarForecast *forecast.SolarClient
 	forecasts     forecastRuntime
+	// KasaBackend replaces the native LAN transport in tests.
+	KasaBackend kasa.Backend
+	fleet       fleetRuntime
 }
 
 func (s *Server) Register(e *core.ServeEvent) {
@@ -412,6 +416,9 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if s.watchdogRoutes(w, r, b) {
+		return
+	}
+	if s.kasaRoutes(w, r, b) {
 		return
 	}
 	if s.automationRoutes(w, r, b) {

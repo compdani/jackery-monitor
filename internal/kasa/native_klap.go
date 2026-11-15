@@ -280,9 +280,15 @@ type smartDevice struct {
 	t     *klapTransport
 	info  map[string]any
 	power *float64
+	creds *Credentials
 }
 
 func (d *smartDevice) Update(ctx context.Context) error {
+	if d.t.session == nil {
+		if err := d.t.handshake(ctx, d.creds); err != nil {
+			return err
+		}
+	}
 	info, err := d.t.request(ctx, "get_device_info", nil)
 	if err != nil {
 		return err
@@ -340,6 +346,12 @@ type NativeBackend struct {
 	KlapPort int
 	// LegacyProbe, when false, skips the legacy TCP 9999 attempt.
 	SkipLegacy bool
+	// KlapDiscoveryPort overrides UDP 20002 discovery; used by tests.
+	KlapDiscoveryPort int
+	// SkipKlapDiscovery disables the SMART/KLAP TDP broadcast.
+	SkipKlapDiscovery bool
+	// SkipLegacyDiscovery disables the UDP 9999 XOR broadcast.
+	SkipLegacyDiscovery bool
 }
 
 // NewNativeBackend returns a backend with defaults.
@@ -352,20 +364,46 @@ func (b *NativeBackend) timeout() time.Duration {
 	return 5 * time.Second
 }
 
-// Discover finds legacy devices by UDP broadcast. KLAP-only devices (UDP
-// 20002 discovery) are not found this way; connect to them by IP instead.
-func (b *NativeBackend) Discover(ctx context.Context, timeout time.Duration, _ *Credentials) (map[string]Device, error) {
+// Discover finds legacy devices by the UDP 9999 XOR broadcast and KLAP
+// devices by the UDP 20002 TDP broadcast. KLAP devices handshake lazily with
+// the saved (or blank setup) credentials on their first Update.
+func (b *NativeBackend) Discover(ctx context.Context, timeout time.Duration, creds *Credentials) (map[string]Device, error) {
 	target := b.BroadcastAddr
 	if target == "" {
 		target = "255.255.255.255"
 	}
-	found, err := discoverLegacy(ctx, timeout, target)
-	if err != nil {
-		return nil, err
+	out := map[string]Device{}
+	var legacyErr, klapErr error
+	var wg sync.WaitGroup
+	var legacy map[string]*legacyDevice
+	var smart map[string]DiscoveryResult
+	if !b.SkipLegacyDiscovery {
+		wg.Add(1)
+		go func() { defer wg.Done(); legacy, legacyErr = discoverLegacy(ctx, timeout, target) }()
 	}
-	out := make(map[string]Device, len(found))
-	for h, d := range found {
+	if !b.SkipKlapDiscovery {
+		wg.Add(1)
+		go func() { defer wg.Done(); smart, klapErr = discoverKlap(ctx, timeout, target, b.KlapDiscoveryPort) }()
+	}
+	wg.Wait()
+	if legacyErr != nil && (klapErr != nil || b.SkipKlapDiscovery) {
+		return nil, legacyErr
+	}
+	if klapErr != nil && b.SkipLegacyDiscovery {
+		return nil, klapErr
+	}
+	for h, d := range legacy {
 		out[h] = d
+	}
+	for h, r := range smart {
+		if _, seen := out[h]; seen {
+			continue
+		}
+		port := b.KlapPort
+		if port == 0 && r.HTTPPort > 0 {
+			port = r.HTTPPort
+		}
+		out[h] = &smartDevice{t: newKlapTransport(h, port, b.timeout()), creds: creds}
 	}
 	return out, nil
 }
