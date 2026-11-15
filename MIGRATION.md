@@ -1038,3 +1038,16 @@ that remains step 7 item 4. No live weather calls or legacy data/key access.
 Validation passed: go build ./..., go vet ./..., go test ./..., and
 CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build ./.... Temporary PocketBase tests
 verify forecast/observation separation and location isolation.
+
+## Step 7 — Forecast.Solar client
+
+Added bounded, cancellable HTTP estimates with sorted hourly resampling, site
+cache, stale fallback, serialized requests and shared retry-at suppression on
+429. The optional API key uses the existing PocketBase encrypted credentials
+store; reads distinguish missing credentials from decryption errors. Errors do
+not expose the request URL containing the key. Tests use fixture HTTP only.
+Application configuration/forecast integration remains item 4; solar-array
+inference remains item 3. Step 7 is not complete.
+Validation passed: go build ./..., go vet ./..., go test ./..., and the
+CGO-free linux/arm64 build. Temporary-store tests also verify encrypted key
+roundtrip, wrong-key rejection and idempotent removal. No legacy keys touched.

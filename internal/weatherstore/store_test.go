@@ -36,3 +36,42 @@ func TestPersistenceAndObservationSeparation(t *testing.T) {
 		t.Fatal(obs, err)
 	}
 }
+
+func TestSolarKeyEncryption(t *testing.T) {
+	app := pocketbase.NewWithConfig(pocketbase.Config{DefaultDataDir: t.TempDir()})
+	if err := app.Bootstrap(); err != nil {
+		t.Fatal(err)
+	}
+	defer app.ResetBootstrapState()
+	if err := app.RunAllMigrations(); err != nil {
+		t.Fatal(err)
+	}
+	p := PocketWeatherStore{Store: &store.Store{App: app}}
+	key := make([]byte, 32)
+	if err := p.SaveSolarKey(key, " secret "); err != nil {
+		t.Fatal(err)
+	}
+	got, err := p.SolarKey(key)
+	if err != nil || got != "secret" {
+		t.Fatal(got, err)
+	}
+	raw, err := p.Store.Get("credentials", "forecast_solar")
+	if err != nil || raw["api_key"] != nil || raw["ct"] == nil {
+		t.Fatal(raw, err)
+	}
+	wrong := make([]byte, 32)
+	wrong[0] = 1
+	if _, err = p.SolarKey(wrong); err == nil {
+		t.Fatal("accepted wrong key")
+	}
+	if err = p.ClearSolarKey(); err != nil {
+		t.Fatal(err)
+	}
+	if err = p.ClearSolarKey(); err != nil {
+		t.Fatal(err)
+	}
+	got, err = p.SolarKey(key)
+	if err != nil || got != "" {
+		t.Fatal(got, err)
+	}
+}
