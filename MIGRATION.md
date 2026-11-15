@@ -942,3 +942,43 @@ dismiss, imported overrides and dedicated-config precedence. Existing detector
 fixtures retain the Python evaluation assertions. Controller arbitration remains
 for the next run. Validation passed: go build ./..., go vet ./..., go test ./...,
 and CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build ./....
+
+## Step 6b — F7 AC reset supervisor
+
+Telemetry ingestion now starts the opt-in F7 AC pulse (ON, configured wait,
+OFF) without blocking polling. One in-flight pulse per serial is allowed.
+The supervisor preserves the Python disabled/AC-on/error/daylight/cooldown
+gate order, stamps cooldown before actuation and persists bounded per-device
+events. Commands have ten-second deadlines; cancellation after successful ON
+still attempts bounded cleanup OFF. Failures produce error events and retain
+the cooldown. General controller arbitration remains deliberately deferred.
+
+Authenticated GET/POST /api/f7_ac_reset/config use the UI wrapper and merge
+configuration without permitting runtime/history replacement. Imported
+f7_ac_reset.by_device configs and events are fallback records until first save;
+dedicated records then supersede them without duplicating imported events.
+GET /api/events merges the persisted F7 events with bridge events by timestamp,
+with since filtering and bounded results. Manual daylight uses saved location
+offset and half-open clock windows; otherwise persisted weather GHI determines
+daylight, failing closed when unavailable. This reuses the existing persisted
+weather fallback; it does not wire a new weather fetch service.
+
+Go tests port the gate, daylight, config-roundtrip and event assertions from
+tests/test_f7_ac_reset.py and add fake pulse execution, concurrent-tick
+suppression, command failure, shutdown cleanup, imported state, event cap,
+restart persistence and authenticated UI route coverage.
+Validation passed: go build ./..., go vet ./..., go test ./..., and
+CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build ./....
+Only temporary stores, fakes and synthetic telemetry/weather were used.
+No Python, legacy data or keys were modified; no push, PR or merge occurred.
+
+Remaining 6b: ordinary automation restart-safe edges, bulk disable and rule
+history/firings (including the remaining tests/test_automation*.py assertions);
+shared controller arbitration/action ownership and sequencing for the next run.
+Smart optional narration and resolved-parameter details still await their
+respective services. Watchdog and F7 live integration are now implemented,
+alongside rescue, smart-charge and solar-charge. Full cutover and steps 7–10
+remain outstanding. F7 joins the controller step-11 deletion candidates only
+after runtime cutover; no Python is safe to delete from the retained runtime.
+Additional go test -race ./internal/server ./internal/bridge passed for the
+watchdog/F7 supervisor increment.

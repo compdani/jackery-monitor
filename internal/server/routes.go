@@ -119,6 +119,8 @@ var Routes = []Route{
 	{"GET", "/api/settings"},
 	{"POST", "/api/settings"},
 	{"POST", "/api/set_output"},
+	{"GET", "/api/f7_ac_reset/config"},
+	{"POST", "/api/f7_ac_reset/config"},
 	{"GET", "/api/inverter_watchdog/config"},
 	{"PUT", "/api/inverter_watchdog/config"},
 	{"GET", "/api/inverter_watchdog/status"},

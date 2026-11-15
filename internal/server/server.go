@@ -12,6 +12,8 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -19,12 +21,14 @@ import (
 	"github.com/coder/websocket"
 	"github.com/compdani/jackery-monitor/internal/automation"
 	"github.com/compdani/jackery-monitor/internal/bridge"
+	"github.com/compdani/jackery-monitor/internal/forecast"
 	"github.com/compdani/jackery-monitor/internal/store"
 	"github.com/pocketbase/pocketbase/core"
 )
 
 type Server struct {
 	watchdog      watchdogRuntime
+	f7            f7Runtime
 	SmartPlug     SmartPlug
 	SmartForecast SmartForecastSource
 	RescueSwitch  automation.Switch
@@ -358,6 +362,32 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if out == nil {
 			out = map[string]any{"ok": true}
 		}
+		if p == "/api/events" {
+			since, _ := strconv.ParseFloat(str(b, "since"), 64)
+			events, err := s.f7Events(since)
+			if err != nil {
+				storageError(w, err)
+				return
+			}
+			switch rows := out["events"].(type) {
+			case []map[string]any:
+				events = append(events, rows...)
+			case []any:
+				for _, v := range rows {
+					if e, ok := v.(map[string]any); ok {
+						events = append(events, e)
+					}
+				}
+			}
+			sort.SliceStable(events, func(i, j int) bool { return forecast.Number(events[i], "ts") < forecast.Number(events[j], "ts") })
+			limit, _ := strconv.Atoi(str(b, "limit"))
+			if limit <= 0 {
+				limit = 100
+			}
+			limit = min(limit, 500)
+			out["events"] = events[max(0, len(events)-limit):]
+		}
+
 		jsonOut(w, 200, out)
 		return
 	}
@@ -371,6 +401,9 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if s.rescueRoutes(w, r, b) {
+		return
+	}
+	if s.f7Routes(w, r, b) {
 		return
 	}
 	if s.watchdogRoutes(w, r, b) {
@@ -590,6 +623,7 @@ func (s *Server) persistObservation(ctx context.Context, p map[string]any) {
 					}
 				}
 				s.watchdogTick(ctx, sn, t, d["model_code"], stamp)
+				s.f7Tick(ctx, sn, t)
 				s.evaluateRules(ctx, sn, t)
 				row := map[string]any{"ts": stamp, "device_sn": sn}
 				for k, v := range t {
