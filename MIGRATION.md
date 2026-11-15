@@ -720,3 +720,36 @@ Verification for steps 4/5 passed: `go build ./...`, `go vet ./...`,
 CGO-free linux/arm64 cross-build. The 100,005-row traversal test also passed
 under the race detector. No real device/account/broker was used. This run stops
 at the completed step-5 boundary due to remaining context; step 6b is next.
+
+## Step 6b preparation — solar plan parity and loop pacing (partial)
+
+Step 6b remains **incomplete**. No supervisor or new controller route is wired
+by this preparation. Steps 7–10 have not been started in this continuation.
+
+Solar now uses its own full plan schema rather than the smart-charge plan:
+solar/load/surplus/car load, plug state, and baseline minimum SOC survive in the
+returned audit snapshot. All 52 existing reference calls compare the entire
+plan, including reason text, instead of just action/mode. Grid-charge yield,
+balance trigger evidence, stalled balance diagnosis, reserve and cloudy-day
+reason strings now match the captured Python plans. Min-hold fills the prior
+plug state even on skip decisions. Pure balance-window aging/stand-down,
+pre-engagement load ceiling and inverter cooldown gates are implemented with
+synthetic boundary tests. These helpers still require supervisor integration.
+
+`internal/automation/backoff.go` ports backoff.py's capped eight-failure counter,
+reset, exponential delay, maximum and per-call base interval. All five Python
+backoff test groups have Go equivalents, with an additional fractional-cap
+check. The helper is not yet consumed by the operational controller loops.
+
+Remaining 6b work: persisted controller configs/runtime and rule edges;
+smart/solar/watchdog/F7 supervisors, conflict arbitration and safe action
+sequencing; config/status/evaluate/dismiss/history/analytics routes; bulk rule
+disable and rule history; solar config normalization, pack-spread extraction,
+overload persistence and remaining Python assertions. Existing pure planners
+alone are insufficient for cutover. No additional Python module is declared
+fully replaced or safe to delete by this partial work, including backoff.py
+whose runtime consumers still need migration.
+
+Validation: go build ./..., go vet ./..., go test ./..., and CGO_ENABLED=0
+GOOS=linux GOARCH=arm64 go build ./... passed. All test inputs are fixtures or
+synthetic values. Python, legacy data and encryption keys remain untouched.
