@@ -17,23 +17,26 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
+	"github.com/compdani/jackery-monitor/internal/automation"
 	"github.com/compdani/jackery-monitor/internal/bridge"
 	"github.com/compdani/jackery-monitor/internal/store"
 	"github.com/pocketbase/pocketbase/core"
 )
 
 type Server struct {
-	AIHTTP      *http.Client
-	Store       *store.Store
-	Bridge      bridge.Client
-	PublicDir   string
-	Key         []byte
-	assistant   assistantRuntime
-	controllers controllerRuntime
-	setupMu     sync.Mutex
-	mu          sync.RWMutex
-	snapshot    map[string]any
-	tesla       teslaRuntime
+	RescueSwitch automation.Switch
+	rescue       rescueRuntime
+	AIHTTP       *http.Client
+	Store        *store.Store
+	Bridge       bridge.Client
+	PublicDir    string
+	Key          []byte
+	assistant    assistantRuntime
+	controllers  controllerRuntime
+	setupMu      sync.Mutex
+	mu           sync.RWMutex
+	snapshot     map[string]any
+	tesla        teslaRuntime
 }
 
 func (s *Server) Register(e *core.ServeEvent) {
@@ -342,6 +345,9 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if s.teslaRoutes(w, r, b) {
 		return
 	}
+	if s.rescueRoutes(w, r, b) {
+		return
+	}
 	if s.automationRoutes(w, r, b) {
 		return
 	}
@@ -467,6 +473,11 @@ func (s *Server) Poll(ctx context.Context, interval time.Duration) {
 	}
 }
 func (s *Server) pollOnce(ctx context.Context) {
+	var p map[string]any
+	defer func() { s.rescueTick(ctx, float64(time.Now().UnixNano())/1e9, p) }()
+	if s.Bridge == nil {
+		return
+	}
 	p, e := s.Bridge.Call(ctx, "poll", nil)
 	if e != nil {
 		s.mu.Lock()

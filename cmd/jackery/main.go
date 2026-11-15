@@ -65,6 +65,7 @@ func main() {
 		s.Register(e)
 		ctx, cancel := context.WithCancel(context.Background())
 		app.OnTerminate().BindFunc(func(e *core.TerminateEvent) error { cancel(); return e.Next() })
+		go s.RescueLoop(ctx)
 		go s.Poll(ctx, 10*time.Second)
 		go s.PollTesla(ctx)
 		return e.Next()

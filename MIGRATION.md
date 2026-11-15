@@ -523,3 +523,66 @@ Step 2/3 verification: `go build ./...`, `go vet ./...`, `go test ./...`
 and web UI check/build pass. All importer and provider fixtures are synthetic.
 Reports count destination records (a registry/config object is one record,
 while device preferences and rules count individual entries).
+
+## Step 6a — dead-man rescue (completed with synthetic verification)
+
+`internal/automation/rescue.go` ports rescue.py's decision state machine.
+All eight tests/test_rescue.py cases are ported, with extra frozen/older timestamp
+regressions. Only MAIN battery_percent arms the watchdog: <=5% fires immediately
+while fresh, >=60 seconds of silence after a low observation fires dead-man,
+and a successful toggle latches until a fresh >=20% observation. Missing SOC
+retains the last known value; missing/invalid source timestamps never become a
+new observation. Failed toggles retry; missing plugs do not latch.
+
+The running server ingests timestamped entries from cloud.devices_telemetry
+and the selected-device last_update_ts. It retains observations across poll
+failures and persists per-device state/recovery latches in PocketBase settings.
+The native client now emits an observation timestamp only after a successful
+properties request, matching Python's HTTP-observation timestamp semantics.
+Frozen supplied timestamps are preserved, never replaced by server poll time.
+Missing/malformed native SOC now remains null instead of converting to zero,
+so incomplete properties cannot spuriously arm rescue. Explicit 0% is retained.
+Native all-device MQTT/source freshness remains step 5; HTTP success alone
+cannot establish that a cloud service's stored reading is current at the unit.
+
+A separate one-second RescueLoop runs beside polling, so cloud failures,
+blocked polls, and long configured intervals do not suppress the silence check.
+The runner borrows the first enabled ON rule scoped to that device (or an
+unscoped rule), matching Python; OFF/disabled/other-device rules are excluded.
+Rules are ordered by saved timestamp and stable key for deterministic ties.
+There is no separate plug-host configuration to drift from automation rules.
+Kasa calls have a ten-second context timeout. Rescue only switches ON.
+
+Authenticated endpoints:
+
+- GET `/api/rescue/config`: enabled plus fixed 5%/60s/20% thresholds and
+  rule-based plug-selection metadata.
+- POST `/api/rescue/config`: exactly `{"enabled":true|false}`. Thresholds and
+  plug selection are deliberately fixed to the ported behavior.
+- GET `/api/rescue/status`: enabled, thresholds, `by_device` state, last attempt,
+  selected plug, last error and persistence error. No evaluate/actuation endpoint.
+
+Successful actions write a `rescue-watchdog` automation firing audit with device,
+host, MAIN SOC, reason, threshold and timestamp in the same transaction as state.
+Failed audit/state persistence retains the in-memory latch and pending audit and
+retries persistence without toggling again. A process crash between physical ON
+and durable commit can repeat ON after restart; ON is idempotent. Exactly-once
+physical actuation cannot be guaranteed across process/storage failure.
+
+Tests use fake switches and fake/blocked cloud polls only. They cover plug
+selection, multi-device routing, retry/latch/recovery, restart persistence,
+firing audit fields, transactional persistence failure/retry, authenticated API
+validation and the independent watchdog while polling is blocked. No hardware,
+cloud account, legacy data or key was accessed or modified.
+
+This run stops at the completed 6a boundary. Step 4 is next in the requested
+order, followed by 5, 6b, 7, 8, 9 and 10; those steps are not completed by this
+increment. Rescue implementation/assertions are ported, but rescue.py still has
+Python server callers and remains in the tree until the step 11 cutover. No
+Python files are deleted or unconditionally safe to remove from that retained
+Python runtime yet. No new owner decision is required for rescue.
+
+Step 6a validation passed: `go build ./...`, `go vet ./...`, `go test ./...`,
+`go test -race ./internal/automation ./internal/server ./internal/bridge`, and
+`GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build ./...`. Physical rescue behavior
+has not been tested on a device; all actuation tests use injected fakes.

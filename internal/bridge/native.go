@@ -198,6 +198,7 @@ func (n *Native) Call(ctx context.Context, method string, p map[string]any) (map
 		if e != nil {
 			return nil, n.failure(e)
 		}
+		observedAt := float64(time.Now().UnixNano()) / 1e9
 		packs, e := n.Cloud.Packs(ctx, selected.SN)
 		if e != nil {
 			if errors.Is(e, ErrSessionContested) {
@@ -205,7 +206,7 @@ func (n *Native) Call(ctx context.Context, method string, p map[string]any) (map
 			}
 			packs = []any{}
 		}
-		return map[string]any{"device": selected.Info(), "telemetry": CloudTelemetry(props), "source": "cloud", "battery_packs": packs, "cloud": map[string]any{"state": "connected", "devices": n.devices, "selected_device_id": selected.ID}}, nil
+		return map[string]any{"device": selected.Info(), "telemetry": CloudTelemetry(props), "source": "cloud", "last_update_ts": observedAt, "battery_packs": packs, "cloud": map[string]any{"state": "connected", "devices": n.devices, "selected_device_id": selected.ID}}, nil
 	}
 	return nil, errors.New("unsupported native bridge method")
 }

@@ -337,6 +337,12 @@ func CloudTelemetry(p map[string]any) map[string]any {
 	i := func(k string) float64 { return math.Trunc(f(k)) }
 	round := func(v float64) float64 { return math.RoundToEven(v*10) / 10 }
 	out := map[string]any{"battery_percent": i("rb"), "battery_temp_c": round(f("bt") / 10), "input_power_w": i("ip"), "output_power_w": i("op"), "ac_input_w": i("acip"), "car_input_w": i("cip"), "solar_input_w": math.Max(0, i("ip")-i("acip")-i("cip")), "ac_output_v": round(f("acov") / 10), "ac_output_v_l1": round(f("acov1") / 10), "ac_output_hz": round(f("acohz")), "ac_on": i("oac") != 0, "dc_on": i("odc") != 0, "usb_on": i("odcu") != 0, "car_on": i("odcc") != 0, "ups_on": true, "super_charge_on": i("sfc") != 0, "error_code": i("ec"), "utc_offset_seconds": nil}
+	// A missing/malformed SOC is unknown, never a zero-percent observation:
+	// the rescue watchdog must not arm on numeric conversion defaults.
+	soc, err := strconv.ParseFloat(fmt.Sprint(p["rb"]), 64)
+	if err != nil || math.IsNaN(soc) || math.IsInf(soc, 0) || soc < 0 || soc > 100 {
+		out["battery_percent"] = nil
+	}
 	if p["ups"] != nil {
 		out["ups_on"] = i("ups") != 0
 	}
