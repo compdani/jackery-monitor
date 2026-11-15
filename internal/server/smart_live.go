@@ -262,7 +262,12 @@ func (s *Server) smartLiveRoutes(w http.ResponseWriter, r *http.Request) bool {
 		if e != nil {
 			storageError(w, e)
 		} else {
-			jsonOut(w, 200, map[string]any{"plan": p, "narration": nil})
+			cfg, _ := s.smartConfig(sn)
+			var narration any
+			if text := s.smartNarration(r.Context(), cfg, p); text != "" {
+				narration = text
+			}
+			jsonOut(w, 200, map[string]any{"plan": p, "narration": narration})
 		}
 		return true
 	}
@@ -333,7 +338,7 @@ func (s *Server) smartLiveRoutes(w http.ResponseWriter, r *http.Request) bool {
 				for _, p := range samples {
 					p["soc"] = p["battery_pct"]
 				}
-				jsonOut(w, 200, map[string]any{"device_sn": sn, "decision": d, "forecast_trace": trace, "forecast_made_at": made, "weather": wx, "samples_trace": samples, "resolved_params": []any{}})
+				jsonOut(w, 200, map[string]any{"device_sn": sn, "decision": d, "forecast_trace": trace, "forecast_made_at": made, "weather": wx, "samples_trace": samples, "resolved_params": s.smartResolvedParams(r.Context(), sn)})
 				return true
 			}
 		}

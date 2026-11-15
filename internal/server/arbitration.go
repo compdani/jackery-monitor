@@ -10,9 +10,10 @@ import (
 )
 
 type actionArbiter struct {
-	plugs sync.Mutex
-	mu    sync.Mutex
-	ac    map[string]context.CancelFunc
+	plugs    sync.Mutex
+	mu       sync.Mutex
+	ac       map[string]context.CancelFunc
+	offUntil map[string]time.Time
 }
 type governedSwitch struct {
 	s     *Server
@@ -45,6 +46,9 @@ func (g governedSwitch) SetPower(ctx context.Context, host string, on bool) erro
 			return fmt.Errorf("plug reserved by charge controller")
 		}
 	}
+	if g.next == nil {
+		return fmt.Errorf("switch adapter unavailable")
+	}
 	return g.next.SetPower(ctx, host, on)
 }
 func sameHost(a, b string) bool { return strings.EqualFold(strings.TrimSpace(a), strings.TrimSpace(b)) }
@@ -54,6 +58,9 @@ func sameHost(a, b string) bool { return strings.EqualFold(strings.TrimSpace(a),
 func (s *Server) acquireAC(ctx context.Context, sn string) (context.Context, func(), bool) {
 	s.actions.mu.Lock()
 	defer s.actions.mu.Unlock()
+	if time.Now().Before(s.actions.offUntil[sn]) {
+		return nil, nil, false
+	}
 	if s.actions.ac[sn] != nil {
 		return nil, nil, false
 	}
@@ -71,6 +78,10 @@ func (s *Server) acquireAC(ctx context.Context, sn string) (context.Context, fun
 func (s *Server) cancelAC(sn string) {
 	s.actions.mu.Lock()
 	defer s.actions.mu.Unlock()
+	if s.actions.offUntil == nil {
+		s.actions.offUntil = map[string]time.Time{}
+	}
+	s.actions.offUntil[sn] = time.Now().Add(60 * time.Second)
 	if cancel := s.actions.ac[sn]; cancel != nil {
 		cancel()
 	}

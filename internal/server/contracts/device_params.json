@@ -1,0 +1,33 @@
+{
+  "battery_capacity_wh": {
+    "label": "Battery capacity",
+    "unit": "Wh",
+    "description": "Total system capacity used by the SOC simulator."
+  },
+  "max_charge_w": {
+    "label": "Max AC charge rate",
+    "unit": "W",
+    "description": "Peak wattage the device pulls from the wall when smart-charge engages."
+  },
+  "inverter_overhead_pct": {
+    "label": "Inverter overhead",
+    "unit": "ratio",
+    "description": "Fraction of throughput lost as heat in DC\u2192AC conversion. 0.10 (10%) is typical for modern LiFePO4 inverters."
+  },
+  "parasitic_w": {
+    "label": "Parasitic baseline",
+    "unit": "W",
+    "description": "Constant draw that doesn't scale with AC throughput \u2014 BMS, idle inverter, pack-balancing, DC-bus losses. 50W is typical for single-unit setups; multi-pack rigs commonly fit 200-500W."
+  },
+  "charge_efficiency": {
+    "label": "Charge efficiency",
+    "unit": "ratio",
+    "description": "Stored Wh per input Wh. 0.85-0.95 is typical."
+  },
+  "solar_coefficient": {
+    "label": "Solar coefficient",
+    "unit": "W per W/m\u00b2",
+    "decimals": 2,
+    "description": "Effective panel array size \u2014 fitted from observed solar vs irradiance."
+  }
+}

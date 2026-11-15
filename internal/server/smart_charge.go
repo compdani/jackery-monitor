@@ -57,6 +57,7 @@ func (s *Server) runSmart(ctx context.Context, sn string, cfg automation.SmartSe
 		return err
 	}
 	state, decision := automation.RunSmart(ctx, governedSwitch{s, "smart", sw}, cfg, state, sn, plan)
+	decision.Narration = s.smartNarration(ctx, cfg, &decision.ChargePlan)
 	return s.Store.App.RunInTransaction(func(app core.App) error {
 		st := &store.Store{App: app}
 		if err := st.Put("automation_decisions", fmt.Sprintf("smart_charge:%s:%d", sn, plan.DecidedAt), sn, decision.Payload()); err != nil {

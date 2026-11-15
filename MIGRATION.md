@@ -982,3 +982,44 @@ remain outstanding. F7 joins the controller step-11 deletion candidates only
 after runtime cutover; no Python is safe to delete from the retained runtime.
 Additional go test -race ./internal/server ./internal/bridge passed for the
 watchdog/F7 supervisor increment.
+
+## Step 6b — complete (2026-11-15)
+
+Step **6b is complete** for the Raspberry Pi migration scope. This supersedes
+older incremental 6b remaining-work notes above. Rescue, smart-charge,
+solar-charge, inverter watchdog and F7 supervisors are implemented.
+
+Ordinary rules now persist last_state, last_fired and last_error, preserve
+successful edges across restart, retry failed commands without consuming edges,
+and route unscoped rules through the selected device. Bulk disable resets edges
+atomically. CRUD and per-rule history use the UI paths and Python wrappers;
+successful firings retain rule/device/SOC/threshold fields. History pairs ON/OFF
+across complementary rules on the same plug, includes open intervals and falls
+back to recorded hosts after deletion.
+
+Plug actuation is serialized with command-time ownership checks. Rescue's durable
+latch reserves its plug until recovery clears it; smart-charge precedes solar,
+and active charge controllers reserve their plugs against ordinary rules. Host
+comparison ignores case and surrounding whitespace. Watchdog and F7 hold an
+exclusive per-device AC lease across their full sequences. User OFF immediately
+cancels recovery and suppresses new leases, including during persistence; its
+saved timestamp preserves suppression across restart.
+
+Optional smart-charge narration uses the selected provider, saved/environment key,
+narrator model and compatibility endpoint, with bounded requests and output.
+Missing keys, disabled narration and provider errors are additive no-ops. Both
+scheduled history and evaluate_now include narration. Decision details now expose
+all six parameter metadata/value/source entries, including current fits,
+catalog/pack capacity, capacity/config overrides and imported user parameters.
+This current-value inspection does not replace step 7's broader parameter APIs
+or rework the existing forecasting service.
+
+Validation: go build ./..., go vet ./..., go test ./..., and
+CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build ./.... Fake tests cover durable
+edges, failed-action retry/audit, UI contracts, interval pairing, controller
+priority, AC exclusion/user-OFF restart suppression, both narration providers,
+provider failure and parameter precedence. Only temporary data and fake plug/HTTP
+transports were used. No legacy data, keys or Python were modified or deleted.
+No push, PR or merge. Weather-service wiring, later migration steps and real
+hardware/cutover validation remain outstanding; Siseli capture remains retired.
+Additional go test -race ./internal/server passed for the completed 6b changes.

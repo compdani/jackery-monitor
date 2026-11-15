@@ -69,3 +69,26 @@ func TestRuleHTTPContracts(t *testing.T) {
 		t.Fatal(w.Body.String())
 	}
 }
+func TestRuleFailureRetriesAndAuditsOnlySuccess(t *testing.T) {
+	s, _ := testServer(t)
+	s.initControllers()
+	f := &rescueSwitchFake{fail: true}
+	s.controllers.engine.Switch = f
+	s.Store.Put("automation_rules", "r", "A", map[string]any{"id": "r", "enabled": true, "operator": "<", "value": 20.0, "action": "on", "kasa_host": "fake", "jackery_device_sn": "A"})
+	s.evaluateRules(context.Background(), "A", map[string]any{"battery_percent": 10.0})
+	row, _ := s.Store.Get("automation_rules", "r")
+	rows, _ := s.Store.List("automation_decisions", "A", 0, 0)
+	if row["last_state"] == true || row["last_error"] == nil || len(rows) != 0 {
+		t.Fatal(row, rows)
+	}
+	f.fail = false
+	s.evaluateRules(context.Background(), "A", map[string]any{"battery_percent": 10.0})
+	row, _ = s.Store.Get("automation_rules", "r")
+	rows, _ = s.Store.List("automation_decisions", "A", 0, 0)
+	if row["last_state"] != true || row["last_error"] != nil || len(rows) != 1 {
+		t.Fatal(row, rows)
+	}
+	if rows[0]["soc_at_fire"] != 10.0 || rows[0]["jackery_sn"] != "A" || rows[0]["action"] != "on" || rows[0]["threshold"] != 20.0 {
+		t.Fatal(rows)
+	}
+}

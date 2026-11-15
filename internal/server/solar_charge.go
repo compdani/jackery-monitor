@@ -486,11 +486,11 @@ func (s *Server) solarOwnsHost(host string) bool {
 	}
 	by, ok := raw["by_device"].(map[string]any)
 	if !ok {
-		return raw["mode"] == "active" && str(raw, "kasa_device_host") == host
+		return raw["mode"] == "active" && sameHost(str(raw, "kasa_device_host"), host)
 	}
 	for _, v := range by {
 		m, _ := v.(map[string]any)
-		if m["mode"] == "active" && str(m, "kasa_device_host") == host {
+		if m["mode"] == "active" && sameHost(str(m, "kasa_device_host"), host) {
 			return true
 		}
 	}
