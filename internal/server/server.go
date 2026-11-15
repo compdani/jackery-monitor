@@ -81,7 +81,10 @@ func (s *Server) Register(e *core.ServeEvent) {
 	// registered twice in Go's ServeMux.
 	e.Router.BindFunc(func(ev *core.RequestEvent) error {
 		p := ev.Request.URL.Path
-		native := false
+		// The PocketBase dashboard lists collections at the bare
+		// /api/collections path and shares /api/settings with the app, so
+		// superuser-authenticated requests always go to PocketBase.
+		native := p == "/api/collections" || ev.HasSuperuserAuth()
 		for _, prefix := range []string{"/api/collections/", "/api/files/", "/api/realtime", "/api/batch", "/api/health", "/api/backups", "/api/logs", "/api/crons"} {
 			if strings.HasPrefix(p, prefix) {
 				native = true
