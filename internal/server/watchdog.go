@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/compdani/jackery-monitor/internal/automation"
+	"github.com/compdani/jackery-monitor/internal/forecast"
 )
 
 type watchdogRuntime struct {
@@ -53,6 +54,15 @@ func (s *Server) watchdogEnabled(sn string, model any) (bool, string, error) {
 	}
 	if strings.HasPrefix(sn, "siseli") || strings.HasPrefix(sn, "ecoflow") {
 		return false, "default", nil
+	}
+	rows, err := s.Store.List("forecast_models", sn, 0, 0)
+	if err != nil {
+		return false, "", err
+	}
+	for _, row := range rows {
+		if row["_legacy_table"] == "device_params" && row["key"] == "inverter_watchdog_enabled" && row["value"] != nil {
+			return forecast.Number(row, "value") != 0, "user", nil
+		}
 	}
 	n, _ := model.(float64)
 	return n == 13 || n == 22, "default", nil
@@ -143,7 +153,12 @@ func (s *Server) watchdogTick(ctx context.Context, sn string, tele map[string]an
 		}
 		// Cancellation and the final eligibility check serialize with user intent.
 		s.watchdog.mu.Lock()
-		defer s.watchdog.mu.Unlock()
+		deferUnlock := true
+		defer func() {
+			if deferUnlock {
+				s.watchdog.mu.Unlock()
+			}
+		}()
 		if cycleCtx.Err() != nil || s.watchdog.pending[sn] > 0 {
 			return
 		}
@@ -155,6 +170,8 @@ func (s *Server) watchdogTick(ctx context.Context, sn string, tele map[string]an
 		if e != nil || !enabled {
 			return
 		}
+		s.watchdog.mu.Unlock()
+		deferUnlock = false
 		if err := command(true); err != nil {
 			s.Store.App.Logger().Warn("watchdog AC recovery failed", "error", err)
 		}

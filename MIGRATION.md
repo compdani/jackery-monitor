@@ -930,3 +930,15 @@ Validation: go build ./..., go vet ./..., go test ./..., and CGO_ENABLED=0
 GOOS=linux GOARCH=arm64 go build ./... passed. Tests use fakes and temporary
 PocketBase stores. No real hardware, legacy data or keys were touched; no Python
 was deleted. No push, PR or merge was performed.
+
+## Step 6b — watchdog completion
+
+Imported device_params inverter_watchdog_enabled values now supply the legacy
+override unless a dedicated Go config supersedes them. Recovery releases the
+state lock before waiting for bridge ON so user OFF can cancel queued recovery;
+the native bridge checks cancellation after acquiring its command lock.
+Fake tests cover queued ON cancellation, overlapping pending OFF intents through
+dismiss, imported overrides and dedicated-config precedence. Existing detector
+fixtures retain the Python evaluation assertions. Controller arbitration remains
+for the next run. Validation passed: go build ./..., go vet ./..., go test ./...,
+and CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build ./....

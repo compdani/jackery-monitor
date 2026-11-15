@@ -123,3 +123,92 @@ func TestWatchdogAPIContract(t *testing.T) {
 		}
 	}
 }
+
+func TestWatchdogImportedOverridePrecedence(t *testing.T) {
+	s, _ := testServer(t)
+	for _, value := range []float64{0, 1} {
+		if err := s.Store.Put("forecast_models", "legacy-param", "SN", map[string]any{"_legacy_table": "device_params", "key": "inverter_watchdog_enabled", "value": value}); err != nil {
+			t.Fatal(err)
+		}
+		enabled, source, err := s.watchdogEnabled("SN", 13.0)
+		if err != nil || enabled != (value == 1) || source != "user" {
+			t.Fatal(enabled, source, err)
+		}
+	}
+	if err := s.Store.Put("settings", "inverter_watchdog_config:SN", "SN", map[string]any{"enabled": false}); err != nil {
+		t.Fatal(err)
+	}
+	enabled, _, err := s.watchdogEnabled("SN", 13.0)
+	if enabled || err != nil {
+		t.Fatal(enabled, err)
+	}
+}
+
+func TestWatchdogPendingIntentsSurviveDismiss(t *testing.T) {
+	s, _ := testServer(t)
+	first := s.watchdogUserOff("SN")
+	second := s.watchdogUserOff("SN")
+	state, err := s.watchdogState("SN")
+	if err != nil {
+		t.Fatal(err)
+	}
+	state.Dismiss()
+	if err := s.saveWatchdog("SN", state); err != nil {
+		t.Fatal(err)
+	}
+	first()
+	if s.watchdog.pending["SN"] != 1 {
+		t.Fatal(s.watchdog.pending)
+	}
+	second()
+	if s.watchdog.pending["SN"] != 0 {
+		t.Fatal(s.watchdog.pending)
+	}
+}
+
+type queuedWatchdogBridge struct {
+	queued    chan struct{}
+	cancelled chan struct{}
+}
+
+func (b queuedWatchdogBridge) Call(ctx context.Context, method string, p map[string]any) (map[string]any, error) {
+	if p["on"] == true {
+		close(b.queued)
+		<-ctx.Done()
+		close(b.cancelled)
+		return nil, ctx.Err()
+	}
+	return map[string]any{"ok": true}, nil
+}
+func TestWatchdogUserOffCancelsQueuedRecoveryON(t *testing.T) {
+	s, _ := testServer(t)
+	b := queuedWatchdogBridge{make(chan struct{}), make(chan struct{})}
+	s.Bridge = b
+	if err := s.Store.Put("settings", "settings", "", map[string]any{"inverter_trip_recovery_min_w": 100}); err != nil {
+		t.Fatal(err)
+	}
+	now := float64(time.Now().Unix())
+	if err := s.saveWatchdog("SN", automation.WatchdogState{LastHighOutputTS: now - 10, FirstLowTS: now - 8, LowSamples: 2, LastSampleTS: 1}); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	s.watchdogTick(ctx, "SN", map[string]any{"ac_on": true, "output_power_w": 10.0}, 13.0, 2)
+	select {
+	case <-b.queued:
+	case <-time.After(3 * time.Second):
+		t.Fatal("no queued ON")
+	}
+	done := make(chan struct{})
+	go func() { finish := s.watchdogUserOff("SN"); finish(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("user intent blocked by queued ON")
+	}
+	select {
+	case <-b.cancelled:
+	case <-time.After(time.Second):
+		t.Fatal("ON not cancelled")
+	}
+}

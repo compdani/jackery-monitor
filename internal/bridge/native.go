@@ -62,6 +62,9 @@ func (n *Native) event(kind string) {
 func (n *Native) Call(ctx context.Context, method string, p map[string]any) (map[string]any, error) {
 	n.mu.Lock()
 	defer n.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	ctx, cancel := context.WithTimeout(ctx, 45*time.Second)
 	defer cancel()
 	if !n.initialized {
