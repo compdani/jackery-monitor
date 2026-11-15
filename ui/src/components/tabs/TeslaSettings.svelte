@@ -336,6 +336,7 @@
           <select id="t-order" class="device-select" bind:value={cfg.nav_order_mode}>
             <option value="enum">Replace, then append (0, 2, 2…)</option>
             <option value="position">Position number (1, 2, 3…)</option>
+            <option value="one_three">1 to replace, then 3 (1, 3, 3…)</option>
           </select>
         </div>
       </div>

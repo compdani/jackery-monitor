@@ -51,8 +51,14 @@ const (
 
 // OrderFor returns the `order` value for the stop at index i (0-based).
 func OrderFor(mode string, i int) int32 {
-	if mode == OrderPosition {
+	switch mode {
+	case OrderPosition:
 		return int32(i + 1)
+	case OrderOneThree:
+		if i == 0 {
+			return 1
+		}
+		return 3
 	}
 	if i == 0 {
 		return OrderReplace

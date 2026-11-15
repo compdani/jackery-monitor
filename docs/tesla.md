@@ -27,7 +27,7 @@ The field numbers come from the community `tesla-protocol` definitions, and the 
 | `enum` (default) | 0 replace, then 2 append |
 | `position` | 1, 2, 3, … |
 
-`POST /api/tesla/navigate` accepts `transport` and `order_mode` overrides for testing on the car.
+`POST /api/tesla/navigate` accepts `transport` and `order_mode` (`enum` = 0,2,2…, `position` = 1,2,3…, `one_three` = 1,3,3…) overrides for testing on the car.
 
 ## One-time setup
 

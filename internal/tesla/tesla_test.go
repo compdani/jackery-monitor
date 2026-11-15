@@ -42,10 +42,14 @@ func TestEncodeWaypointsActionMatchesProtocolBindings(t *testing.T) {
 }
 
 func TestOrderFor(t *testing.T) {
-	var enum, pos []int32
+	var enum, pos, alt []int32
 	for i := 0; i < 3; i++ {
 		enum = append(enum, OrderFor(OrderEnum, i))
 		pos = append(pos, OrderFor(OrderPosition, i))
+		alt = append(alt, OrderFor(OrderOneThree, i))
+	}
+	if alt[0] != 1 || alt[1] != 3 || alt[2] != 3 {
+		t.Errorf("one_three orders %v", alt)
 	}
 	if enum[0] != 0 || enum[1] != 2 || enum[2] != 2 {
 		t.Errorf("enum orders %v", enum)

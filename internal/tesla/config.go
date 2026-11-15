@@ -56,6 +56,8 @@ const (
 	OrderEnum = "enum"
 	// OrderPosition sends each stop's 1-based position.
 	OrderPosition = "position"
+	// OrderOneThree sends 1 for the first stop and 3 for every later one.
+	OrderOneThree = "one_three"
 )
 
 // Config is the non-secret integration configuration plus the client secret.
@@ -148,8 +150,8 @@ func (c Config) Validate() error {
 	if c.NavMethod != MethodWaypoints && c.NavMethod != MethodGPS {
 		return errors.New("nav_method must be waypoints or gps")
 	}
-	if c.NavOrderMode != OrderEnum && c.NavOrderMode != OrderPosition {
-		return errors.New("nav_order_mode must be enum or position")
+	if c.NavOrderMode != OrderEnum && c.NavOrderMode != OrderPosition && c.NavOrderMode != OrderOneThree {
+		return errors.New("nav_order_mode must be enum, position or one_three")
 	}
 	if c.ChargeEfficiency > 1 {
 		return errors.New("charge_efficiency must be in (0, 1]")

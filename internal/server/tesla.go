@@ -602,7 +602,7 @@ func (s *Server) teslaNavigate(w http.ResponseWriter, r *http.Request, b map[str
 		fail(w, 400, err.Error())
 		return
 	}
-	order, err := optString(b, "order_mode", tesla.OrderEnum, tesla.OrderPosition)
+	order, err := optString(b, "order_mode", tesla.OrderEnum, tesla.OrderPosition, tesla.OrderOneThree)
 	if err != nil {
 		fail(w, 400, err.Error())
 		return
