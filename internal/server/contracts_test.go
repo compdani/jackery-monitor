@@ -2,9 +2,17 @@ package server
 
 import (
 	"context"
+	"crypto/sha256"
+	"database/sql"
+	"encoding/base64"
 	"encoding/json"
+	"errors"
+	"github.com/compdani/jackery-monitor/internal/store"
+	"golang.org/x/crypto/pbkdf2"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 )
@@ -125,6 +133,9 @@ func TestConversationChatAndCascade(t *testing.T) {
 	}
 	v = contractJSON(t, h, "POST", "/api/assistant/chat", `{"conversation_id":"`+id+`","message":"question","model":"test-chat"}`, token, 200)
 	msg := v["message"].(map[string]any)
+	if msg["created_at"] == nil {
+		t.Fatal("message timestamp absent", msg)
+	}
 	if msg["role"] != "assistant" || msg["content"] != "answer" || msg["id"] == nil || len(v["pending_tools"].([]any)) != 0 {
 		t.Fatal(v)
 	}
@@ -205,6 +216,60 @@ func TestEnergyDefaultBucketAndNulls(t *testing.T) {
 			t.Fatal(v)
 		}
 	}
+}
+func TestLegacyAccountLoginUpgrade(t *testing.T) {
+	s, h := testServer(t)
+	dir := t.TempDir()
+	keyPath := filepath.Join(dir, "key")
+	if err := os.WriteFile(keyPath, s.Key, 0600); err != nil {
+		t.Fatal(err)
+	}
+	salt := []byte("synthetic-salt-16")
+	hash := pbkdf2.Key([]byte("old-password"), salt, 1000, 32, sha256.New)
+	encoded := "pbkdf2_sha256:1000:" + base64.StdEncoding.EncodeToString(salt) + ":" + base64.StdEncoding.EncodeToString(hash)
+	plain, _ := json.Marshal(map[string]any{"username": "legacy", "password_hash": encoded})
+	env, err := store.Encrypt(s.Key, plain)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, _ := json.Marshal(env)
+	if err := os.WriteFile(filepath.Join(dir, "auth.json"), data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Store.ImportConfig(context.Background(), store.ConfigImportOptions{Directory: dir, KeyPath: keyPath}); err != nil {
+		t.Fatal(err)
+	}
+	contractJSON(t, h, "POST", "/api/auth/setup", `{"username":"attacker","password":"secure-pass"}`, "", 403)
+	contractJSON(t, h, "POST", "/api/auth/login", `{"username":"legacy","password":"wrong"}`, "", 401)
+	imported, err := s.Store.App.FindFirstRecordByData("users", "username", "legacy")
+	if err != nil {
+		t.Fatal(err)
+	}
+	transition, err := s.Store.Secret(s.Key, "legacy_user:"+imported.Id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	imported.SetPassword("reset-password")
+	if err = s.Store.App.Save(imported); err != nil {
+		t.Fatal(err)
+	}
+	contractJSON(t, h, "POST", "/api/auth/login", `{"username":"legacy","password":"old-password"}`, "", 401)
+	imported.SetPassword(str(transition, "_transition_password"))
+	if err = s.Store.App.Save(imported); err != nil {
+		t.Fatal(err)
+	}
+	result := contractJSON(t, h, "POST", "/api/auth/login", `{"username":"legacy","password":"old-password"}`, "", 200)
+	if result["token"] == nil {
+		t.Fatal(result)
+	}
+	u, err := s.Store.App.FindFirstRecordByData("users", "username", "legacy")
+	if err != nil || !u.ValidatePassword("old-password") {
+		t.Fatal("password not upgraded", err)
+	}
+	if _, err := s.Store.Secret(s.Key, "legacy_user:"+u.Id); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatal("legacy hash retained", err)
+	}
+	contractJSON(t, h, "POST", "/api/auth/login", `{"username":"legacy","password":"old-password"}`, "", 200)
 }
 func TestAIProviderDefaultsAndValidation(t *testing.T) {
 	_, h := testServer(t)

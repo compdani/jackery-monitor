@@ -24,6 +24,7 @@ func env(key, fallback string) string {
 }
 func main() {
 	app := pocketbase.New()
+	app.RootCmd.AddCommand(importConfigCommand(app))
 	app.RootCmd.AddCommand(&cobra.Command{Use: "import-legacy DATABASE", Short: "Archive a legacy SQLite database into PocketBase collections (source stays read-only)", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		if err := app.Bootstrap(); err != nil {
 			return err

@@ -34,7 +34,13 @@ func (s *Server) aiRoutes(w http.ResponseWriter, r *http.Request, b map[string]a
 			if e != nil && !errors.Is(e, sql.ErrNoRows) {
 				storageError(w, e)
 			} else {
-				jsonOut(w, 200, map[string]any{"has_key": str(m, "api_key") != "" || os.Getenv(strings.ToUpper(provider)+"_API_KEY") != ""})
+				var source any
+				if str(m, "api_key") != "" {
+					source = "saved"
+				} else if os.Getenv(strings.ToUpper(provider)+"_API_KEY") != "" {
+					source = "env"
+				}
+				jsonOut(w, 200, map[string]any{"has_key": source != nil, "source": source})
 			}
 		case "POST":
 			key := str(b, "api_key")
@@ -152,15 +158,25 @@ func (s *Server) aiRoutes(w http.ResponseWriter, r *http.Request, b map[string]a
 	// A transaction prevents orphan user messages when persisting a completed turn.
 	e = s.Store.App.RunInTransaction(func(app core.App) error {
 		st := &store.Store{App: app}
-		if e := st.Put("messages", uid, id, map[string]any{"id": uid, "conversation_id": id, "role": "user", "content": text, "ts": stamp}); e != nil {
+		if e := st.Put("messages", uid, id, map[string]any{"id": uid, "conversation_id": id, "role": "user", "content": text, "created_at": stamp, "parts": nil, "ts": stamp}); e != nil {
 			return e
 		}
-		return st.Put("messages", aid, id, map[string]any{"id": aid, "conversation_id": id, "role": "assistant", "content": reply, "ts": stamp + .000001})
+		if err := st.Put("messages", aid, id, map[string]any{"id": aid, "conversation_id": id, "role": "assistant", "content": reply, "created_at": stamp + .000001, "parts": nil, "ts": stamp + .000001}); err != nil {
+			return err
+		}
+		conv, err := st.Get("conversations", id)
+		if err != nil {
+			return err
+		}
+		conv["updated_at"] = stamp
+		conv["model"] = model
+		conv["provider"] = provider
+		return st.Put("conversations", id, "", conv)
 	})
 	if e != nil {
 		storageError(w, e)
 		return true
 	}
-	jsonOut(w, 200, map[string]any{"conversation_id": id, "text": reply, "message": map[string]any{"id": aid, "conversation_id": id, "role": "assistant", "content": reply, "ts": stamp + .000001}, "pending_tools": []any{}, "tool_runs": []any{}})
+	jsonOut(w, 200, map[string]any{"conversation_id": id, "text": reply, "message": map[string]any{"id": aid, "conversation_id": id, "role": "assistant", "content": reply, "created_at": stamp + .000001, "parts": nil, "ts": stamp + .000001}, "pending_tools": []any{}, "tool_runs": []any{}})
 	return true
 }

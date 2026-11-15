@@ -9,7 +9,9 @@ import (
 	"github.com/pocketbase/dbx"
 	"github.com/pocketbase/pocketbase/core"
 	"net/http"
+	"sort"
 	"strings"
+	"time"
 )
 
 func (s *Server) resources(w http.ResponseWriter, r *http.Request, b map[string]any) bool {
@@ -104,6 +106,9 @@ func (s *Server) resources(w http.ResponseWriter, r *http.Request, b map[string]
 			if path == "/api/cost/plan" {
 				jsonOut(w, 200, map[string]any{"plan": b})
 			} else {
+				b["messages"] = []any{}
+				b["attachments"] = []any{}
+				b["tool_runs"] = []any{}
 				jsonOut(w, 200, b)
 			}
 		}
@@ -124,6 +129,34 @@ func (s *Server) conversations(w http.ResponseWriter, r *http.Request, b map[str
 			if e != nil {
 				storageError(w, e)
 			} else {
+				sort.SliceStable(rows, func(i, j int) bool {
+					a, _ := rows[i]["updated_at"].(float64)
+					b, _ := rows[j]["updated_at"].(float64)
+					return a > b
+				})
+				if len(rows) > 50 {
+					rows = rows[:50]
+				}
+				for _, row := range rows {
+					messages, err := s.Store.List("messages", str(row, "id"), 0, 100000)
+					if err != nil {
+						storageError(w, err)
+						return true
+					}
+					snippet := ""
+					for i := len(messages) - 1; i >= 0; i-- {
+						text := strings.TrimSpace(str(messages[i], "content"))
+						if text != "" {
+							snippet = strings.ReplaceAll(text, "\n", " ")
+							break
+						}
+					}
+					runes := []rune(snippet)
+					if len(runes) > 80 {
+						snippet = string(runes[:80]) + "…"
+					}
+					row["snippet"] = snippet
+				}
 				jsonOut(w, 200, map[string]any{"conversations": rows})
 			}
 			return true
@@ -131,12 +164,24 @@ func (s *Server) conversations(w http.ResponseWriter, r *http.Request, b map[str
 		if r.Method == "POST" {
 			id = store.ID()
 			b["id"] = id
+			stamp := float64(time.Now().Unix())
+			b["created_at"] = stamp
+			b["updated_at"] = stamp
+			b["ts"] = stamp
+			for _, key := range []string{"model", "provider"} {
+				if _, ok := b[key]; !ok {
+					b[key] = nil
+				}
+			}
 			if str(b, "title") == "" {
 				b["title"] = "New chat"
 			}
 			if e := s.Store.Put("conversations", id, "", b); e != nil {
 				storageError(w, e)
 			} else {
+				b["messages"] = []any{}
+				b["attachments"] = []any{}
+				b["tool_runs"] = []any{}
 				jsonOut(w, 200, b)
 			}
 			return true

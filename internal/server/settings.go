@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"net/http"
 	"os"
 	"sort"
@@ -26,10 +27,10 @@ var compatJSON []byte
 
 func settingNumber(raw any, spec map[string]any) (int, bool) {
 	f, err := strconv.ParseFloat(fmt.Sprint(raw), 64)
-	if err != nil {
+	if err != nil || math.IsNaN(f) || math.IsInf(f, 0) {
 		return 0, false
 	}
-	return max(int(spec["min"].(float64)), min(int(spec["max"].(float64)), int(f))), true
+	return int(math.Max(spec["min"].(float64), math.Min(spec["max"].(float64), f))), true
 }
 func (s *Server) settingValues() (map[string]any, []map[string]any, error) {
 	var specs map[string]map[string]any
@@ -76,15 +77,24 @@ func (s *Server) settingsRoute(w http.ResponseWriter, r *http.Request, b map[str
 		fail(w, 405, "method not allowed")
 		return true
 	}
+	saved, err := s.Store.Get("settings", "settings")
+	if err != nil && !isMissing(err) {
+		storageError(w, err)
+		return true
+	}
+	if saved == nil {
+		saved = map[string]any{}
+	}
 	for _, spec := range entries {
 		k := spec["key"].(string)
 		if raw, ok := b[k]; ok {
 			if n, ok := settingNumber(raw, spec); ok {
 				values[k] = n
+				saved[k] = n
 			}
 		}
 	}
-	if err := s.Store.Put("settings", "settings", "", values); err != nil {
+	if err := s.Store.Put("settings", "settings", "", saved); err != nil {
 		storageError(w, err)
 	} else {
 		jsonOut(w, 200, map[string]any{"ok": true, "settings": values})

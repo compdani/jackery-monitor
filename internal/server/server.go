@@ -168,7 +168,30 @@ func (s *Server) auth(w http.ResponseWriter, r *http.Request) bool {
 			s.session(w, u)
 		} else {
 			u, e := s.Store.App.FindFirstRecordByData("users", "username", name)
-			if e != nil || !u.ValidatePassword(pass) {
+			valid := e == nil && u.ValidatePassword(pass)
+			if e == nil && !valid {
+				legacy, err := s.Store.Secret(s.Key, "legacy_user:"+u.Id)
+				if err == nil && u.ValidatePassword(str(legacy, "_transition_password")) && store.VerifyLegacyPassword(pass, str(legacy, "password_hash")) {
+					err = s.Store.App.RunInTransaction(func(app core.App) error {
+						user, err := app.FindRecordById("users", u.Id)
+						if err != nil {
+							return err
+						}
+						user.SetPassword(pass)
+						if err = app.Save(user); err != nil {
+							return err
+						}
+						return (&store.Store{App: app}).Delete("credentials", "legacy_user:"+u.Id)
+					})
+					if err != nil {
+						fail(w, 500, "password migration failed; retry login")
+						return true
+					}
+					u, e = s.Store.App.FindRecordById("users", u.Id)
+					valid = e == nil
+				}
+			}
+			if !valid {
 				fail(w, 401, "invalid credentials")
 				return true
 			}

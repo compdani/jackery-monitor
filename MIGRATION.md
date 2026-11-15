@@ -25,8 +25,9 @@ The device libraries remain separate from the core through adapters in
   Username login, six-character password minimum, setup lockout after the
   first account, and password change are implemented. Password changes
   invalidate PocketBase tokens. Logout clears the cookie.
-- Existing Python HMAC sessions and auth.json are NOT imported. Create a new
-  app account for the Go database. PocketBase superusers remain separate.
+- Existing Python HMAC sessions are not imported. `import-config` preserves
+  legacy auth.json accounts via the password transition documented below.
+  PocketBase superusers remain separate.
   Cloud credential writes now require app authentication.
 - /api/settings conflicts with PocketBase's own route. A root middleware
   intercepts legacy API paths before native route middleware. Native
@@ -163,8 +164,8 @@ not one atomic operation; a failed run can be rerun.
 1. Finish native Jackery lifecycle parity: MQTT realtime subscriptions and pack
    push cache, all-device background polling, session/backoff policy beyond the
    one-minute contention cooldown, cloud diagnostics and BLE Jackery fallback.
-   Native HTTP login/polling and MQTT output commands now exist; the default
-   deployment still uses the reference Python bridge.
+   Native HTTP login/polling and MQTT output commands now exist and are the
+   default deployment; lifecycle parity is still pending.
 2. Full server contract port: configuration validation/defaults/wrappers,
    fleet metadata, model catalog annotations, raw diagnostics, telemetry
    history, weather forecast route/build/readiness, calibration, rolling energy
@@ -178,15 +179,12 @@ not one atomic operation; a failed run can be rerun.
    Most hardware routes still return 501.
 5. Daily advisor reviews/narration, suggestion application
    transactions, assistant streaming/tool approval/attachments/read tools,
-   provider discovery, API-key endpoints and richer conversation history.
-6. Remote snapshot enumeration, rsync-module discovery, backup scheduling,
-   retention and first-run restore. SMB host/share discovery, local archive
-   listing and authenticated PocketBase restore (including a verified remote
-   download by name) now exist. Remote upload/checksum verification exists, but
-   Python directory snapshots are not compatible with Go PocketBase archives.
-   Preserve the encryption key separately when taking external snapshots.
-7. Complete migration of legacy settings/device prefs/credentials/auth,
-   weather/battery-pack data, attachment files and domain-aware sample import.
+   advanced provider capabilities; model discovery and basic history now work.
+6. Local backup scheduling, retention, setup restore and key-inclusive recovery.
+   Remote backup operations are retired by the Pi-only owner scope. Python
+   directory snapshots are not compatible with Go PocketBase archives.
+7. JSON settings/device prefs/credentials/auth import is implemented below;
+   weather/battery-pack data, attachment files and domain-aware history remain.
 8. Cloudflare Access verification is not implemented in Go.
 9. Port the remaining pytest cases. Current Go tests cover selected reference
    behaviors and integration seams, not the complete pytest suite.
@@ -260,19 +258,13 @@ Implemented in this continuation:
   provider key endpoints, and `/api/assistant/chat` text turns with stored
   message history and transactional turn persistence. A configured provider,
   key and model are required. Attachments explicitly fail with 501. Tool calls,
-  approvals, streaming, model discovery, daily advisor reviews/narration and
+  approvals, streaming, daily advisor reviews/narration and
   suggestion application remain absent; this is a text-only workflow.
-- `internal/backup` transfers native archives through SMB, rsync over SSH,
-  rsync daemon, or daemon over SSH. Keys/auth files use exclusive 0600 tempfiles
-  and are removed after commands. Commands use context cancellation, argv
-  rather than a shell, and validated remote paths. SSH requires known-host
-  verification. Uploads download the remote archive and compare SHA-256/size
-  before publishing a completion manifest. Server backup credentials are
-  encrypted; `/api/backup/run` exports a PocketBase backup and uploads it when
-  remote credentials exist, and `/api/backup/status` exposes the last remote
-  result. This requires installed `rsync`/`ssh`/`smbclient` binaries. Discovery,
-  remote listing, retention, schedules and restore are still missing. The
-  encryption key must still be preserved separately.
+- `internal/backup` still contains historical remote transport helpers/tests,
+  but no running server route invokes them. Pi-only backup routes create/list/
+  restore local PocketBase archives; saved remote credentials do not trigger
+  transfers. Remote credential/discovery routes return 410. Local scheduling,
+  retention, setup restore and encryption-key recovery remain pending.
 - Browser views resolve both cached serials and cloud IDs without changing the
   bridge's active selection. Unknown IDs retain the active snapshot.
 
@@ -427,3 +419,107 @@ This increment completes deployment source changes only. API contract parity
 fleets, assistant/advisor and local backup completion still block Python
 removal. No Python source or tests were deleted. No hardware, cloud accounts,
 or remote storage were contacted.
+
+## Step 2 — compatibility API increment
+
+HTTP tests now cover settings schema/defaults/clamping and runtime poll interval,
+`device_id` preference writes and `prefs` listing, aliases, cost wrappers and
+presets, conversation children/cascades, chat message objects/`pending_tools`,
+model-list live/fallback responses using a fake provider, compat catalogs,
+provider defaults, GET query forwarding, per-browser views/explicit output
+routing, null energy selection and the 900-second history bucket. Native events
+include ts/level/category/message/extra and honor since/limit. Account import
+and login-upgrade tests are synthetic; no live accounts were used.
+
+Settings metadata for not-yet-wired features remains available for compatibility.
+Poll interval and low-battery threshold apply now. Cloud refresh/contested pacing
+belongs to step 5; Siseli intervals to step 8; watchdog/advisor/backup scheduler
+settings take effect only after their owning supervisors are wired. Model lists
+use bounded HTTP reads/timeouts and static fallback aliases preserved from
+Python; shared model caching remains part of step 9. Chat is still text-only.
+Conversation deletion cascades PocketBase child records; attachment upload and
+managed file cleanup remain step 9. Imported legacy attachment files are never
+deleted by this increment.
+
+The API audit checked Python route/view tests, Svelte stores/components and
+mobile API calls against actual handlers (routes.go alone is not route coverage).
+The following routes still lack operational data/services and remain 501; they
+are explicitly assigned below rather than represented by successful empty
+responses. Paths ending in `/*` include their CRUD and action subroutes.
+
+| Owning plan step | Remaining UI/mobile API families |
+| --- | --- |
+| 4 — history conversion/read models | `/api/energy/daily`, `/api/energy/correct_output`; lifetime/rolling totals still need legacy aggregate conversion and monetary decoration |
+| 5 — native Jackery lifecycle | `/api/devices/probe_results`, `/api/devices/probe_now`, `/api/debug/cloud_probe`, `/api/debug/raw_props`, `/api/devices/battery_packs` (cache/fresh RPC/capacity response), Cloudflare Access login |
+| 6 — supervisors | `/api/smart_charge/{config,status,history,analytics,decision_details,evaluate_now,backtest}`, `/api/solar_charge/{config,status,history,evaluate_now}`, `/api/inverter_watchdog/{config,status,dismiss}`, `/api/f7_ac_reset/config`, `/api/automation/rules/disable`, `/api/automation/rules/{id}/history` (paired plug intervals) |
+| 7 — forecasting | `/api/forecast`, `/api/forecast/solar_array` and `/infer`, `/api/forecast/solar_key`, `/api/location/geocode`, `/api/devices/params` and `/fit`/`/refit`, `/api/devices/capacity`, `/api/diagnostics/{row_soc,parasitic_fit_windows}`; learned-profile copying for `/api/forecast/load_schedule?copy_learned=1` |
+| 8 — fleets | `/api/siseli/{credentials,local,local/test,status,settings,mqtt-capture}`, `/api/ecoflow/{credentials,reconnect_settings,reconnect,devices}` including link/delete subroutes, `/api/bms/{scan,status,saved,inverter}` including per-MAC/SN subroutes, `/api/kasa/{devices,saved,health}`, `/api/ble/{status,sessions,captures}` including session stop, capture events/download/delete |
+| 9 — assistant/advisor | `/api/assistant/attachments/*`, `/api/assistant/tools/{id}/{approve,deny}`, `/api/algorithm/{suggestions,changes,preview,review_now,review_status}` and suggestion apply/dismiss; key validation and provider capability parity |
+| 10 — local backups | `/api/backup/setup_restore/{test,snapshots,restore}`, local scheduling/retention, encryption-key-inclusive recovery |
+
+`/api/forecast/accuracy` and `/api/daily_summary` read existing prediction data;
+they do not generate forecasts. Generic config persistence is not a supervisor.
+Registry imports below preserve native JSON structure for the fleet step, not a
+claim of working fleet routes. BLE has standalone Go handlers but no server
+mount/lifecycle yet. Remote backup transport/discovery remains retired by owner
+scope, not pending work. The old Svelte setup remote restore wizard is removed;
+local setup restore remains visibly pending.
+
+## Step 3 — read-only legacy JSON import
+
+Use an **existing** 32-byte key for both import and subsequent server startup:
+
+```sh
+export JACKERY_AT_REST_KEY_FILE=/path/to/existing/.jackery-creds.key
+go run ./cmd/jackery import-config /path/to/legacy-copy --dry-run
+go run ./cmd/jackery import-config /path/to/legacy-copy --dir=/path/to/pb_data
+go run ./cmd/jackery serve --dir=/path/to/pb_data
+```
+
+Dry-run never bootstraps/opens the destination. It validates/decrypts sources and
+prints per-source candidates, imported (zero), skipped/missing and errors as JSON.
+It cannot check destination conflicts without opening it; apply checks these
+inside transactions. Missing optional sources are reported, not errors. Invalid
+sources return a failing exit status; other valid sources may commit independently.
+Each source is atomic. Reruns insert only missing stable keys; existing native
+records/users win, even if source contents changed. Import does not synchronize
+or overwrite destination configuration. Reports never include secrets/hashes.
+
+Sources: settings, device_prefs, automation rules, kasa/ecoflow/bms/siseli
+registries, smart_charge/solar_charge/F7 configs, solar overload state, EcoFlow
+reconnect policy, load schedules, location (including timezone/label), solar
+array, cost, provider preferences, Jackery/Anthropic/OpenAI/Kasa/Siseli/EcoFlow/
+Forecast.Solar credentials, and auth.json. Shared watchdog knobs are in settings;
+Python has no separate watchdog config file. Siseli's portal-discovered fleet
+usually has no separate registry file; optional siseli_devices.json is supported.
+Registry/controller/solar-array objects retain every field under matching
+settings keys until their owning services are wired. Per-device load schedules
+use `load_schedule:<serial>`, device prefs use native identifiers, and provider
+selection is derived from imported provider prefs. Existing remote-backup
+credentials are deliberately not imported.
+
+Default filenames match Python's `/data` basenames. Existing `JACKERY_*_FILE`
+environment overrides are honored. `--manifest paths.json` can map allowlisted
+source names to explicit paths and overrides those variables; unknown names
+fail. `ConfigSources` in internal/store/config_import.go is the full mapping.
+No directory scanning, DB rewriting, file moves, attachment cleanup, key creation
+or source writes occur. Keep original data and rollback copies. Use one instance
+of the importer at a time while the destination server is stopped.
+
+Account policy: preserve the legacy PBKDF2-SHA256 hash encrypted under the
+existing at-rest key. Create a PocketBase account with an unguessable transition
+password to reserve the username and prevent public setup takeover. The first
+successful old-password login verifies PBKDF2 in constant time, writes a native
+PocketBase password, and deletes the encrypted legacy hash in one transaction.
+A subsequent native password reset disables the legacy-password fallback.
+Existing destination accounts are never replaced. Unsupported/malformed hashes
+fail import with a password-reset-required report; do not start a fresh public
+setup flow in that case. Legacy sessions do not carry across; log in again.
+
+History/assistant SQLite conversion remains the separate step 4 importer;
+`import-legacy` is still archival and is not a domain-aware replacement.
+
+Step 2/3 verification: `go build ./...`, `go vet ./...`, `go test ./...`
+and web UI check/build pass. All importer and provider fixtures are synthetic.
+Reports count destination records (a registry/config object is one record,
+while device preferences and rules count individual entries).
