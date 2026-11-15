@@ -127,8 +127,10 @@ func (a *Adapter) lookup(ctx context.Context, address string) (bluetooth.Address
 	sctx, cancel := context.WithTimeout(ctx, a.ConnectScan)
 	defer cancel()
 	found := make(chan struct{})
+	scanDone := make(chan struct{})
 	var once sync.Once
 	go func() {
+		defer close(scanDone)
 		_ = a.Scan(sctx, func(adv ble.Advertisement) {
 			if strings.EqualFold(adv.Address, key) {
 				once.Do(func() { close(found) })
@@ -140,6 +142,9 @@ func (a *Adapter) lookup(ctx context.Context, address string) (bluetooth.Address
 		cancel()
 	case <-sctx.Done():
 	}
+	// BlueZ connects unreliably while discovery is still running
+	// (le-connection-abort-by-local), so wait for StopScan to finish.
+	<-scanDone
 	a.mu.Lock()
 	addr, ok = a.seen[key]
 	a.mu.Unlock()
@@ -152,7 +157,7 @@ func (a *Adapter) lookup(ctx context.Context, address string) (bluetooth.Address
 type conn struct {
 	dev     bluetooth.Device
 	svcs    []ble.Service
-	chars   map[int]bluetooth.DeviceCharacteristic
+	chars   map[int]*bluetooth.DeviceCharacteristic
 	closed  chan struct{}
 	closeMu sync.Once
 }
@@ -193,7 +198,7 @@ func (a *Adapter) Connect(ctx context.Context, address string) (ble.Conn, error)
 		}()
 		return nil, ctx.Err()
 	}
-	c := &conn{dev: dev, chars: map[int]bluetooth.DeviceCharacteristic{}, closed: make(chan struct{})}
+	c := &conn{dev: dev, chars: map[int]*bluetooth.DeviceCharacteristic{}, closed: make(chan struct{})}
 	services, err := dev.DiscoverServices(nil)
 	if err != nil {
 		_ = dev.Disconnect()
@@ -207,7 +212,11 @@ func (a *Adapter) Connect(ctx context.Context, address string) (ble.Conn, error)
 			return nil, err
 		}
 		bs := ble.Service{UUID: strings.ToLower(svc.UUID().String()), Handle: si}
-		for _, ch := range chars {
+		for i := range chars {
+			// Keep one addressable value per characteristic: tinygo stores the
+			// notification subscription on it, so StopNotify must see the
+			// same value StartNotify changed.
+			ch := &chars[i]
 			handle++
 			c.chars[handle] = ch
 			bs.Characteristics = append(bs.Characteristics, ble.Characteristic{
@@ -221,10 +230,10 @@ func (a *Adapter) Connect(ctx context.Context, address string) (ble.Conn, error)
 
 func (c *conn) Services() []ble.Service { return c.svcs }
 
-func (c *conn) char(ch ble.Characteristic) (bluetooth.DeviceCharacteristic, error) {
+func (c *conn) char(ch ble.Characteristic) (*bluetooth.DeviceCharacteristic, error) {
 	dc, ok := c.chars[ch.Handle]
 	if !ok {
-		return dc, fmt.Errorf("unknown characteristic handle %d", ch.Handle)
+		return nil, fmt.Errorf("unknown characteristic handle %d", ch.Handle)
 	}
 	return dc, nil
 }
