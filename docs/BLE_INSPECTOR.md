@@ -26,7 +26,7 @@ source .venv/bin/activate
 # CLI alone:
 python -m pip install 'bleak>=0.22'
 # Full dashboard instead:
-python -m pip install -r requirements.txt
+python -m pip install -r python/requirements.txt
 ```
 
 Run the CLI as your ordinary user. Bleak talks to the system `bluetoothd` over D-Bus; it does not require raw HCI socket privileges. Access depends on the OS D-Bus/BlueZ policy and the user running the process. If access is denied, check `journalctl -u bluetooth`, system D-Bus policy, and the service user's group membership. If your distribution's policy uses a `bluetooth` group, add that user with `sudo usermod -aG bluetooth USERNAME` and log out/in or restart its service. Group membership alone is not a universal fix. Do not run pip with sudo or grant broad capabilities to Python.

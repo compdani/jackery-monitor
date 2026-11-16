@@ -21,5 +21,5 @@ def capture(frame, event, result):
 sys.setprofile(capture)
 status = pytest.main([str(root/'tests/test_forecaster.py'), '-q', '-p', 'no:cacheprovider'])
 sys.setprofile(None)
-(root/'internal/forecast/testdata/forecaster-tests.json.gz').write_bytes(gzip.compress(json.dumps(cases).encode(), mtime=0))
+(root.parent/'internal/forecast/testdata/forecaster-tests.json.gz').write_bytes(gzip.compress(json.dumps(cases).encode(), mtime=0))
 raise SystemExit(status)

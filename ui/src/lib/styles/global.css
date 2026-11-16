@@ -1215,6 +1215,13 @@ input.forecast-input[type="password"] { min-width: 12em; flex: 1; }
 .card.collapsible.collapsed > :not(.collapsible-header) {
   display: none;
 }
+/* Device tab: keep the header status beside the chevron, not centred. */
+.device-card.collapsible .collapsible-header {
+  gap: 10px;
+}
+.device-card.collapsible .collapsible-header > h2 {
+  margin-right: auto;
+}
 .card.collapsible .collapsible-header:hover .collapsible-chevron {
   color: var(--text);
 }
@@ -2139,18 +2146,31 @@ input.forecast-input[type="password"] { min-width: 12em; flex: 1; }
 .auto-field input[type="password"],
 .auto-field input[type="email"],
 .auto-field input[type="number"],
+.auto-field input[type="time"],
+.auto-field input[type="date"],
 .auto-field select {
   background: var(--bg);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   color: var(--text);
-  color-scheme: dark;
   padding: 8px 10px;
   font-family: inherit;
   font-size: 14px;
   outline: none;
 }
+.dark .auto-field input,
+.dark .auto-field select { color-scheme: dark; }
 .auto-field input:focus, .auto-field select:focus { border-color: var(--pow-green); }
+.auto-field input[readonly] { opacity: .6; cursor: not-allowed; }
+/* Device-tab forms: lay fields out in columns on wider screens instead of
+   stretching every input across the whole card. */
+@media (min-width: 721px) {
+  .device-card .auto-form-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    align-items: start;
+  }
+}
 .auto-condition { display: flex; gap: 8px; align-items: center; }
 .auto-condition select { flex: 0 0 auto; min-width: 140px; }
 .auto-condition input { flex: 0 0 90px; text-align: right; }
@@ -2246,6 +2266,10 @@ input.forecast-input[type="password"] { min-width: 12em; flex: 1; }
 .settings-range { font-size: 11px; color: var(--text-dim); font-family: var(--font-mono); }
 @media (max-width: 720px) {
   .settings-row { grid-template-columns: 1fr; }
+  /* A lone checkbox stays beside its label instead of wrapping below it. */
+  .settings-row:has(.settings-control > input[type="checkbox"]:only-child) {
+    grid-template-columns: 1fr auto;
+  }
   .settings-control { justify-content: flex-start; }
 }
 .switch .sw-label { font-size: 11px; text-transform: uppercase; color: var(--text-dim); letter-spacing: .06em; }
@@ -3268,14 +3292,35 @@ body.device-switching .tab-panel { opacity: .45; pointer-events: none;
 }
 .siseli-controls {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  align-items: start;
   gap: 12px;
 }
 .siseli-control.siseli-switch {
-  display: flex;
+  align-items: stretch;
+}
+.siseli-control.siseli-switch .switch {
+  flex: 0 0 auto;
+  flex-direction: row;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
+}
+.siseli-control.siseli-switch .switch::after {
+  content: "";
+  width: 28px; height: 16px;
+  border-radius: 999px;
+  background: radial-gradient(circle at 8px 50%, #fff 5px, transparent 5.5px), var(--border);
+  transition: background .15s;
+}
+.siseli-control.siseli-switch .switch.on::after {
+  background: radial-gradient(circle at 20px 50%, #fff 5px, transparent 5.5px), var(--pow-green);
+}
+/* Two reserved label lines keep inputs aligned across a grid row. */
+.siseli-controls .siseli-control .auto-label,
+.inverter-controls-grid .siseli-control .auto-label {
+  min-height: 2.6em;
+  display: flex;
+  align-items: flex-end;
 }
 #siseli-hybrid-pull-row .switch {
   cursor: pointer;

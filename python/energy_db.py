@@ -28,6 +28,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, TypedDict
 
+from app_paths import APP_ROOT
 from automation_tables import AutomationTablesMixin
 from forecast_tables import ForecastTablesMixin
 
@@ -63,7 +64,7 @@ log = logging.getLogger("energy_db")
 DEFAULT_DB = (
     os.environ.get("JACKERY_DB")
     or ("/data/energy.db" if Path("/data").is_dir() else None)
-    or str(Path(__file__).parent / "energy.db")
+    or str(APP_ROOT / "energy.db")
 )
 
 # If two readings are >10 min apart, assume the device was off in between

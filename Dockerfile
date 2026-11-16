@@ -42,15 +42,15 @@ RUN apt-get update \
          libpcap0.8 \
     && rm -rf /var/lib/apt/lists/*
 
-COPY requirements.txt ./
+COPY python/requirements.txt ./
 RUN pip install -r requirements.txt
 
 # Copy every Python module + the web assets. We use a glob (*.py) instead of
 # enumerating files so adding a new module doesn't silently fail to land in
 # the image (we got bitten once by forgetting to add settings.py here).
-COPY *.py ./
-COPY siseli_local ./siseli_local
-COPY ecoflow_proto ./ecoflow_proto
+COPY python/*.py ./
+COPY python/siseli_local ./siseli_local
+COPY python/ecoflow_proto ./ecoflow_proto
 COPY web ./web
 # Overlay the built SvelteKit SPA (adapter-static → web/next).
 COPY --from=ui-build /web/next ./web/next
@@ -58,7 +58,7 @@ COPY --from=ui-build /web/next ./web/next
 # catalog (forecaster.py) and the AI advisor's allowed-tunables list
 # (claude_advisor.py). Both loaded at import time. Keep separate from
 # /data (which is a runtime volume).
-COPY models.json tunables.json ./
+COPY models.json python/tunables.json ./
 
 # Persistent data lives here (energy.db, jackery-creds.json on Linux hosts).
 RUN mkdir -p /data
@@ -98,7 +98,6 @@ WORKDIR /app
 COPY --from=go-build /jackery /app/jackery
 # adapter-static currently writes web/next, not ui/build.
 COPY --from=ui-build /web/next /app/pb_public
-COPY models.json tunables.json ./
 RUN mkdir -p /data
 VOLUME ["/data"]
 EXPOSE 8000

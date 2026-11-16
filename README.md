@@ -15,7 +15,7 @@ go build -o jackery ./cmd/jackery
 
 The server serves `pb_public/`, `ui/build/`, or the existing Svelte output
 `web/next/` (in that order). Override with `JACKERY_UI_DIR`.
-Run the reference bridge separately (`python bridge.py`); set `BRIDGE_URL`
+Run the reference bridge separately (`cd python && python bridge.py`); set `BRIDGE_URL`
 if it is not on `127.0.0.1:8766`. Bootstrap the app account with the existing
 UI setup screen. PocketBase superusers are separate from the app account.
 For containers, `docker compose up -d --build` builds the Go server and a
@@ -221,28 +221,28 @@ Bridge runs on the Mac (uses macOS Keychain for credentials), dashboard
 in Docker:
 
 ```bash
-./run-bridge.sh      # listens on 127.0.0.1:8766
-docker compose -f docker-compose.dev.yml --profile mac up
+./python/run-bridge.sh      # listens on 127.0.0.1:8766
+docker compose -f python/docker-compose.yml --profile mac up
 open http://localhost:8000
 ```
 
 Or in fully-mock mode (no Jackery cloud, synthetic telemetry):
 
 ```bash
-docker compose -f docker-compose.dev.yml --profile mock up
+docker compose -f python/docker-compose.yml --profile mock up
 ```
 
 Host-native (no Docker) — builds the Svelte UI then starts FastAPI:
 
 ```bash
-./run.sh
+./python/run.sh
 ```
 
 ### UI development (SvelteKit)
 
 ```bash
 # Terminal 1: FastAPI (mock or bridge)
-BACKEND=mock ./run.sh   # or python server.py with BACKEND=mock
+BACKEND=mock ./python/run.sh   # or: cd python && BACKEND=mock python server.py
 
 # Terminal 2: Kit vite dev with /api + /ws proxy to :8000
 npm ci --prefix ui
@@ -526,49 +526,26 @@ cloud portal only. The decoder is vendored from
 
 ```
 jackery-monitor/
-├── server.py                 FastAPI dashboard, WS broadcast, REST API
-├── siseli_local/             Vendored dongle sniffer + block decoder (no Home Assistant)
-├── bridge.py                 Cloud + MQTT bridge (separate container)
-├── cloud_client.py           Jackery HTTP + MQTT client
-├── device_client.py          mock | bridge | (legacy native) backends
-├── energy_db.py              SQLite Wh integrator with per-device totals
-├── automation.py             Edge-triggered SOC rule engine
-├── kasa_client.py            python-kasa wrapper (status / set_state / discover)
-├── kasa_devices.py           Saved Kasa-device registry (/data/kasa_devices.json)
-├── kasa_creds.py             Encrypted Kasa cloud creds (/data/kasa-creds.json)
-├── auth.py                   App-level user auth (PBKDF2 + HMAC sessions)
-├── settings.py               Runtime-tunable settings module
-├── crypto_util.py            Shared AES-256-GCM helper
-│
-├── forecaster.py             Solar regression + load profile + SOC simulation
-├── load_schedule.py          Calendar / historical expected-load schedule
-├── weather_client.py         Open-Meteo client (free, keyless)
-├── smart_charge.py           Per-device smart-charge planner + config
-├── cost.py                   TOU electricity rate plans + savings math
-├── claude_advisor.py         Daily Opus + extended-thinking algorithm review
-├── claude_narrator.py        Per-decision Haiku narration
-├── assistant_store.py        AI Assistant chat SQLite + attachments
-├── assistant_agent.py        Conversational tools + multimodal provider calls
-├── assistant_routes.py       /api/assistant/* FastAPI routes
-├── anthropic_creds.py        Encrypted Anthropic API key (/data/anthropic-creds.json)
-│
-├── web/
-│   ├── index.html            Main dashboard
-│   ├── login.html            /login + /setup pages
-│   ├── style.css             Single CSS file (no build step)
-│   ├── app.js                Single JS file (no build step)
-│   ├── manifest.webmanifest  PWA manifest
-│   ├── sw.js                 Service worker
-│   └── icon.svg              PWA / favicon icon
+├── cmd/jackery/              Go entrypoint (PocketBase server + CLI)
+├── internal/                 Go packages (server, bridge, siseli, ecoflow, ble, forecast, …)
+├── migrations/               PocketBase schema migrations
+├── catalog.go, models.json   Embedded model_code → capacity catalog
+├── ui/                       SvelteKit SPA (builds into web/next)
+├── web/                      Legacy vanilla UI + shared realtime.js
 ├── mobile/                   Expo (iOS + Android) client
-│
-├── docker-compose.yml        Raspberry Pi prod (single container, local build)
+├── tests/                    JS tests (BLE UI, realtime transport)
+├── docs/
+├── docker-compose.yml        Raspberry Pi prod (Go, single container)
 ├── docker-compose.build.yml  Same, without pull_policy pinning
-├── docker-compose.dev.yml    macOS host-bridge + mock profiles
-├── Dockerfile
-├── requirements.txt
-├── .github/workflows/        Builds + publishes ghcr.io image on push
-└── deploy-synology.sh        SSH-based one-command updater (optional)
+├── Dockerfile                go-runtime (default) + legacy Python targets
+└── python/                   Legacy FastAPI stack, kept for reference/rollback; to be removed
+    ├── server.py, bridge.py, …  FastAPI dashboard, cloud bridge and modules
+    ├── siseli_local/, ecoflow_proto/
+    ├── tests/                pytest suite + smoke scripts
+    ├── scripts/              Python → Go parity fixture generators
+    ├── docker-compose.yml    Legacy mac / mock / synology profiles
+    ├── run.sh, run-bridge.sh Host launchers
+    └── requirements*.txt, pyproject.toml
 ```
 
 Persistent state on the NAS (Docker volume `jackery-data`, mounted at

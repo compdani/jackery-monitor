@@ -202,7 +202,7 @@ test.
 
 Python fixture regeneration:
 
-    PYTHONPATH=. python3 scripts/forecast-fixtures.py
+    PYTHONPATH=python python3 python/scripts/forecast-fixtures.py
     go test ./internal/forecast
 
 Fixtures use a fixed seed and UTC for local-hour load fitting: 100 simulation
@@ -274,7 +274,7 @@ instantaneous telemetry, and server energy integration uses sample observations;
 no server path introduced here depends on raw-capture supervision or Siseli's
 local accumulated counters.
 
-Reference validation: `PYTHONPATH=. python3 scripts/controller-fixtures.py`
+Reference validation: `PYTHONPATH=python python3 python/scripts/controller-fixtures.py`
 runs 117 existing Python smart-charge/solar-charge/watchdog tests and captures
 actual controller calls to Go testdata. Go uses the smart/watchdog complete
 expected values and solar action expectations directly. Existing forecast
@@ -343,8 +343,8 @@ Completed and verified in this continuation:
 
 Reference checks added:
 
-    PYTHONPATH=. python3 scripts/build-forecast-fixtures.py
-    PYTHONPATH=. python3 scripts/forecaster-test-fixtures.py
+    PYTHONPATH=python python3 python/scripts/build-forecast-fixtures.py
+    PYTHONPATH=python python3 python/scripts/forecaster-test-fixtures.py
     go test ./internal/forecast ./internal/store ./internal/backup ./internal/server
 
 The first script creates 48 complete forecast-output cases and 16 historical

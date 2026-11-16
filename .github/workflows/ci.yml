@@ -63,15 +63,17 @@ jobs:
           python-version: ${{ matrix.python-version }}
           cache: pip
           cache-dependency-path: |
-            requirements.txt
-            requirements-dev.txt
+            python/requirements.txt
+            python/requirements-dev.txt
 
       - name: Install dependencies
+        working-directory: python
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt -r requirements-dev.txt
 
       - name: Lint (ruff)
+        working-directory: python
         run: ruff check .
 
       # Format check intentionally omitted — the existing code style is
@@ -81,6 +83,7 @@ jobs:
       # we're ready to take that diff.
 
       - name: Tests (pytest)
+        working-directory: python
         run: pytest -v --tb=short
 
       # Smokes are end-to-end scripts (not pytest-collected) that spin
@@ -89,8 +92,10 @@ jobs:
       # large parts of cloud_client.py have zero coverage in CI. Each
       # script exits non-zero on assertion failure.
       - name: Smoke (cloud_client)
+        working-directory: python
         run: python tests/smoke_cloud.py
       - name: Smoke (bridge)
+        working-directory: python
         run: python tests/smoke_bridge.py
 
       # Legacy BLE UI controller (web/ble.js) + Svelte-era pure helpers.

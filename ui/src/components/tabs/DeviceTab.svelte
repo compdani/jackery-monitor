@@ -5,6 +5,9 @@
   import { formatDeviceErrorCode, fmtSecsMMSS } from '$lib/format';
   import { saveCloudCredentials, forgetCloudCredentials, cloudAuthStatus } from '$lib/auth';
   import { isSiseliDevice, viewingSiseli, viewingEcoflow } from '$lib/siseli';
+  import type { SiseliControl } from '$lib/types';
+  import SiseliControlField from '../shared/SiseliControlField.svelte';
+  import { collapsible } from '$lib/actions/collapsible';
 
   type DeviceParam = {
     key: string;
@@ -117,13 +120,10 @@
   let bmsFormMsg = $state('');
   let prefsMsg = $state('');
 
-  let lanRead = $state(false);
-  let lanHybrid = $state(false);
-  let lanInverterIp = $state('');
-  let lanRouterIp = $state('');
-  let lanIface = $state('');
-  let lanMqttBroker = $state('');
-  let lanMsg = $state('');
+  let controlsMsg = $state('');
+  let controlsBusy = $state(false);
+  /** Optimistic pin set while a save is in flight; null = use device_prefs. */
+  let pinDraft = $state<string[] | null>(null);
 
   const device = $derived(live.status?.device);
   const t = $derived(live.status?.telemetry);
@@ -151,10 +151,17 @@
     isSiseli ? bmsPacks.filter((p) => p.siseli_device_sn === activeSn) : bmsPacks,
   );
 
+  const bmsSummary = $derived.by(() => {
+    if (!bmsPacks.length) return 'none saved';
+    const online = bmsPacks.filter((p) => packState(p) === 'online').length;
+    return `${bmsPacks.length} saved · ${online} online`;
+  });
+  const ecoflowLinkedCount = $derived(ecoflowDevices.filter((d) => d.siseli_device_sn).length);
+
   function inverterName(sn?: string | null) {
     if (!sn) return 'unassigned';
     const d = live.devices.find((x) => x.device_sn === sn || x.device_id === sn);
-    return d?.name || sn;
+    return d?.name || `Siseli inverter (${sn.replace(/^siseli:/, '')})`;
   }
 
   function packSoc(p: BmsPack): number | null {
@@ -166,15 +173,19 @@
     return String(p.error || p.reading?.error || '');
   }
 
-  function packOnline(p: BmsPack): boolean {
+  /** online = fresh SOC; offline = had a reading but it went stale; none = never read. */
+  function packState(p: BmsPack): 'online' | 'offline' | 'none' {
     const ts = Number(p.reading?.ts ?? p.last_seen_ts ?? 0);
-    if (packSoc(p) == null || !ts) return false;
-    return Date.now() / 1000 - ts < BMS_STALE_S;
+    if (packSoc(p) == null || !ts) return 'none';
+    return Date.now() / 1000 - ts < BMS_STALE_S ? 'online' : 'offline';
   }
 
   function packAge(p: BmsPack): string {
     const ts = Number(p.reading?.ts ?? p.last_seen_ts ?? 0);
-    if (!ts) return 'never read';
+    return ts ? ago(ts) : '';
+  }
+
+  function ago(ts: number): string {
     const s = Math.max(0, Math.round(Date.now() / 1000 - ts));
     if (s < 90) return `${s}s ago`;
     if (s < 5400) return `${Math.round(s / 60)}m ago`;
@@ -228,14 +239,6 @@
         user_id?: string;
         station_id?: string;
         time_zone?: string;
-        local_read?: boolean;
-        hybrid_pull?: boolean;
-        inverter_ip?: string;
-        router_ip?: string;
-        sniff_iface?: string;
-        mqtt_broker_ip?: string;
-        local_running?: boolean;
-        local_error?: string | null;
       }>('/siseli/credentials');
       siseliStatus = j.has_credentials
         ? `saved${j.user_id ? ` · ${j.user_id}` : ''}${j.station_id ? ` · station ${j.station_id}` : ''}`
@@ -243,15 +246,6 @@
       if (j.user_id) siseliUser = j.user_id;
       if (j.station_id) siseliStation = j.station_id;
       if (j.time_zone) siseliTz = j.time_zone;
-      lanRead = !!j.local_read;
-      lanHybrid = !!j.hybrid_pull;
-      lanInverterIp = j.inverter_ip || '';
-      lanRouterIp = j.router_ip || '';
-      lanIface = j.sniff_iface || '';
-      lanMqttBroker = j.mqtt_broker_ip || '';
-      if (j.local_error) lanMsg = j.local_error;
-      else if (j.local_running) lanMsg = 'LAN read running';
-      else if (j.local_read) lanMsg = 'LAN read enabled';
     } catch (err) {
       siseliStatus = err instanceof Error ? err.message : 'unavailable';
     }
@@ -304,6 +298,12 @@
     }
   }
 
+  function scrollToForm(id: string) {
+    requestAnimationFrame(() =>
+      document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'center' }),
+    );
+  }
+
   function resetEfForm() {
     efSn = '';
     efType = 'DELTA_3_MAX_PLUS';
@@ -326,6 +326,7 @@
       output: all || set.has('output'),
     };
     efEditing = true;
+    scrollToForm('ef-device-form');
     efDeviceMsg = 'Editing — save to update.';
   }
 
@@ -561,15 +562,21 @@
     bmsCapacity = p.capacity_wh ? String(p.capacity_wh) : '';
     bmsSiseli = p.siseli_device_sn || '';
     bmsEditing = true;
+    scrollToForm('bms-pack-form');
     bmsFormMsg = 'Editing — save to update.';
   }
 
   function pickScanned(d: { mac?: string; name?: string }) {
+    const saved = bmsPacks.find((p) => p.mac === d.mac);
+    if (saved) {
+      editBms(saved);
+      return;
+    }
+    resetBmsForm();
     bmsMac = d.mac || '';
-    if (!bmsAlias && d.name && d.name !== d.mac) bmsAlias = d.name;
-    if (!bmsSiseli && isSiseli) bmsSiseli = activeSn;
-    bmsEditing = bmsPacks.some((p) => p.mac === d.mac);
-    bmsFormMsg = bmsEditing ? 'Already saved — editing.' : 'Fill in and save the pack.';
+    if (d.name && d.name !== d.mac) bmsAlias = d.name;
+    bmsFormMsg = 'Fill in and save the pack.';
+    scrollToForm('bms-pack-form');
   }
 
   async function saveBms(e: SubmitEvent) {
@@ -929,63 +936,78 @@
     }
   }
 
-  async function saveLan(e: SubmitEvent) {
-    e.preventDefault();
-    busy = true;
-    lanMsg = 'Saving…';
-    try {
-      const j = await apiPost<{
-        local_read?: boolean;
-        local_running?: boolean;
-        local_error?: string | null;
-      }>('/siseli/local', {
-        local_read: lanRead,
-        hybrid_pull: lanHybrid,
-        inverter_ip: lanInverterIp.trim(),
-        router_ip: lanRouterIp.trim(),
-        sniff_iface: lanIface.trim(),
-        mqtt_broker_ip: lanMqttBroker.trim(),
+  const controls = $derived<SiseliControl[]>(
+    Array.isArray(live.status?.siseli_controls) ? live.status!.siseli_controls! : [],
+  );
+  const pins = $derived(new Set(pinDraft ?? prefs?.live_controls ?? controls.map((c) => c.canonical)));
+
+  let controlsFilter = $state('');
+  let collapsedGroups = $state<Record<string, boolean>>({});
+
+  const CONTROL_GROUPS: [string, RegExp][] = [
+    ['Temperature', /temp/i],
+    ['Load & light control', /load|light/i],
+    ['Discharge & protection', /discharg|over.?volt|low voltage|alarm/i],
+    ['Charging', /charg|equaliz|float|boost|increase/i],
+  ];
+
+  /** Controls grouped by what they affect, so 30+ settings stay scannable. */
+  const controlGroups = $derived.by(() => {
+    const q = controlsFilter.trim().toLowerCase();
+    const groups = new Map<string, SiseliControl[]>();
+    for (const c of controls) {
+      const name = c.name || c.canonical;
+      if (q && !name.toLowerCase().includes(q)) continue;
+      const group = CONTROL_GROUPS.find(([, re]) => re.test(name))?.[0] ?? 'General';
+      groups.set(group, [...(groups.get(group) || []), c]);
+    }
+    const order = ['General', ...CONTROL_GROUPS.map(([n]) => n)];
+    return order
+      .filter((n) => groups.has(n))
+      .map((name) => {
+        const items = groups.get(name)!;
+        return { name, items, pinned: items.filter((c) => pins.has(c.canonical)).length };
       });
-      lanMsg =
-        j.local_error && !j.local_running
-          ? j.local_error
-          : j.local_read
-            ? j.local_running
-              ? 'LAN read saved · running'
-              : 'LAN read saved.'
-            : 'LAN read turned off.';
-      await loadSiseli();
+  });
+
+  async function savePins(next: string[]) {
+    const did = String(deviceId || '');
+    if (!did) return;
+    pinDraft = next;
+    controlsMsg = 'Saving…';
+    try {
+      await apiPost('/device_prefs', { device_id: did, live_controls: next });
+      await live.refreshStatus();
+      controlsMsg = `${next.length} on Live`;
     } catch (err) {
-      lanMsg = err instanceof Error ? err.message : 'Save failed';
+      controlsMsg = err instanceof Error ? err.message : 'Save failed';
     } finally {
-      busy = false;
+      pinDraft = null;
     }
   }
 
-  async function testLan() {
-    busy = true;
-    lanMsg = 'Testing LAN (up to ~25s)…';
+  function togglePin(key: string, on: boolean) {
+    const next = controls.map((c) => c.canonical).filter((k) => (k === key ? on : pins.has(k)));
+    void savePins(next);
+  }
+
+  async function writeControl(key: string, value: number) {
+    const did = String(deviceId || '');
+    if (!did || !Number.isFinite(value)) return;
+    controlsBusy = true;
+    controlsMsg = 'Writing…';
     try {
-      const j = await apiPost<{
-        ok?: boolean;
-        decoded?: boolean;
-        error?: string;
-        detail?: string;
-      }>('/siseli/local/test', {
-        local_read: true,
-        hybrid_pull: lanHybrid,
-        inverter_ip: lanInverterIp.trim(),
-        router_ip: lanRouterIp.trim(),
-        sniff_iface: lanIface.trim(),
-        mqtt_broker_ip: lanMqttBroker.trim(),
+      const j = await apiPost<{ controls?: SiseliControl[] }>('/siseli/settings', {
+        device_id: did,
+        key,
+        value,
       });
-      lanMsg = j.decoded
-        ? 'Test OK — decoded a reading.'
-        : j.error || j.detail || 'Test finished — no decode yet.';
+      if (Array.isArray(j?.controls) && live.status) live.status.siseli_controls = j.controls;
+      controlsMsg = 'Saved to inverter.';
     } catch (err) {
-      lanMsg = err instanceof Error ? err.message : 'Test failed';
+      controlsMsg = err instanceof Error ? err.message : 'Write failed';
     } finally {
-      busy = false;
+      controlsBusy = false;
     }
   }
 
@@ -1001,7 +1023,7 @@
 </script>
 
 <section class="tab-panel">
-  <section class="card device-card">
+  <section class="card device-card" use:collapsible={{ key: 'device-info' }}>
     <div class="card-header">
       <h2>Device info</h2>
       <span class="pill pill-source">{live.status?.source || '—'}</span>
@@ -1028,7 +1050,7 @@
     </dl>
   </section>
 
-  <section class="card device-card">
+  <section class="card device-card" use:collapsible={{ key: 'device-alias' }}>
     <div class="card-header">
       <h2>Device alias</h2>
       {#if aliasMsg}<span class="hint">{aliasMsg}</span>{/if}
@@ -1045,7 +1067,67 @@
     </form>
   </section>
 
-  <section class="card device-card">
+  {#if isSiseli && controls.length}
+    <section class="card device-card" use:collapsible={{ key: 'controller-settings', collapsed: true }}>
+      <div class="card-header">
+        <h2>Inverter controls</h2>
+        <span class="hint">{controlsMsg || `${pins.size} of ${controls.length} on Live`}</span>
+      </div>
+      <p class="hint" style="margin:6px 0 12px">
+        Edit any setting here; writes go to the Siseli portal. “Show on Live” also puts a control on
+        the Live tab.
+      </p>
+      <div class="controls-toolbar">
+        <input
+          class="controls-filter"
+          type="search"
+          placeholder="Filter controls…"
+          aria-label="Filter inverter controls"
+          bind:value={controlsFilter}
+        />
+        <button class="btn btn-ghost btn-tiny" type="button" onclick={() => savePins(controls.map((c) => c.canonical))}>
+          Show all on Live
+        </button>
+        <button class="btn btn-ghost btn-tiny" type="button" onclick={() => savePins([])}>
+          Hide all from Live
+        </button>
+      </div>
+      {#each controlGroups as g (g.name)}
+        <details
+          class="controls-group"
+          open={!!controlsFilter || !collapsedGroups[g.name]}
+          ontoggle={(e) => {
+            if (!controlsFilter) collapsedGroups[g.name] = !e.currentTarget.open;
+          }}
+        >
+          <summary>
+            <span>{g.name}</span>
+            <span class="hint">{g.items.length} · {g.pinned} on Live</span>
+          </summary>
+          <div class="inverter-controls-grid">
+            {#each g.items as c (c.canonical)}
+              {@const pinned = pins.has(c.canonical)}
+              <div class="inverter-control-row" class:pinned>
+                <SiseliControlField control={c} disabled={controlsBusy} onwrite={writeControl} />
+                <label class="pin-toggle" class:on={pinned} title="Show this control on the Live tab">
+                  <input
+                    type="checkbox"
+                    checked={pinned}
+                    onchange={(e) => togglePin(c.canonical, e.currentTarget.checked)}
+                  />
+                  {pinned ? 'On Live' : 'Show on Live'}
+                </label>
+              </div>
+            {/each}
+          </div>
+        </details>
+      {:else}
+        <p class="hint">No controls match “{controlsFilter}”.</p>
+      {/each}
+    </section>
+  {/if}
+
+  <section class="card device-card" use:collapsible={{ key: 'battery-capacity' }}>
     <div class="card-header">
       <h2>Battery capacity</h2>
       {#if capacityMsg}<span class="hint">{capacityMsg}</span>{/if}
@@ -1076,7 +1158,7 @@
   </section>
 
   {#if isJackery}
-  <section class="card device-card">
+  <section class="card device-card" use:collapsible={{ key: 'polling' }}>
     <div class="card-header">
       <h2>Polling</h2>
     </div>
@@ -1102,7 +1184,7 @@
   {/if}
 
   {#if isJackery}
-  <section class="card device-card">
+  <section class="card device-card" use:collapsible={{ key: 'account', collapsed: true }}>
     <div class="card-header">
       <h2>Jackery account</h2>
       <span class="hint">{cloudHasCreds ? 'credentials saved' : 'no credentials'}</span>
@@ -1141,7 +1223,7 @@
   </section>
   {/if}
 
-  <section class="card device-card">
+  <section class="card device-card" use:collapsible={{ key: 'siseli-account', collapsed: true }}>
     <div class="card-header">
       <h2>Siseli account</h2>
       <span class="hint">{siseliStatus}</span>
@@ -1174,66 +1256,10 @@
     {/if}
   </section>
 
-  <section class="card device-card">
-    <div class="card-header">
-      <h2>Siseli LAN</h2>
-      <span class="hint">{lanRead ? 'enabled' : 'off'}</span>
-    </div>
-    <p class="hint" style="margin:6px 0 12px">
-      Local MQTT sniffer settings. Portal account must be saved first. Loaded from
-      <code>/api/siseli/credentials</code>; saved via <code>/api/siseli/local</code>.
-    </p>
-    <form onsubmit={saveLan}>
-      <div class="settings-row">
-        <label class="settings-label" for="lan-read">
-          <span class="settings-label-text">LAN read</span>
-        </label>
-        <div class="settings-control">
-          <input id="lan-read" type="checkbox" bind:checked={lanRead} />
-        </div>
-      </div>
-      <div class="settings-row">
-        <label class="settings-label" for="lan-hybrid">
-          <span class="settings-label-text">Hybrid pull</span>
-        </label>
-        <div class="settings-control">
-          <input id="lan-hybrid" type="checkbox" bind:checked={lanHybrid} />
-        </div>
-      </div>
-      <div class="auto-form-grid">
-        <label class="auto-field">
-          <span class="auto-label">Inverter IP</span>
-          <input type="text" bind:value={lanInverterIp} placeholder="192.168.x.x" />
-        </label>
-        <label class="auto-field">
-          <span class="auto-label">Router IP</span>
-          <input type="text" bind:value={lanRouterIp} placeholder="192.168.x.1" />
-        </label>
-        <label class="auto-field">
-          <span class="auto-label">Sniff iface</span>
-          <input type="text" bind:value={lanIface} placeholder="eth0" />
-        </label>
-        <label class="auto-field">
-          <span class="auto-label">MQTT broker IP</span>
-          <input type="text" bind:value={lanMqttBroker} placeholder="optional" />
-        </label>
-      </div>
-      <div style="margin-top:12px; display:flex; gap:8px; flex-wrap:wrap">
-        <button class="btn btn-primary" type="submit" disabled={busy}>Save LAN</button>
-        <button class="btn btn-ghost" type="button" disabled={busy} onclick={testLan}>
-          Test LAN
-        </button>
-      </div>
-    </form>
-    {#if lanMsg}
-      <p class="hint" style="margin-top:10px" role="status">{lanMsg}</p>
-    {/if}
-  </section>
-
-  <section class="card device-card">
+  <section class="card device-card" use:collapsible={{ key: 'ecoflow-account', collapsed: true }}>
     <div class="card-header">
       <h2>EcoFlow</h2>
-      <span class="hint">{ecoflowStatus}</span>
+      <span class="hint">{ecoflowStatus}{ecoflowLinkedCount ? ` · ${ecoflowLinkedCount} linked` : ''}</span>
     </div>
     <p class="hint" style="margin:6px 0 12px">
       EcoFlow power stations linked to a Siseli inverter (JJN) become part of it: their solar,
@@ -1276,7 +1302,7 @@
       <p class="hint" style="margin-top:10px" role="status">{ecoflowMsg}</p>
     {/if}
 
-    <h3 style="margin:18px 0 8px; font-size:14px">Devices</h3>
+    <h3 class="sub-head">Devices</h3>
     {#if ecoflowDevices.length}
       <ul class="device-params-list" style="list-style:none; padding:0; margin:0">
         {#each ecoflowDevices as d, i (d.sn || d.raw_sn || i)}
@@ -1297,8 +1323,14 @@
             </div>
             <div style="display:flex; gap:6px; flex-wrap:wrap">
               {#if isSiseli && d.siseli_device_sn !== activeSn}
-                <button class="btn btn-ghost btn-tiny" type="button" disabled={busy} onclick={() => linkEcoflowHere(d)}>
-                  Link to {inverterName(activeSn)}
+                <button
+                  class="btn btn-ghost btn-tiny"
+                  type="button"
+                  disabled={busy}
+                  title={`Make this part of ${inverterName(activeSn)}`}
+                  onclick={() => linkEcoflowHere(d)}
+                >
+                  Link here
                 </button>
               {/if}
               <button class="btn btn-ghost btn-tiny" type="button" disabled={busy} onclick={() => editEcoflowDevice(d)}>
@@ -1315,7 +1347,8 @@
       <p class="hint">No EcoFlow devices yet.</p>
     {/if}
 
-    <form onsubmit={saveEcoflowDevice} style="margin-top:14px">
+    <h3 class="sub-head" id="ef-device-form">{efEditing ? `Edit ${efAlias || efSn}` : 'Add device'}</h3>
+    <form onsubmit={saveEcoflowDevice}>
       <div class="auto-form-grid">
         <label class="auto-field">
           <span class="auto-label">Serial number</span>
@@ -1342,14 +1375,17 @@
             {/each}
           </select>
         </label>
-        <div class="auto-field" style="grid-column:1/-1">
-          <span class="auto-label">Roles when linked</span>
+        <fieldset class="auto-field roles-field" style="grid-column:1/-1" disabled={!efSiseli}>
+          <legend class="auto-label">Roles when linked</legend>
           <span style="display:flex; gap:14px; flex-wrap:wrap">
             {#each EF_ROLES as r (r)}
-              <label><input type="checkbox" bind:checked={efRoles[r]} disabled={!efSiseli} /> {r}</label>
+              <label><input type="checkbox" bind:checked={efRoles[r]} /> {r}</label>
             {/each}
           </span>
-        </div>
+          {#if !efSiseli}
+            <span class="hint">Pick “Part of inverter” first — roles only apply to a linked device.</span>
+          {/if}
+        </fieldset>
       </div>
       <div style="margin-top:12px; display:flex; gap:8px; flex-wrap:wrap">
         <button class="btn btn-primary" type="submit" disabled={busy}>
@@ -1366,7 +1402,7 @@
       <p class="hint" style="margin-top:10px" role="status">{efDeviceMsg}</p>
     {/if}
 
-    <h3 style="margin:18px 0 8px; font-size:14px">Auto-reconnect</h3>
+    <h3 class="sub-head">Auto-reconnect</h3>
     <p class="hint" style="margin:0 0 10px">
       Restart the MQTT session when it stays connected but silent. Leave both times blank to allow
       any hour.
@@ -1400,7 +1436,7 @@
   </section>
 
   {#if isJackery}
-  <section class="card device-card">
+  <section class="card device-card" use:collapsible={{ key: 'f7-ac-reset' }}>
     <div class="card-header">
       <h2>F7 AC reset</h2>
       <span class="hint">{f7Daylight ? 'daylight' : 'night'} · {f7Enabled ? 'on' : 'off'}</span>
@@ -1444,7 +1480,7 @@
   {/if}
 
   {#if watchdogApplicable}
-    <section class="card device-card">
+    <section class="card device-card" use:collapsible={{ key: 'ac-auto-recovery' }}>
       <div class="card-header">
         <h2>AC auto recovery</h2>
         <span class="hint">{watchdogEnabled ? 'on' : 'off'}</span>
@@ -1474,7 +1510,7 @@
   {/if}
 
   {#if isJackery}
-  <section class="card device-card">
+  <section class="card device-card" use:collapsible={{ key: 'learned-parameters', collapsed: true }}>
     <div class="card-header">
       <h2>Learned parameters</h2>
       <button class="btn btn-ghost btn-tiny" type="button" disabled={busy} onclick={loadParams}>
@@ -1547,11 +1583,11 @@
 
   {/if}
 
-  <section class="card device-card">
+  <section class="card device-card" use:collapsible={{ key: 'bluetooth-bms', collapsed: true }}>
     <div class="card-header">
       <h2>Bluetooth BMS</h2>
       <span class="hint">
-        {bmsBleOk ? `${bmsPacks.length} saved` : 'BLE unavailable'}
+        {bmsBleOk ? bmsSummary : 'BLE unavailable'}
       </span>
     </div>
     <p class="hint" style="margin:6px 0 12px">
@@ -1600,7 +1636,8 @@
         {#each bmsPacks as p (p.mac)}
           {@const soc = packSoc(p)}
           {@const err = packError(p)}
-          {@const online = packOnline(p)}
+          {@const state = packState(p)}
+          {@const age = packAge(p)}
           <li
             style="display:flex; gap:8px; align-items:center; justify-content:space-between; flex-wrap:wrap; padding:8px 0; border-bottom:1px solid var(--border-soft)"
           >
@@ -1610,12 +1647,17 @@
                 · {p.mac}
                 {#if soc != null} · {Math.round(soc)}%{/if}
                 · {p.capacity_wh ? `${p.capacity_wh} Wh` : 'capacity unset'}
-                · <span style="color:{online ? 'var(--ok, #2f9e44)' : 'var(--warn, #c92a2a)'}">{online ? 'online' : 'offline'}</span>
-                ({packAge(p)})
+                ·
+                {#if state === 'none'}
+                  no reading yet
+                {:else}
+                  <span class="pack-state {state}">{state}</span>
+                  · last reading {age}
+                {/if}
               </span>
               <div class="hint">→ {inverterName(p.siseli_device_sn)}</div>
               {#if err}
-                <div class="hint" style="color:var(--warn, #c92a2a)" title={err}>⚠ {err.slice(0, 140)}</div>
+                <div class="hint pack-error" title={err}>⚠ Last poll failed: {err.slice(0, 140)}</div>
               {/if}
             </div>
             <div style="display:flex; gap:6px; flex-wrap:wrap">
@@ -1639,7 +1681,8 @@
       <p class="hint">No saved BMS packs. Scan or enter a MAC.</p>
     {/if}
 
-    <form onsubmit={saveBms} style="margin-top:14px">
+    <h3 class="sub-head" id="bms-pack-form">{bmsEditing ? `Edit ${bmsAlias || bmsMac}` : 'Add pack'}</h3>
+    <form onsubmit={saveBms}>
       <div class="auto-form-grid">
         <label class="auto-field">
           <span class="auto-label">MAC</span>
@@ -1688,7 +1731,7 @@
       <span class="hint">Scan takes ~8 s.</span>
     </div>
     {#if bmsScan.length}
-      <h3 style="margin:14px 0 8px; font-size:14px">Scan results</h3>
+      <h3 class="sub-head">Scan results</h3>
       <ul style="list-style:none; padding:0; margin:0">
         {#each bmsScan as d, i (`${d.mac ?? i}`)}
           {@const saved = bmsPacks.some((p) => p.mac === d.mac)}
@@ -1707,3 +1750,106 @@
     {/if}
   </section>
 </section>
+
+<style>
+  .sub-head {
+    margin: 20px 0 10px;
+    font-size: 13px;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    color: var(--text);
+  }
+  .controls-toolbar {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    align-items: center;
+    margin-bottom: 12px;
+  }
+  .controls-filter {
+    flex: 1 1 200px;
+    min-width: 0;
+    padding: 6px 10px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    color: var(--text);
+    font: inherit;
+    font-size: 14px;
+  }
+  .controls-filter:focus {
+    outline: none;
+    border-color: var(--pow-green);
+  }
+  .controls-group {
+    border-top: 1px solid var(--border-soft);
+    padding: 10px 0;
+  }
+  .controls-group summary {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 8px;
+    cursor: pointer;
+    font-weight: 600;
+    font-size: 14px;
+    padding: 4px 0;
+  }
+  .controls-group summary .hint {
+    font-weight: 400;
+  }
+  .controls-group[open] summary {
+    margin-bottom: 10px;
+  }
+  .inverter-controls-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+    align-items: stretch;
+    gap: 10px;
+  }
+  .inverter-control-row {
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 10px;
+    border: 1px solid var(--border-soft);
+    border-radius: 10px;
+  }
+  .inverter-control-row.pinned {
+    border-color: var(--pow-green);
+    box-shadow: inset 3px 0 0 var(--pow-green);
+    background: color-mix(in srgb, var(--pow-green) 6%, transparent);
+  }
+  .pin-toggle {
+    align-self: flex-start;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 3px 10px 3px 6px;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    font-size: 12px;
+    color: var(--text-dim, inherit);
+    cursor: pointer;
+    user-select: none;
+  }
+  .pin-toggle input {
+    accent-color: var(--pow-green);
+  }
+  .pin-toggle.on {
+    border-color: var(--pow-green);
+    color: var(--pow-green);
+    font-weight: 600;
+  }
+  .pack-state.online {
+    color: var(--pow-green);
+  }
+  .pack-state.offline,
+  .pack-error {
+    color: var(--destructive, #c92a2a);
+  }
+  .roles-field:disabled label {
+    opacity: 0.55;
+  }
+</style>

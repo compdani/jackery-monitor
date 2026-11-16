@@ -3,8 +3,8 @@
   macOS launchd agent for the Jackery BLE bridge.
 
   Install:
-    1. Edit the WorkingDirectory below to the absolute path of jackery-monitor/
-       (e.g. /Users/yaniv/jackery-monitor)
+    1. Edit the WorkingDirectory below to the absolute path of jackery-monitor/python/
+       (e.g. /Users/yaniv/jackery-monitor/python)
     2. cp com.jackery.bridge.plist ~/Library/LaunchAgents/
     3. launchctl load ~/Library/LaunchAgents/com.jackery.bridge.plist
     4. launchctl start com.jackery.bridge
@@ -31,7 +31,7 @@
 
     <!-- IMPORTANT: replace with the absolute path to your jackery-monitor folder -->
     <key>WorkingDirectory</key>
-    <string>/Users/CHANGE_ME/jackery-monitor</string>
+    <string>/Users/CHANGE_ME/jackery-monitor/python</string>
 
     <key>EnvironmentVariables</key>
     <dict>

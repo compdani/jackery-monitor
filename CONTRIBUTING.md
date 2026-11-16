@@ -11,7 +11,7 @@ git clone https://github.com/YanivErel-code/jackery-monitor.git
 cd jackery-monitor
 
 # Run in mock mode — no Jackery hardware or cloud needed
-docker compose -f docker-compose.dev.yml --profile mock up
+docker compose -f python/docker-compose.yml --profile mock up
 
 # Open http://localhost:8000
 ```
@@ -19,6 +19,7 @@ docker compose -f docker-compose.dev.yml --profile mock up
 ## Running tests
 
 ```bash
+cd python   # the legacy Python stack lives here
 pip install -r requirements.txt
 pip install -r requirements-dev.txt   # pytest + pytest-asyncio + lint tools
 pytest

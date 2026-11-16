@@ -46,18 +46,19 @@ import backoff as _backoff
 import backup
 import backup_creds
 import backup_discover
-import bms_ble
 import ble_routes
+import bms_ble
 import bms_devices
 import cost as cost_module
+import device_prefs
 import ecoflow_client
 import ecoflow_creds
 import ecoflow_devices
 import ecoflow_reconnect
 import energy_db
+import f7_ac_reset
 import forecast_solar
 import forecaster
-import f7_ac_reset
 import inverter_watchdog
 import kasa_client
 import kasa_creds
@@ -71,7 +72,9 @@ import smart_charge
 import solar_array
 import solar_charge
 import weather_client
+from app_paths import APP_ROOT
 from automation import AutomationEngine, AutomationError
+from bms_devices import BmsRegistry
 from device_client import (
     DeviceClient,
     DeviceClientError,
@@ -79,19 +82,17 @@ from device_client import (
     device_type_for,
     make_client,
 )
+from device_prefs import DevicePrefs
+from ecoflow_devices import EcoflowRegistry
 from energy_db import EnergyDB
 from kasa_devices import KasaRegistry
-from bms_devices import BmsRegistry
-from ecoflow_devices import EcoflowRegistry
-import device_prefs
-from device_prefs import DevicePrefs
 
 logging.basicConfig(level=logging.INFO,
                     format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("jackery-monitor")
 
 # ---------- config ----------
-WEB_DIR = Path(__file__).parent / "web"
+WEB_DIR = APP_ROOT / "web"
 # Live chart shows the last N hours by appending one in-memory sample per
 # LIVE_CHART_INTERVAL_S (independent of how often we poll the bridge — the
 # poll cadence is for the energy aggregator and live KPIs). The deque is
@@ -7787,8 +7788,8 @@ async def api_openai_models(refresh: bool = False):
 @app.get("/api/openai/compat")
 def api_openai_compat_presets():
     """Known OpenAI-compatible gateway presets for the Settings UI."""
-    import openai_compat
     import anthropic_prefs
+    import openai_compat
     return {
         "presets": openai_compat.list_presets(),
         "preset": anthropic_prefs.get_openai_compat_preset(),

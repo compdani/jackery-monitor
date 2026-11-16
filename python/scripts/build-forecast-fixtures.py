@@ -1,4 +1,7 @@
-"""Offline, deterministic end-to-end forecast and drain parity fixtures."""
+"""Offline, deterministic end-to-end forecast and drain parity fixtures.
+
+Run from the repository root: PYTHONPATH=python python python/scripts/build-forecast-fixtures.py
+"""
 import os
 import time
 os.environ['TZ'] = 'UTC'

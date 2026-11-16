@@ -1,5 +1,5 @@
 """Regenerate deterministic Go parity fixtures from the retained Python reference.
-Run from the repository root: PYTHONPATH=. python scripts/forecast-fixtures.py
+Run from the repository root: PYTHONPATH=python python python/scripts/forecast-fixtures.py
 No hardware or network required.
 """
 import os

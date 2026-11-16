@@ -43,5 +43,5 @@ status = pytest.main([str(root / "tests/test_smart_charge.py"), str(root / "test
 sys.setprofile(None)
 for module, cases in rows.items():
     if cases:
-        (root / "internal/automation/testdata" / (module + ".json")).write_text(json.dumps(cases, indent=2) + "\n")
+        (root.parent / "internal/automation/testdata" / (module + ".json")).write_text(json.dumps(cases, indent=2) + "\n")
 raise SystemExit(status)

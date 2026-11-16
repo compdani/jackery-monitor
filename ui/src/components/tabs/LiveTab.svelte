@@ -1,4 +1,5 @@
 <script lang="ts">
+  import SiseliControlField from '../shared/SiseliControlField.svelte';
   import { onMount } from 'svelte';
   import { api, apiPost } from '$lib/api';
   import { live } from '$lib/stores/live.svelte';
@@ -523,15 +524,6 @@
     }
   }
 
-  function siseliSwitchOn(c: SiseliControl): boolean {
-    return !!c.value;
-  }
-
-  function onSiseliSwitch(c: SiseliControl) {
-    const next = !siseliSwitchOn(c);
-    void writeSiseliSetting(c.canonical, Number(next ? c.on_value : c.off_value));
-  }
-
   function efOn(u: LinkedEcoflow, port: 'ac' | 'dc'): boolean {
     const o = efOverride[`${u.sn}:${port}`];
     if (o && o.until > Date.now()) return o.on;
@@ -948,52 +940,12 @@
         </span>
       </div>
       <p class="hint" style="margin:6px 0 12px">
-        Writes go to the Siseli portal (solar.siseli.com). Pin which controls appear here from the Device tab.
+        Writes go to the Siseli portal (solar.siseli.com). Choose which controls show here in
+        Device → Inverter controls.
       </p>
       <div id="siseli-controls-body" class="siseli-controls">
         {#each siseliPinned as c (c.canonical)}
-          {#if c.kind === 'switch'}
-            {@const on = siseliSwitchOn(c)}
-            <label class="auto-field siseli-control siseli-switch">
-              <span class="auto-label">{c.name || c.canonical}</span>
-              <button
-                type="button"
-                class="switch"
-                class:on
-                aria-pressed={on}
-                onclick={() => onSiseliSwitch(c)}
-              >
-                <span class="sw-state">{on ? 'on' : 'off'}</span>
-              </button>
-            </label>
-          {:else if c.kind === 'select'}
-            <label class="auto-field siseli-control">
-              <span class="auto-label">{c.name || c.canonical}{c.unit ? ` (${c.unit})` : ''}</span>
-              <select
-                onchange={(e) =>
-                  void writeSiseliSetting(c.canonical, Number(e.currentTarget.value))}
-              >
-                {#each c.options || [] as o (o.value)}
-                  <option value={o.value} selected={Number(o.value) === Number(c.value)}>
-                    {o.label}
-                  </option>
-                {/each}
-              </select>
-            </label>
-          {:else}
-            <label class="auto-field siseli-control">
-              <span class="auto-label">{c.name || c.canonical}{c.unit ? ` (${c.unit})` : ''}</span>
-              <input
-                type="number"
-                min={c.min}
-                max={c.max}
-                step={c.step ?? 1}
-                value={c.value ?? ''}
-                onchange={(e) =>
-                  void writeSiseliSetting(c.canonical, Number(e.currentTarget.value))}
-              />
-            </label>
-          {/if}
+          <SiseliControlField control={c} onwrite={(k, v) => void writeSiseliSetting(k, v)} />
         {/each}
       </div>
     </section>

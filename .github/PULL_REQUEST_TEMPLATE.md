@@ -14,8 +14,8 @@
 
 ## Checklist
 
-- [ ] Tests added / updated where it makes sense (`pytest` passes)
-- [ ] `ruff check .` and `ruff format --check .` are clean
+- [ ] Tests added / updated where it makes sense (`go test ./...`; `pytest` in `python/` if touched)
+- [ ] Python changes: `ruff check .` and `ruff format --check .` in `python/` are clean
 - [ ] If this changes the dashboard, I've checked it on phone (≤600px) too
 - [ ] If this touches the cloud / MQTT / Kasa protocols, I've noted any
       differences from the canonical sources in a comment

@@ -1,4 +1,6 @@
-# Legacy Python development/rollback profiles. For Go, use docker-compose.build.yml.
+# Legacy Python development/rollback profiles. Run from this folder:
+#   cd python && docker compose --profile <name> up
+# For the Go server use ../docker-compose.yml.
 # Three deployment profiles — pick one with `docker compose --profile <name> up`.
 #
 #   mac        -> dashboard in container, bridge on macOS host (host BLE/Keychain)
@@ -15,7 +17,7 @@ services:
   jackery:
     profiles: ["mac"]
     build:
-      context: .
+      context: ..
       target: legacy
     image: jackery-monitor:latest
     container_name: jackery-monitor
@@ -30,7 +32,7 @@ services:
     volumes:
       - jackery-data:/data       # persistent energy history
       # Bind-mount UI + server so file edits show up on container restart (no rebuild).
-      - ./web:/app/web
+      - ../web:/app/web
       - ./server.py:/app/server.py
       - ./device_client.py:/app/device_client.py
       - ./energy_db.py:/app/energy_db.py
@@ -42,7 +44,7 @@ services:
   jackery-mock:
     profiles: ["mock"]
     build:
-      context: .
+      context: ..
       target: legacy
     image: jackery-monitor:latest
     container_name: jackery-monitor
@@ -55,7 +57,7 @@ services:
       JACKERY_DB: /data/energy.db
     volumes:
       - jackery-data:/data
-      - ./web:/app/web
+      - ../web:/app/web
       - ./server.py:/app/server.py
       - ./device_client.py:/app/device_client.py
       - ./energy_db.py:/app/energy_db.py
@@ -69,7 +71,7 @@ services:
   jackery-bridge:
     profiles: ["synology"]
     build:
-      context: .
+      context: ..
       target: legacy
     image: jackery-monitor:latest
     container_name: jackery-bridge
@@ -99,7 +101,7 @@ services:
   jackery-syn:
     profiles: ["synology"]
     build:
-      context: .
+      context: ..
       target: legacy
     image: jackery-monitor:latest
     container_name: jackery-monitor

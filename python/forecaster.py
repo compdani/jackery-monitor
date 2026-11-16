@@ -33,6 +33,7 @@ from pathlib import Path
 from typing import Any
 
 import load_schedule as _load_sched
+from app_paths import APP_ROOT
 
 log = logging.getLogger("forecaster")
 
@@ -124,7 +125,7 @@ def _track_row_soc(caller_name: str):
 # model_codes via PR without touching the simulator code. Per-device
 # override (Device tab → capacity_wh_override) still beats the catalog.
 def _load_model_catalog() -> dict[str, Any]:
-    path = Path(__file__).parent / "models.json"
+    path = APP_ROOT / "models.json"
     try:
         with open(path) as f:
             return json.load(f)

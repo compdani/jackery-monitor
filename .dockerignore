@@ -6,9 +6,11 @@ __pycache__
 .gitignore
 .DS_Store
 *.zip
-run.sh
-run-bridge.sh
-com.jackery.bridge.plist
+python/*.sh
+python/com.jackery.bridge.plist
+python/docker-compose.yml
+python/tests
+python/scripts
 README.md
 # UI deps / sources are built in the Node stage; don't send host node_modules.
 ui/node_modules
