@@ -39,7 +39,8 @@ func (f *teslaFake) Do(r *http.Request) (*http.Response, error) {
 		return reply(200, `{"access_token":"acc","refresh_token":"ref","expires_in":28800,"scope":"openid vehicle_cmds"}`)
 	case strings.HasSuffix(p, "/maps/api/geocode/json"):
 		ll := r.URL.Query().Get("latlng")
-		return reply(200, `{"status":"OK","results":[{"place_id":"P`+ll+`","formatted_address":"addr"}]}`)
+		parts := strings.Split(ll, ",")
+		return reply(200, `{"status":"OK","results":[{"place_id":"P`+ll+`","formatted_address":"addr","geometry":{"location":{"lat":`+parts[0]+`,"lng":`+parts[1]+`},"location_type":"ROOFTOP"}}]}`)
 	case strings.HasSuffix(p, "/wake_up"):
 		f.state = "online"
 		return reply(200, `{"response":{"state":"asleep"}}`)

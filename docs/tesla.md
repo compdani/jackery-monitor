@@ -30,7 +30,7 @@ The field numbers come from the community `tesla-protocol` definitions, and the 
 
 There are two batch endpoints:
 
-- `POST /api/tesla/navigate` sends **places**: each stop is reverse-geocoded to a Google place ID (needs `google_api_key`, Geocoding API) and the batch goes as one `navigation_waypoints_request`, so the car builds one trip in order. Nothing is sent unless every stop resolves.
+- `POST /api/tesla/navigate` sends **places**: each stop is reverse-geocoded to a Google place ID (needs `google_api_key`, Geocoding API) and the batch goes as one `navigation_waypoints_request`, so the car builds one trip in order. Only rooftop-accurate addresses are used, the nearest to the pin wins, and it must be within `place_max_distance_m` (default 25 m); otherwise the send fails naming the nearest address, rather than routing to the wrong house. Nothing is sent unless every stop resolves. Each result records its `address` and `distance_m` from the pin.
 - `POST /api/tesla/navigate/gps` sends one `navigation_gps_request` per stop, numbered by `order_mode` and `stop_delay_seconds` apart (defaults: the saved `nav_order_mode` and `nav_stop_delay_seconds`, 10; delay 0–60).
 
 Both accept a `transport` override. Single stops (`/navigate/one`) always use GPS.

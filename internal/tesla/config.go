@@ -75,6 +75,9 @@ type Config struct {
 	// GoogleAPIKey (Geocoding API) turns stop coordinates into the place IDs
 	// that navigation_waypoints_request needs. Secret, like ClientSecret.
 	GoogleAPIKey string `json:"google_api_key,omitempty"`
+	// PlaceMaxDistanceM is how far a matched address may be from the stop's
+	// pin for places sends. Default 25 m.
+	PlaceMaxDistanceM float64 `json:"place_max_distance_m,omitempty"`
 
 	// ChargeEfficiency converts energy added to the battery into energy
 	// drawn from the wall (wall = added / efficiency). Default 0.9.
@@ -106,6 +109,9 @@ func (c Config) WithDefaults() Config {
 	}
 	if c.NavOrderMode == "" {
 		c.NavOrderMode = OrderEnum
+	}
+	if c.PlaceMaxDistanceM <= 0 {
+		c.PlaceMaxDistanceM = DefaultPlaceMaxDistanceM
 	}
 	if c.NavStopDelaySeconds <= 0 {
 		c.NavStopDelaySeconds = DefaultStopDelaySeconds
@@ -147,6 +153,9 @@ func (c Config) Validate() error {
 	}
 	if c.NavOrderMode != OrderEnum && c.NavOrderMode != OrderPosition && c.NavOrderMode != OrderOneThree {
 		return errors.New("nav_order_mode must be enum, position or one_three")
+	}
+	if c.PlaceMaxDistanceM < 0 || c.PlaceMaxDistanceM > 200 {
+		return errors.New("place_max_distance_m must be from 0 to 200")
 	}
 	if c.NavStopDelaySeconds > MaxStopDelaySeconds {
 		return fmt.Errorf("nav_stop_delay_seconds must be at most %d", MaxStopDelaySeconds)

@@ -188,7 +188,7 @@ func (s *Server) saveTeslaSessionCache(c *cache.SessionCache) {
 }
 
 func (s *Server) teslaClient(cfg tesla.Config, withKey bool) (*tesla.Client, error) {
-	c := &tesla.Client{Config: cfg, HTTP: s.tesla.http(), Tokens: teslaTokenSource{s: s, cfg: cfg}, Places: s.teslaPlaces(cfg.GoogleAPIKey)}
+	c := &tesla.Client{Config: cfg, HTTP: s.tesla.http(), Tokens: teslaTokenSource{s: s, cfg: cfg}, Places: s.teslaPlaces(cfg.GoogleAPIKey, cfg.PlaceMaxDistanceM)}
 	if withKey {
 		k, err := s.teslaPrivateKey()
 		if err != nil {
@@ -201,12 +201,13 @@ func (s *Server) teslaClient(cfg tesla.Config, withKey bool) (*tesla.Client, err
 }
 
 // teslaPlaces returns the shared place resolver for this API key.
-func (s *Server) teslaPlaces(key string) *tesla.PlaceResolver {
+func (s *Server) teslaPlaces(key string, maxDistanceM float64) *tesla.PlaceResolver {
 	rt := &s.tesla
 	rt.mu.Lock()
 	defer rt.mu.Unlock()
-	if rt.places == nil || rt.places.APIKey != key {
-		rt.places = &tesla.PlaceResolver{HTTP: rt.http(), APIKey: key}
+	// A new key or distance limit starts a fresh cache.
+	if rt.places == nil || rt.places.APIKey != key || rt.places.MaxDistanceM != maxDistanceM {
+		rt.places = &tesla.PlaceResolver{HTTP: rt.http(), APIKey: key, MaxDistanceM: maxDistanceM}
 	}
 	return rt.places
 }

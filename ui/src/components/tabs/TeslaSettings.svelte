@@ -15,6 +15,7 @@
     nav_order_mode?: string;
     nav_stop_delay_seconds?: number;
     google_api_key?: string;
+    place_max_distance_m?: number;
     has_google_api_key?: boolean;
     charge_efficiency?: number;
     home_radius_m?: number;
@@ -70,7 +71,7 @@
     started: number;
     error?: string;
     options?: Record<string, string>;
-    results?: { index: number; order: number; ok: boolean; error?: string; place_id?: string; address?: string }[];
+    results?: { index: number; order: number; ok: boolean; error?: string; place_id?: string; address?: string; distance_m?: number }[];
   };
 
   let status = $state<Status | null>(null);
@@ -318,6 +319,18 @@
           <input id="t-gkey" class="device-select" type="password" autocomplete="off" bind:value={googleKey} />
         </div>
       </div>
+      <div class="settings-row">
+        <label class="settings-label" for="t-pdist">
+          <span class="settings-label-text">Max distance from pin (m)</span>
+          <span class="settings-hint">
+            Only exact (rooftop) addresses this close to Flex's pin are used; the nearest one wins. Farther stops make
+            the send fail rather than go to the wrong house.
+          </span>
+        </label>
+        <div class="settings-control">
+          <input id="t-pdist" type="number" min="5" max="200" step="1" bind:value={cfg.place_max_distance_m} />
+        </div>
+      </div>
       <h3 class="tesla-sub">GPS sends (one command per stop)</h3>
       <p class="hint" style="margin:0 0 8px">Defaults for GPS batches; the app can override both. Single-stop sends always use GPS.</p>
       <div class="settings-row">
@@ -411,7 +424,9 @@
     </p>
     {#each job.results ?? [] as r (r.index)}
       <p class="hint" style="margin:2px 0">
-        Stop {r.index + 1}: {job.options?.method === 'places' ? (r.address ?? r.place_id) : `order ${r.order}`} ·
+        Stop {r.index + 1}: {job.options?.method === 'places'
+          ? `${r.address ?? r.place_id ?? 'no match'}${r.distance_m != null ? ` (${Math.round(r.distance_m)} m from pin)` : ''}`
+          : `order ${r.order}`} ·
         {r.ok ? 'accepted' : (r.error ?? 'failed')}
       </p>
     {/each}

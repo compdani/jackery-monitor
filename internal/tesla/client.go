@@ -229,6 +229,8 @@ type StopResult struct {
 	Order   int32  `json:"order"`
 	PlaceID string `json:"place_id,omitempty"`
 	Address string `json:"address,omitempty"`
+	// DistanceM is how far the matched place is from the stop's pin.
+	DistanceM *float64 `json:"distance_m,omitempty"`
 	OK      bool   `json:"ok"`
 	Error   string `json:"error,omitempty"`
 }
@@ -254,7 +256,8 @@ func (c *Client) NavigateWaypoints(ctx context.Context, stops []Stop) ([]StopRes
 			return results[:i+1], nil
 		}
 		places[i] = pl
-		results[i].PlaceID, results[i].Address = pl.ID, pl.Address
+		d := pl.DistanceM
+		results[i].PlaceID, results[i].Address, results[i].DistanceM = pl.ID, pl.Address, &d
 	}
 	waypoints := WaypointsString(places)
 	var err error

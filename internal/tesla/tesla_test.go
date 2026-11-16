@@ -6,9 +6,11 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -255,6 +257,52 @@ func TestSendGPSPausesBetweenStopsAndSendOne(t *testing.T) {
 	}
 }
 
+func geoResult(id, addr string, lat, lng float64, locType string) string {
+	b, _ := json.Marshal(map[string]any{
+		"place_id": id, "formatted_address": addr,
+		"geometry": map[string]any{"location": map[string]float64{"lat": lat, "lng": lng}, "location_type": locType},
+	})
+	return string(b)
+}
+
+func TestPlaceResolverPicksNearestRooftopWithinLimit(t *testing.T) {
+	pin := Stop{Lat: 41.5196, Lng: -87.470836}
+	const m = 1 / 111_320.0 // degrees latitude per meter
+	reply := ""
+	h := &fakeHTTP{handle: func(r *http.Request) (int, string) { return 200, reply }}
+	res := func() *PlaceResolver { return &PlaceResolver{HTTP: h, APIKey: "k"} }
+
+	// Google's first result is across the street; the house at the pin is
+	// second. An interpolated address even closer is ignored.
+	reply = `{"status":"OK","results":[` +
+		geoResult("across", "12 Across St", pin.Lat+22*m, pin.Lng, "ROOFTOP") + `,` +
+		geoResult("street", "10-20 Main St", pin.Lat+1*m, pin.Lng, "RANGE_INTERPOLATED") + `,` +
+		geoResult("house", "11 Main St", pin.Lat-6*m, pin.Lng, "ROOFTOP") + `]}`
+	pl, err := res().Resolve(context.Background(), pin)
+	if err != nil || pl.ID != "house" || pl.DistanceM < 5 || pl.DistanceM > 7 {
+		t.Fatalf("got %+v %v", pl, err)
+	}
+
+	// Nothing within 25 m: refuse, naming the nearest.
+	reply = `{"status":"OK","results":[` + geoResult("far", "99 Far Rd", pin.Lat+40*m, pin.Lng, "ROOFTOP") + `]}`
+	_, err = res().Resolve(context.Background(), pin)
+	var nm *NoMatchError
+	if !errors.As(err, &nm) || nm.Nearest == nil || nm.Nearest.ID != "far" || !strings.Contains(err.Error(), "99 Far Rd, 40 m") {
+		t.Fatalf("far err %v", err)
+	}
+	// A wider limit accepts it.
+	wide := res()
+	wide.MaxDistanceM = 50
+	if pl, err := wide.Resolve(context.Background(), pin); err != nil || pl.ID != "far" {
+		t.Fatalf("wide %+v %v", pl, err)
+	}
+
+	reply = `{"status":"ZERO_RESULTS","results":[]}`
+	if _, err := res().Resolve(context.Background(), pin); !errors.As(err, &nm) || nm.Nearest != nil {
+		t.Fatalf("zero err %v", err)
+	}
+}
+
 func geocodeFake(t *testing.T, fleet func(*http.Request) (int, string)) *fakeHTTP {
 	return &fakeHTTP{handle: func(r *http.Request) (int, string) {
 		if strings.HasPrefix(r.URL.String(), GeocodeURL) {
@@ -263,10 +311,13 @@ func geocodeFake(t *testing.T, fleet func(*http.Request) (int, string)) *fakeHTT
 				return 200, `{"status":"REQUEST_DENIED","error_message":"bad key"}`
 			}
 			ll := q.Get("latlng")
-			if ll == "3.00000,3.00000" && q.Get("result_type") != "" {
-				return 200, `{"status":"ZERO_RESULTS","results":[]}`
+			if q.Get("location_type") != "ROOFTOP" {
+				t.Errorf("rooftop filter missing: %s", r.URL)
 			}
-			return 200, `{"status":"OK","results":[{"place_id":"P` + ll + `","formatted_address":"addr ` + ll + `"}]}`
+			// One rooftop match about 5 m north of the pin.
+			lat, _ := strconv.ParseFloat(strings.Split(ll, ",")[0], 64)
+			lng, _ := strconv.ParseFloat(strings.Split(ll, ",")[1], 64)
+			return 200, `{"status":"OK","results":[` + geoResult("P"+ll, "addr "+ll, lat+0.000045, lng, "ROOFTOP") + `]}`
 		}
 		return fleet(r)
 	}}
