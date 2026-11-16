@@ -107,3 +107,39 @@ test('custom alert and automation events reach frontend handlers', async () => {
     assert.equal(events[1].message, 'Battery low');
   } finally { connection.stop(); globalThis.fetch = originalFetch; }
 });
+
+test('payload SSE applies status and serves subscribed energy without follow-up GETs', async () => {
+  const { readRealtimeQuery, fetchRealtimeQuery, realtimeConnected } = await import('../web/realtime.js');
+  const originalFetch = globalThis.fetch;
+  const calls = [];
+  globalThis.fetch = async (url, init) => { calls.push({ url, init, body: JSON.parse(init.body) }); return { ok: true }; };
+  const patches = [];
+  let energyChanges = 0;
+  const refreshes = [];
+  const path = '/api/energy/history?hours=24&device_sn=siseli%3AA';
+  const canonical = '/api/energy/history?device_sn=siseli%3AA&hours=24';
+  const connection = connectMonitorRealtime({
+    getDeviceSn: () => 'siseli:A', getViewId: () => 'device-A', sourceFactory: url => new FakeSource(url),
+    onSnapshot: patch => patches.push(patch), onQueries: () => energyChanges++, onRefresh: kind => refreshes.push(kind),
+  });
+  try {
+    assert.equal(readRealtimeQuery(path), undefined); // first read registers the query
+    const source = FakeSource.instances.at(-1);
+    await source.emit('PB_CONNECT', { clientId: 'payload' });
+    assert.ok(calls[0].body.subscriptions.some(topic => topic.startsWith('monitor.data?options=')));
+    assert.ok(calls[0].body.subscriptions.includes('monitor.query.' + encodeURIComponent(canonical)));
+    await source.emit('monitor.data', { kind: 'data', status: { telemetry: { battery_percent: 49 } }, queries: { [canonical]: { history: [{ ts: 1, solar_wh: 10 }] } } });
+    assert.equal(realtimeConnected(), true);
+    assert.equal(patches[0].telemetry.battery_percent, 49);
+    assert.equal(energyChanges, 1);
+    const result = await fetchRealtimeQuery(path);
+    assert.equal((await result.json()).history[0].solar_wh, 10);
+    await source.emit('monitor.device.siseli:A', { kind: 'telemetry' });
+    assert.deepEqual(refreshes, []); // no invalidation-triggered HTTP reads
+    assert.equal(calls.length, 1); // subscription POST is the only request
+    connection.reconnect();
+    assert.equal(readRealtimeQuery(path), undefined); // old-view data never crosses streams
+    await source.emit('monitor.data', { status: { stale: true } });
+    assert.equal(patches.length, 1);
+  } finally { connection.stop(); globalThis.fetch = originalFetch; }
+});

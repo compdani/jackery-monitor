@@ -6,6 +6,7 @@
   import AssistantPanel from '../components/assistant/AssistantPanel.svelte';
   import { probeAuthGate, me } from '$lib/auth';
   import { setUnauthorizedHandler } from '$lib/api';
+  import { realtimeConnected } from '../../../web/realtime.js';
   import { connectRealtime } from '$lib/realtime';
   import { live } from '$lib/stores/live.svelte';
   import { assistant } from '$lib/stores/assistant.svelte';
@@ -83,7 +84,7 @@
     if (pollTimer) clearInterval(pollTimer);
     void live.refreshStatus();
     stopRealtime = connectRealtime();
-    pollTimer = setInterval(() => void live.refreshStatus(), 30_000);
+    pollTimer = setInterval(() => { if (!realtimeConnected()) void live.refreshStatus(); }, 30_000);
   }
 
   function stopLive() {

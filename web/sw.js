@@ -12,7 +12,7 @@
 // stuck cache is suspected). The activate handler drops every cache that
 // isn't the current name, so installed clients get fresh files on the
 // next navigation.
-const CACHE = 'jackery-shell-v26';
+const CACHE = 'jackery-shell-v27';
 const SHELL = [
   '/',
   '/static/icon.svg',

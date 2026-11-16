@@ -186,9 +186,10 @@ class LiveStore {
   }
 
   async refreshStatus() {
+    const previous = this.status;
     try {
       const s = await api<StatusSnapshot>('/status');
-      this.applyStatus(s);
+      if (this.status === previous) this.applyStatus(s);
     } catch (err) {
       console.warn('status poll failed', err);
     }

@@ -515,6 +515,7 @@ document.addEventListener('click', (e) => {
 });
 
 function switchTab(name, opts = {}) {
+  if (activeTab === 'energy' && name !== 'energy') resetRealtimeEnergy();
   if (!VALID_TABS.has(name)) return;
   activeTab = name;
   // Reflect the tab in the URL hash. Live is the default — keep the
@@ -5549,6 +5550,9 @@ $('brand-home')?.addEventListener('click', (e) => {
 // WEBSOCKET
 // ============================================================
 let monitorRealtime;
+let realtimeIsHealthy = () => false;
+let realtimeEnergyFetch = path => fetch(path);
+let resetRealtimeEnergy = () => {};
 let realtimeRefreshRunning = false;
 let realtimeRefreshPending = false;
 let realtimeRefreshTimer;
@@ -5556,9 +5560,10 @@ async function refreshRealtimeSnapshot(kind) {
   if (realtimeRefreshRunning) { realtimeRefreshPending = true; return; }
   realtimeRefreshRunning = true;
   try {
+    const previous = lastStatus;
     const view = _pendingViewSwitch?.id || lastStatus?.cloud?.selected_device_id;
     const r = await fetch('/api/status' + (view ? '?view_device_id=' + encodeURIComponent(view) : ''), { cache: 'no-store' });
-    if (r.ok) applyStatus(await r.json());
+    if (r.ok) { const status = await r.json(); if (lastStatus === previous) applyStatus(status); }
     if (kind === 'energy' || kind === 'reconnect') {
       energyDailyCache = null;
       if (activeTab === 'energy') { fetchEnergyHistory(); fetchEnergyDaily(); fetchEnergyAllDevices(); }
@@ -5573,10 +5578,16 @@ function scheduleRealtimeRefresh(kind) {
   realtimeRefreshTimer = setTimeout(() => { realtimeRefreshTimer = null; refreshRealtimeSnapshot(kind); }, 75);
 }
 async function connectRealtime() {
-  const { connectMonitorRealtime } = await import('/realtime.js');
+  const { connectMonitorRealtime, realtimeConnected, fetchRealtimeQuery, resetRealtimeQueries } = await import('/realtime.js');
+  realtimeIsHealthy = realtimeConnected;
+  resetRealtimeEnergy = resetRealtimeQueries;
+  realtimeEnergyFetch = fetchRealtimeQuery;
   monitorRealtime?.stop();
   monitorRealtime = connectMonitorRealtime({
     getDeviceSn: () => activeJackeryDevice()?.device_sn,
+    getViewId: () => _pendingViewSwitch?.id || lastStatus?.cloud?.selected_device_id,
+    onSnapshot: patch => applyStatus({ ...lastStatus, ...patch }),
+    onQueries: () => { energyDailyCache = null; if (activeTab === 'energy') { fetchEnergyHistory(); fetchEnergyDaily(); fetchEnergyAllDevices(); } },
     onRefresh: scheduleRealtimeRefresh,
     onEvent: event => {
       if (event.kind === 'automation_fired') _onAutomationFiredPush(event);
@@ -6827,6 +6838,7 @@ syncEnergyBucketPills();
 syncEnergyBucketLegend(energyBucketS);
 
 async function fetchEnergyHistory() {
+  if (activeTab !== 'energy') return;
   const viewedSn = activeJackeryDevice()?.device_sn;
   seedEnergyCompare(viewedSn);
   const sns = energyCompareSnsOrdered();
@@ -6840,7 +6852,7 @@ async function fetchEnergyHistory() {
   _energyHistoryLoadSig = sig;
   try {
     const results = await Promise.all(fallback.map(async (sn) => {
-      const r = await fetch(`/api/energy/history?hours=${energyRangeHours}`
+      const r = await realtimeEnergyFetch(`/api/energy/history?hours=${energyRangeHours}`
         + `&bucket_s=${energyBucketS}`
         + `&device_sn=${encodeURIComponent(sn)}`);
       if (!r.ok) return { device_sn: sn, name: energyDeviceName(sn), history: [] };
@@ -6862,7 +6874,7 @@ async function fetchEnergyHistory() {
 
 async function fetchEnergyAllDevices() {
   try {
-    const r = await fetch('/api/energy/devices');
+    const r = await realtimeEnergyFetch('/api/energy/devices');
     if (!r.ok) return;
     const j = await r.json();
     const devs = j.devices || [];
@@ -6937,7 +6949,7 @@ async function fetchEnergyDaily() {
     return;
   }
   try {
-    const r = await fetch(`/api/energy/daily?device_sn=${encodeURIComponent(deviceSn)}&days=365`);
+    const r = await realtimeEnergyFetch(`/api/energy/daily?device_sn=${encodeURIComponent(deviceSn)}&days=365`);
     if (!r.ok) return;
     const j = await r.json();
     if (!Array.isArray(j.daily)) return;
@@ -10628,11 +10640,13 @@ function initHeroSortable() {
   if (ok) fetchBatteryPacks();
   setInterval(fetchBatteryPacks, 30_000);
 
-  // Reconcile every 30s if an SSE notification was missed while offline.
+  // HTTP recovery is needed only when the SSE payload stream is unhealthy.
   setInterval(async () => {
+    if (realtimeIsHealthy()) return;
+    const previous = lastStatus;
     try {
       const r = await fetch('/api/status', { cache: 'no-store' });
-      if (r.ok) applyStatus(await r.json());
+      if (r.ok) { const status = await r.json(); if (lastStatus === previous) applyStatus(status); }
     } catch {}
   }, 30000);
 

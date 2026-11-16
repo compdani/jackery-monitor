@@ -61,6 +61,7 @@ func main() {
 		go s.ForecastRecorderLoop(ctx)
 		go s.KasaReconcileLoop(ctx)
 		go s.EnergyLoop(ctx)
+		go s.RealtimeLoop(ctx)
 		go s.SiseliLoop(ctx)
 		go s.EcoFlowLoop(ctx)
 		go s.BMSLoop(ctx)

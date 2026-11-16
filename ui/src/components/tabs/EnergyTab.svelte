@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { resetRealtimeQueries } from '../../../../web/realtime.js';
   import { onMount } from 'svelte';
   import { SvelteSet } from 'svelte/reactivity';
   import { api } from '$lib/api';
@@ -315,6 +316,7 @@
       loadTotals();
     });
     return () => {
+      resetRealtimeQueries();
       offEnergy();
       clearInterval(refreshTimer);
       unsubscribe();

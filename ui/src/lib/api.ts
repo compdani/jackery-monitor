@@ -1,3 +1,4 @@
+import { readRealtimeQuery } from '../../../web/realtime.js';
 /** Single seam for FastAPI feature routes. Swap API_BASE later for /japi. */
 
 export const API_BASE = '/api';
@@ -46,6 +47,10 @@ export async function api<T = unknown>(
   const url = path.startsWith('http')
     ? path
     : `${API_BASE}${path.startsWith('/') ? path : `/${path}`}`;
+  if (!init.method || init.method === 'GET') {
+    const pushed = readRealtimeQuery(url);
+    if (pushed !== undefined) return pushed as T;
+  }
   const headers = new Headers(init.headers);
   if (init.body != null && !headers.has('Content-Type')) {
     headers.set('Content-Type', 'application/json');

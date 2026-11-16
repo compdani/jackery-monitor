@@ -17,19 +17,39 @@ func deviceTopic(sn string) string { return "monitor.device." + sn }
 type realtimeState struct {
 	mu     sync.Mutex
 	energy map[string][32]byte
+	wake   chan struct{}
 }
 
 // Custom topics use the same authenticated-user boundary as snapshot APIs.
-// Messages are invalidations only: no credentials or device payload is broadcast.
+// Payload streams and notifications are restricted to authenticated users.
 func (s *Server) registerRealtime() {
 	app := s.Store.App
+	s.realtime.wake = make(chan struct{}, 1)
 	app.OnRealtimeSubscribeRequest().BindFunc(func(e *core.RealtimeSubscribeRequestEvent) error {
+		queryCount, dataCount := 0, 0
 		for _, topic := range e.Subscriptions {
+			if topic == "monitor.data" || strings.HasPrefix(topic, "monitor.data?") {
+				dataCount++
+				if dataCount > 1 {
+					return e.BadRequestError("Only one realtime view is allowed", nil)
+				}
+			}
+			if strings.HasPrefix(topic, "monitor.query.") {
+				queryCount++
+				if _, ok := realtimeQueryPath(topic); !ok || queryCount > 16 {
+					return e.BadRequestError("Invalid realtime query", nil)
+				}
+			}
 			if strings.HasPrefix(topic, "monitor.") && (e.Auth == nil || e.Auth.Collection().Name != "users") {
 				return e.UnauthorizedError("auth_required", nil)
 			}
 		}
-		return e.Next()
+		if err := e.Next(); err != nil {
+			return err
+		}
+		e.Client.Set("monitor.generation", new(int))
+		s.wakeRealtime()
+		return nil
 	})
 	notify := func(e *core.RecordEvent) error {
 		if err := e.Next(); err != nil {
@@ -75,7 +95,15 @@ func (s *Server) registerRealtime() {
 	app.OnRecordAfterUpdateSuccess("settings").BindFunc(events)
 
 }
+func (s *Server) wakeRealtime() {
+	select {
+	case s.realtime.wake <- struct{}{}:
+	default:
+	}
+}
+
 func (s *Server) publishRealtime(topic string, data any) {
+	s.wakeRealtime()
 	raw, err := json.Marshal(data)
 	if err != nil {
 		return
@@ -107,10 +135,12 @@ func (s *Server) publishEnergy(sn string, body []byte) {
 
 // A slow SSE connection must never stall telemetry persistence. Notifications
 // are coalescible invalidations; clients reconcile on reconnect and fallback polls.
-func sendRealtime(client subscriptions.Client, message subscriptions.Message) {
+func sendRealtime(client subscriptions.Client, message subscriptions.Message) (sent bool) {
 	defer func() { _ = recover() }() // broker may discard the channel concurrently
 	select {
 	case client.Channel() <- message:
+		return true
 	default:
 	}
+	return false
 }

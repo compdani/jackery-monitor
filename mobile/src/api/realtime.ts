@@ -1,6 +1,6 @@
 import { AppState } from 'react-native';
 import EventSource from 'react-native-sse';
-import { connectMonitorRealtime } from '../../../web/realtime.js';
+import { connectMonitorRealtime, realtimeConnected } from '../../../web/realtime.js';
 import { endpoints } from './client';
 import { useConnection } from '../store/connection';
 import { useLive } from '../store/live';
@@ -20,9 +20,10 @@ export function startLive() {
     if (running) { pending = true; return; }
     running = true;
     const view = useLive.getState().viewDeviceId;
+    const previous = useLive.getState().status;
     try {
       const status = await endpoints.status(view);
-      if (!stopped && view === useLive.getState().viewDeviceId) useLive.getState().applyStatus(status);
+      if (!stopped && view === useLive.getState().viewDeviceId && previous === useLive.getState().status) useLive.getState().applyStatus(status);
     } catch { /* Retain last good snapshot; HTTP handles expired sessions. */ }
     finally {
       running = false;
@@ -40,6 +41,9 @@ export function startLive() {
     getToken: () => useSession.getState().token,
     getDeviceSn: () => useLive.getState().status?.device?.device_sn,
     sourceFactory: url => new EventSource(url),
+    getViewId: () => useLive.getState().viewDeviceId,
+    onSnapshot: patch => useLive.getState().applyStatus({ ...useLive.getState().status, ...patch } as import('./types').StatusPayload),
+    onQueries: () => useLive.getState().energyChanged(),
     onRefresh: schedule,
     onEvent: event => {
       if (event.kind === 'alert' && typeof event.message === 'string') useLive.getState().pushAlert({ message: event.message });
@@ -57,7 +61,7 @@ export function startLive() {
   const offSession = useSession.subscribe((state, prev) => {
     if (state.token !== prev.token) { if (!state.token) stopLive(); else connection.reconnect(); }
   });
-  const poll = setInterval(() => schedule('energy'), 30_000);
+  const poll = setInterval(() => { if (!realtimeConnected()) schedule('energy'); }, 30_000);
   reconnect = () => connection.reconnect();
   schedule('reconnect');
   stop = () => { stopped = true; clearInterval(poll); if (timer) clearTimeout(timer); unsubscribe(); offSession(); appState.remove(); connection.stop(); useLive.getState().setConnected(false); };

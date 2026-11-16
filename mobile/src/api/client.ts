@@ -1,3 +1,4 @@
+import { readRealtimeQuery } from '../../../web/realtime.js';
 import { useConnection } from "../store/connection";
 import { useLive } from "../store/live";
 import { useSession } from "../store/session";
@@ -110,6 +111,10 @@ async function requestJson<T = unknown>(
 
   const url = `${base}${path}${qs(opts.query)}`;
   const { auth: _auth, query: _query, body: _body, headers: _headers, ...init } = opts;
+  if (!opts.method || opts.method === 'GET') {
+    const pushed = readRealtimeQuery(`${path}${qs(opts.query)}`);
+    if (pushed !== undefined) return { data: pushed as T, res: new Response(JSON.stringify(pushed)) };
+  }
   let res: Response;
   try {
     res = await fetch(url, { ...init, headers, body: body as BodyInit | undefined });

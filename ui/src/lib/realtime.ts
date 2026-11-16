@@ -14,9 +14,10 @@ export function connectRealtime(): () => void {
     if (running) { pending = true; return; }
     running = true;
     const view = live.selectedDeviceId;
+    const previous = live.status;
     try {
       const status = await api<StatusSnapshot>(`/status${view ? `?view_device_id=${encodeURIComponent(view)}` : ''}`);
-      if (!stopped && view === live.selectedDeviceId) live.applyStatus(status);
+      if (!stopped && view === live.selectedDeviceId && live.status === previous) live.applyStatus(status);
     } catch { /* HTTP auth handling and the fallback poll own recovery. */ }
     finally {
       running = false;
@@ -29,7 +30,9 @@ export function connectRealtime(): () => void {
     if (timer) return;
     timer = setTimeout(() => { timer = undefined; void refresh(); }, 75);
   }
-  const connection = connectMonitorRealtime({ getDeviceSn: () => live.activeDeviceSn(), onRefresh: schedule,
+  const connection = connectMonitorRealtime({ getDeviceSn: () => live.activeDeviceSn(), getViewId: () => live.selectedDeviceId,
+    onSnapshot: patch => { live.applyStatus({ ...live.status, ...patch } as StatusSnapshot); },
+    onQueries: () => live.notifyEnergyChange(), onRefresh: schedule,
     onEvent: event => {
       if (event.kind === 'automation_fired') {
         live.automationDot = true;

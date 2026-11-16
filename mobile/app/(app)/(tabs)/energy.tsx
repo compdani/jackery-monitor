@@ -1,3 +1,5 @@
+import { useIsFocused } from 'expo-router';
+import { resetRealtimeQueries } from '../../../../web/realtime.js';
 import { File, Paths } from "expo-file-system";
 import * as Sharing from "expo-sharing";
 import { useCallback, useEffect, useMemo, useState, useRef } from "react";
@@ -66,6 +68,8 @@ function mergeHistories(lists: HistPoint[][]): HistPoint[] {
 }
 
 export default function EnergyScreen() {
+  const focused = useIsFocused();
+  useEffect(() => () => resetRealtimeQueries(), []);
   const energyRevision = useLive(state => state.energyRevision);
   const energy = useLive((s) => s.status?.energy);
   const energyBucketS = usePrefs((s) => s.energyBucketS);
@@ -119,9 +123,10 @@ export default function EnergyScreen() {
   }, [hours, chartSn, energyBucketS]);
 
   useEffect(() => {
+    if (!focused) { resetRealtimeQueries(); return; }
     void load();
     return () => { ++loadGeneration.current; };
-  }, [load, energyRevision]);
+  }, [load, energyRevision, focused]);
 
   const filteredDaily = useMemo(() => {
     const n = Number(dRange);
