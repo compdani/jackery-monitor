@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/compdani/jackery-monitor/internal/ble"
 	"github.com/compdani/jackery-monitor/internal/ecoflow"
 )
 
@@ -173,6 +174,28 @@ func TestEcoFlowFleetAndSiseliOverlay(t *testing.T) {
 	if rows, err := s.Store.List("devices", "siseli:99", 0, 0); err != nil || len(rows) != 1 {
 		t.Fatal(rows, err)
 	}
+	// The linked EcoFlow persisted its own row, but it is part of siseli:99
+	// and must not come back as a separate fleet device.
+	contractJSON(t, h, "POST", "/api/bms/saved", `{"mac":"AA:BB:CC:DD:EE:01","alias":"Pack 1","capacity_wh":5120,"siseli_device_sn":"siseli:99"}`, token, 200)
+	soc, now := 44.0, float64(time.Now().Unix())
+	rt := s.bmsInit()
+	rt.mu.Lock()
+	rt.live["AA:BB:CC:DD:EE:01"] = ble.Reading{SocPct: &soc, TS: &now}
+	rt.mu.Unlock()
+	v = contractJSON(t, h, "GET", "/api/status?view_device_id=siseli:99", "", token, 200)
+	for _, d := range v["cloud"].(map[string]any)["devices"].([]any) {
+		if d.(map[string]any)["device_id"] == "ecoflow:R1" {
+			t.Fatal("linked EcoFlow listed as its own fleet device")
+		}
+	}
+	packs, _ := v["battery_packs"].([]any)
+	if len(packs) != 1 || packs[0].(map[string]any)["source"] != "bms" || packs[0].(map[string]any)["rb"] != 44.0 {
+		t.Fatal(v["battery_packs"])
+	}
+	if tele := v["telemetry"].(map[string]any); tele["bms_source"] != true {
+		t.Fatal(tele)
+	}
+	contractJSON(t, h, "DELETE", "/api/bms/saved/AA:BB:CC:DD:EE:01", "", token, 200)
 	contractJSON(t, h, "POST", "/api/ecoflow/reconnect_settings", `{"reconnect_start":"25:00"}`, token, 400)
 	v = contractJSON(t, h, "POST", "/api/ecoflow/reconnect_settings", `{"auto_reconnect":false,"reconnect_start":"01:00","reconnect_end":"02:00"}`, token, 200)
 	if v["ok"] != true || v["auto_reconnect"] != false || v["reconnect_start"] != "01:00" {

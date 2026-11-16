@@ -115,6 +115,48 @@ func (s *Server) siseliOverlay(sn string, tele map[string]any) map[string]any {
 	return ecoflow.OverlayTelemetry(out, ecoflow.OverlayOpts{Linked: ecoflow.LinkedFromDevices(linked), LiveBySN: s.ecoflowLive(), BMSAlready: out["bms_source"] != nil, LoadSources: sources})
 }
 
+// ecoflowLinked reports whether sn is an EcoFlow device linked to a Siseli
+// inverter (it is then shown as part of that inverter, not on its own).
+func (s *Server) ecoflowLinked(sn string) bool {
+	if !ecoflow.IsEcoflowSN(sn) {
+		return false
+	}
+	d, ok := s.ecoflowRegistry().Get(sn)
+	return ok && d.SiseliDeviceSN != nil && *d.SiseliDeviceSN != ""
+}
+
+// siseliViewStatus ports the viewing_siseli branch of Python's status:
+// BMS packs become the Live pack rows, and the overlay is re-applied to the
+// raw inverter telemetry so pack SOC is current rather than whatever was
+// persisted at the last Siseli/EcoFlow record.
+func (s *Server) siseliViewStatus(out map[string]any) {
+	device, _ := out["device"].(map[string]any)
+	sn := str(device, "device_sn")
+	if !strings.HasPrefix(sn, "siseli:") && str(device, "source") != "siseli" {
+		return
+	}
+	reg := s.bmsRegistry()
+	packs := reg.ListPacksFor(sn)
+	live := s.bmsLive()
+	out["battery_packs"] = ble.UIPackRows(packs, live, 0, 0)
+	rt := &s.fleet.siseli
+	rt.mu.Lock()
+	entry := rt.telemetry[sn]
+	rt.mu.Unlock()
+	if raw, ok := entry["telemetry"].(map[string]any); ok {
+		out["telemetry"] = s.siseliOverlay(sn, raw)
+	}
+	latest := 0.0
+	for _, p := range packs {
+		if r, ok := live[p.MAC]; ok && r.TS != nil && r.SocPct != nil && *r.TS > latest {
+			latest = *r.TS
+		}
+	}
+	if ts, _ := out["last_update_ts"].(float64); latest > ts {
+		out["last_update_ts"] = latest
+	}
+}
+
 // recordFleet persists one fleet observation through the shared device,
 // sample, controller and rule path.
 func (s *Server) recordFleet(ctx context.Context, device map[string]any, tele map[string]any, ts float64) {

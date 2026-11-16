@@ -1101,6 +1101,7 @@
   </section>
   {/if}
 
+  {#if isJackery}
   <section class="card device-card">
     <div class="card-header">
       <h2>Jackery account</h2>
@@ -1138,6 +1139,7 @@
       <p class="hint" style="margin-top:10px" role="status">{accountMsg}</p>
     {/if}
   </section>
+  {/if}
 
   <section class="card device-card">
     <div class="card-header">

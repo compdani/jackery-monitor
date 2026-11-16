@@ -581,6 +581,11 @@ func (s *Server) status(r *http.Request) map[string]any {
 	if rows, err := s.Store.List("devices", "", 0, 1000); err == nil {
 		for _, row := range rows {
 			if d, ok := row["device"].(map[string]any); ok {
+				// A linked EcoFlow keeps persisting its own row but is part of
+				// its Siseli inverter, so it must not reappear in the fleet.
+				if s.ecoflowLinked(str(d, "device_sn")) {
+					continue
+				}
 				addDevice(d)
 				sn := str(d, "device_sn")
 				if fleetTelemetry[sn] == nil {
@@ -659,6 +664,7 @@ func (s *Server) status(r *http.Request) map[string]any {
 	if d, ok := out["device"].(map[string]any); ok {
 		out["device"] = s.deviceAlias(d)
 	}
+	s.siseliViewStatus(out)
 	s.mergeFleetStatus(out)
 	populateFleetOverview(out)
 	if d, ok := out["device"].(map[string]any); ok {
