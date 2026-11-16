@@ -385,6 +385,8 @@ func (s *Server) teslaRoutes(w http.ResponseWriter, r *http.Request, b map[strin
 		jsonOut(w, 200, map[string]any{"ok": true, "state": "online"})
 	case "POST /navigate":
 		s.teslaNavigate(w, r, b)
+	case "POST /navigate/gps":
+		s.teslaNavigateGPS(w, r, b)
 	case "POST /navigate/one":
 		s.teslaNavigateOne(w, r, b)
 	case "GET /navigate/last":
@@ -580,27 +582,24 @@ func optString(b map[string]any, k string, allowed ...string) (string, error) {
 	return "", fmt.Errorf("%s must be one of %s", k, strings.Join(allowed, ", "))
 }
 
+// teslaNavigate sends a batch as one trip of Google places
+// (navigation_waypoints_request).
 func (s *Server) teslaNavigate(w http.ResponseWriter, r *http.Request, b map[string]any) {
-	cfg, err := s.teslaConfig()
-	if err != nil {
-		fail(w, 409, "tesla not configured")
+	cfg, stops, ok := s.teslaBatchRequest(w, b)
+	if !ok {
 		return
 	}
-	var req struct {
-		Stops []tesla.Stop `json:"stops"`
-	}
-	if err := fromMap(b, &req); err != nil {
-		fail(w, 400, "invalid stops")
-		return
-	}
-	if err := tesla.ValidateStops(req.Stops); err != nil {
-		fail(w, 400, err.Error())
-		return
-	}
-	// Per-request overrides make it possible to compare transports and
-	// order semantics on the car without changing the saved config.
-	if cfg, err = teslaNavOverrides(cfg, b); err != nil {
-		fail(w, 400, err.Error())
+	opts := map[string]string{"method": "places", "transport": cfg.NavTransport}
+	s.teslaRunJob(w, b, cfg, stops, opts, func(ctx context.Context, c *tesla.Client) ([]tesla.StopResult, error) {
+		return c.NavigateWaypoints(ctx, stops)
+	})
+}
+
+// teslaNavigateGPS sends a batch as one navigation_gps_request per stop,
+// numbered by the saved (or requested) order mode and paused between stops.
+func (s *Server) teslaNavigateGPS(w http.ResponseWriter, r *http.Request, b map[string]any) {
+	cfg, stops, ok := s.teslaBatchRequest(w, b)
+	if !ok {
 		return
 	}
 	order, err := optString(b, "order_mode", tesla.OrderEnum, tesla.OrderPosition, tesla.OrderOneThree)
@@ -608,24 +607,44 @@ func (s *Server) teslaNavigate(w http.ResponseWriter, r *http.Request, b map[str
 		fail(w, 400, err.Error())
 		return
 	}
-	method, err := optString(b, "method", tesla.MethodWaypoints, tesla.MethodGPS)
-	if err != nil {
-		fail(w, 400, err.Error())
-		return
-	}
-	if method != "" {
-		cfg.NavMethod = method
-	}
 	if order != "" {
 		cfg.NavOrderMode = order
 	}
-	opts := map[string]string{"method": cfg.NavMethod, "transport": cfg.NavTransport, "order_mode": cfg.NavOrderMode}
-	if cfg.NavMethod != tesla.MethodWaypoints {
-		opts["stop_delay_seconds"] = strconv.Itoa(max(cfg.NavStopDelaySeconds, 0))
+	opts := map[string]string{
+		"method":             "gps",
+		"transport":          cfg.NavTransport,
+		"order_mode":         cfg.NavOrderMode,
+		"stop_delay_seconds": strconv.Itoa(max(cfg.NavStopDelaySeconds, 0)),
 	}
-	s.teslaRunJob(w, b, cfg, req.Stops, opts, func(ctx context.Context, c *tesla.Client) ([]tesla.StopResult, error) {
-		return c.Navigate(ctx, req.Stops)
+	s.teslaRunJob(w, b, cfg, stops, opts, func(ctx context.Context, c *tesla.Client) ([]tesla.StopResult, error) {
+		return c.NavigateGPS(ctx, stops)
 	})
+}
+
+// teslaBatchRequest reads and validates a batch request and applies the
+// per-request transport and stop-delay overrides.
+func (s *Server) teslaBatchRequest(w http.ResponseWriter, b map[string]any) (tesla.Config, []tesla.Stop, bool) {
+	cfg, err := s.teslaConfig()
+	if err != nil {
+		fail(w, 409, "tesla not configured")
+		return cfg, nil, false
+	}
+	var req struct {
+		Stops []tesla.Stop `json:"stops"`
+	}
+	if err := fromMap(b, &req); err != nil {
+		fail(w, 400, "invalid stops")
+		return cfg, nil, false
+	}
+	if err := tesla.ValidateStops(req.Stops); err != nil {
+		fail(w, 400, err.Error())
+		return cfg, nil, false
+	}
+	if cfg, err = teslaNavOverrides(cfg, b); err != nil {
+		fail(w, 400, err.Error())
+		return cfg, nil, false
+	}
+	return cfg, req.Stops, true
 }
 
 // teslaNavigateOne sends a single stop placed before (prepend) or after
@@ -819,7 +838,6 @@ func (s *Server) teslaStatus() map[string]any {
 		out["redirect_uri"] = cfg.RedirectURI
 		out["nav_transport"] = cfg.NavTransport
 		out["nav_order_mode"] = cfg.NavOrderMode
-		out["nav_method"] = cfg.NavMethod
 		out["nav_stop_delay_seconds"] = cfg.NavStopDelaySeconds
 		out["has_google_api_key"] = cfg.GoogleAPIKey != ""
 		out["polling_disabled"] = cfg.PollingDisabled

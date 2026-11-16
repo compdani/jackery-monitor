@@ -193,9 +193,8 @@ func TestNavigateRESTSendsOrdersAndStopsOnFailure(t *testing.T) {
 		return 200, `{"response":{"result":true,"reason":""}}`
 	}}
 	c := testClient(h, TransportREST)
-	c.Config.NavMethod = MethodGPS
 	stops := []Stop{{Lat: 1, Lng: 1}, {Lat: 2, Lng: 2}, {Lat: 3, Lng: 3}, {Lat: 4, Lng: 4}}
-	res, err := c.Navigate(context.Background(), stops)
+	res, err := c.NavigateGPS(context.Background(), stops)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -224,7 +223,7 @@ func TestSendGPSPausesBetweenStopsAndSendOne(t *testing.T) {
 	}}
 	c := testClient(h, TransportREST)
 	c.StopDelay = 40 * time.Millisecond
-	if _, err := c.Navigate(context.Background(), []Stop{{Lat: 1, Lng: 1}, {Lat: 2, Lng: 2}, {Lat: 3, Lng: 3}}); err != nil {
+	if _, err := c.NavigateGPS(context.Background(), []Stop{{Lat: 1, Lng: 1}, {Lat: 2, Lng: 2}, {Lat: 3, Lng: 3}}); err != nil {
 		t.Fatal(err)
 	}
 	if len(at) != 3 || at[1].Sub(at[0]) < 40*time.Millisecond || at[2].Sub(at[1]) < 40*time.Millisecond {
@@ -243,7 +242,7 @@ func TestSendGPSPausesBetweenStopsAndSendOne(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	c.StopDelay = time.Hour
 	go func() { time.Sleep(20 * time.Millisecond); cancel() }()
-	res2, _ := c.Navigate(ctx, []Stop{{Lat: 1, Lng: 1}, {Lat: 2, Lng: 2}})
+	res2, _ := c.NavigateGPS(ctx, []Stop{{Lat: 1, Lng: 1}, {Lat: 2, Lng: 2}})
 	if len(res2) != 2 || !res2[0].OK || res2[1].OK {
 		t.Fatalf("cancel results %+v", res2)
 	}
@@ -276,10 +275,9 @@ func geocodeFake(t *testing.T, fleet func(*http.Request) (int, string)) *fakeHTT
 func TestNavigateWaypointsSendsOneOrderedRoute(t *testing.T) {
 	h := geocodeFake(t, func(r *http.Request) (int, string) { return 200, `{"response":{"result":true,"reason":""}}` })
 	c := testClient(h, TransportREST)
-	c.Config.NavMethod = MethodWaypoints
 	c.Places = &PlaceResolver{HTTP: h, APIKey: "gkey"}
 	stops := []Stop{{Lat: 1, Lng: 1}, {Lat: 2, Lng: 2.5}, {Lat: 3, Lng: 3}}
-	res, err := c.Navigate(context.Background(), stops)
+	res, err := c.NavigateWaypoints(context.Background(), stops)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -303,7 +301,7 @@ func TestNavigateWaypointsSendsOneOrderedRoute(t *testing.T) {
 	}
 	// A resend uses the cache: no more geocoding requests.
 	n := len(h.reqs)
-	if _, err := c.Navigate(context.Background(), stops); err != nil {
+	if _, err := c.NavigateWaypoints(context.Background(), stops); err != nil {
 		t.Fatal(err)
 	}
 	if len(h.reqs) != n+1 {
@@ -314,9 +312,8 @@ func TestNavigateWaypointsSendsOneOrderedRoute(t *testing.T) {
 func TestNavigateWaypointsSendsNothingIfAStopFails(t *testing.T) {
 	h := geocodeFake(t, func(r *http.Request) (int, string) { return 200, `{"response":{"result":true}}` })
 	c := testClient(h, TransportREST)
-	c.Config.NavMethod = MethodWaypoints
 	c.Places = &PlaceResolver{HTTP: h, APIKey: "wrong"}
-	res, err := c.Navigate(context.Background(), []Stop{{Lat: 1, Lng: 1}, {Lat: 2, Lng: 2}})
+	res, err := c.NavigateWaypoints(context.Background(), []Stop{{Lat: 1, Lng: 1}, {Lat: 2, Lng: 2}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -329,7 +326,7 @@ func TestNavigateWaypointsSendsNothingIfAStopFails(t *testing.T) {
 		}
 	}
 	c.Places = nil
-	if _, err := c.Navigate(context.Background(), []Stop{{Lat: 1, Lng: 1}}); err == nil || !strings.Contains(err.Error(), "Google Maps API key") {
+	if _, err := c.NavigateWaypoints(context.Background(), []Stop{{Lat: 1, Lng: 1}}); err == nil || !strings.Contains(err.Error(), "Google Maps API key") {
 		t.Fatalf("missing key err %v", err)
 	}
 }

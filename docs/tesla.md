@@ -26,8 +26,14 @@ The field numbers come from the community `tesla-protocol` definitions, and the 
 | --- | --- |
 | `enum` (default) | 0 replace, then 2 append |
 | `position` | 1, 2, 3, … |
+| `one_three` | 1, then 3, 3, … |
 
-`POST /api/tesla/navigate` accepts `transport` and `order_mode` (`enum` = 0,2,2…, `position` = 1,2,3…, `one_three` = 1,3,3…) overrides for testing on the car, and `stop_delay_seconds` (0–60; default from the saved `nav_stop_delay_seconds`, 10) for the pause between per-stop GPS commands.
+There are two batch endpoints:
+
+- `POST /api/tesla/navigate` sends **places**: each stop is reverse-geocoded to a Google place ID (needs `google_api_key`, Geocoding API) and the batch goes as one `navigation_waypoints_request`, so the car builds one trip in order. Nothing is sent unless every stop resolves.
+- `POST /api/tesla/navigate/gps` sends one `navigation_gps_request` per stop, numbered by `order_mode` and `stop_delay_seconds` apart (defaults: the saved `nav_order_mode` and `nav_stop_delay_seconds`, 10; delay 0–60).
+
+Both accept a `transport` override. Single stops (`/navigate/one`) always use GPS.
 
 ## One-time setup
 
@@ -60,7 +66,8 @@ All require the app session or bearer token, except the public key and the OAuth
 | `POST /api/tesla/oauth/forget` | Delete owner tokens |
 | `POST /api/tesla/wake` | Wake the car and wait until online |
 | `POST /api/tesla/navigate/one` | One stop added to the car's current trip: `{"lat","lng","position":"append"\|"prepend", "wait"}` (append = order 2, prepend = order 1; `"order":n` sends a raw value). Same job record as `/navigate`. |
-| `POST /api/tesla/navigate` | `{"stops":[{"lat","lng"}…≤8], "wait":true, "transport", "order_mode"}`. Stops at the first failed stop. With `"wait":false` it returns 202; poll `GET /api/tesla/navigate/last`. |
+| `POST /api/tesla/navigate` | Places route: `{"stops":[{"lat","lng"}…≤8], "wait":true, "transport"}`. With `"wait":false` it returns 202; poll `GET /api/tesla/navigate/last`. |
+| `POST /api/tesla/navigate/gps` | GPS per stop: same body plus `"order_mode"`, `"stop_delay_seconds"`. Stops at the first failed stop. |
 | `GET /api/tesla/charging/sessions` | Sessions with kWh and cost (`?limit=`) |
 | `POST /api/tesla/charging/poll` | Poll now |
 | `POST /api/tesla/app_token` | `{"days":365}` |

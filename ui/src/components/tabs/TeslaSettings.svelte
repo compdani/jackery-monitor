@@ -12,7 +12,6 @@
     domain?: string;
     redirect_uri?: string;
     nav_transport?: string;
-    nav_method?: string;
     nav_order_mode?: string;
     nav_stop_delay_seconds?: number;
     google_api_key?: string;
@@ -75,7 +74,7 @@
   };
 
   let status = $state<Status | null>(null);
-  let cfg = $state<Config>({ region: 'na', nav_transport: 'signed', nav_method: 'gps', nav_order_mode: 'enum' });
+  let cfg = $state<Config>({ region: 'na', nav_transport: 'signed', nav_order_mode: 'enum' });
   let secret = $state('');
   let googleKey = $state('');
   let msg = $state('');
@@ -307,27 +306,20 @@
           </select>
         </div>
       </div>
-      <div class="settings-row">
-        <label class="settings-label" for="t-method">
-          <span class="settings-label-text">Route method</span>
-          <span class="settings-hint">One GPS command per stop, or one route of Google places (needs the key below).</span>
-        </label>
-        <div class="settings-control">
-          <select id="t-method" class="device-select" bind:value={cfg.nav_method}>
-            <option value="gps">GPS command per stop</option>
-            <option value="waypoints">One route (Google places)</option>
-          </select>
-        </div>
-      </div>
+      <h3 class="tesla-sub">Places sends (one route)</h3>
       <div class="settings-row">
         <label class="settings-label" for="t-gkey">
           <span class="settings-label-text">Google Maps API key</span>
-          <span class="settings-hint">{cfg.has_google_api_key ? 'Saved. Leave blank to keep it.' : 'Geocoding API. Only for the route method.'}</span>
+          <span class="settings-hint">{cfg.has_google_api_key
+              ? 'Saved. Leave blank to keep it.'
+              : 'Geocoding API. Turns each stop into a Google place for the route.'}</span>
         </label>
         <div class="settings-control">
           <input id="t-gkey" class="device-select" type="password" autocomplete="off" bind:value={googleKey} />
         </div>
       </div>
+      <h3 class="tesla-sub">GPS sends (one command per stop)</h3>
+      <p class="hint" style="margin:0 0 8px">Defaults for GPS batches; the app can override both. Single-stop sends always use GPS.</p>
       <div class="settings-row">
         <label class="settings-label" for="t-order">
           <span class="settings-label-text">Stop order field</span>
@@ -350,6 +342,7 @@
           <input id="t-delay" type="number" min="1" max="60" step="1" bind:value={cfg.nav_stop_delay_seconds} />
         </div>
       </div>
+      <h3 class="tesla-sub">Charging</h3>
       <div class="settings-row">
         <label class="settings-label" for="t-eff">
           <span class="settings-label-text">Charging efficiency</span>
@@ -410,14 +403,15 @@
       <span class="hint">{job.status} · {fmtTime(job.started)}</span>
     </div>
     <p class="hint" style="margin:6px 0 8px">
-      {job.options?.method ?? 'gps'} · {job.options?.transport}
-      {#if job.options?.position}· {job.options.position}{:else}· order {job.options?.order_mode}{/if}
+      {job.options?.method === 'places' ? 'Places' : job.options?.method === 'single' ? 'Single stop' : 'GPS'} ·
+      {job.options?.transport}
+      {#if job.options?.position}· {job.options.position}{:else if job.options?.order_mode}· order {job.options.order_mode}{/if}
       {#if job.options?.stop_delay_seconds}· {job.options.stop_delay_seconds}s apart{/if}
       {#if job.error}<br />{job.error}{/if}
     </p>
     {#each job.results ?? [] as r (r.index)}
       <p class="hint" style="margin:2px 0">
-        Stop {r.index + 1}: {job.options?.method === 'waypoints' ? (r.address ?? r.place_id) : `order ${r.order}`} ·
+        Stop {r.index + 1}: {job.options?.method === 'places' ? (r.address ?? r.place_id) : `order ${r.order}`} ·
         {r.ok ? 'accepted' : (r.error ?? 'failed')}
       </p>
     {/each}
@@ -501,6 +495,12 @@
   }
   .tesla-steps a {
     word-break: break-all;
+  }
+  .tesla-sub {
+    margin: 18px 0 6px;
+    font-size: 13px;
+    color: var(--text-dim);
+    font-weight: 500;
   }
   .tesla-table {
     width: 100%;

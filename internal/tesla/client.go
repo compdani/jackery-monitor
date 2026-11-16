@@ -46,7 +46,7 @@ type Client struct {
 	// Sessions caches signed-command sessions between calls, avoiding a
 	// handshake round trip. Optional.
 	Sessions *cache.SessionCache
-	// Places resolves stops to Google place IDs for MethodWaypoints.
+	// Places resolves stops to Google place IDs for NavigateWaypoints.
 	Places *PlaceResolver
 	// StopDelay is the pause between per-stop GPS commands (zero: none).
 	StopDelay time.Duration
@@ -233,23 +233,14 @@ type StopResult struct {
 	Error   string `json:"error,omitempty"`
 }
 
-// Navigate sends up to MaxStops stops, in order, through the configured
-// method and transport. The car must be awake.
-//
-// MethodWaypoints resolves every stop to a place first and sends nothing
-// unless all resolve; the batch then goes as one command. MethodGPS sends a
-// command per stop and stops at the first failure.
-func (c *Client) Navigate(ctx context.Context, stops []Stop) ([]StopResult, error) {
+// NavigateWaypoints sends up to MaxStops stops as one trip: every stop is
+// resolved to a Google place first, and nothing is sent unless all resolve;
+// then a single navigation_waypoints_request carries them in order. The car
+// must be awake.
+func (c *Client) NavigateWaypoints(ctx context.Context, stops []Stop) ([]StopResult, error) {
 	if err := ValidateStops(stops); err != nil {
 		return nil, err
 	}
-	if c.Config.NavMethod == MethodWaypoints {
-		return c.navigateWaypoints(ctx, stops)
-	}
-	return c.navigateGPS(ctx, stops)
-}
-
-func (c *Client) navigateWaypoints(ctx context.Context, stops []Stop) ([]StopResult, error) {
 	if c.Places == nil || c.Places.APIKey == "" {
 		return nil, errors.New("multi-stop routes need a Google Maps API key (Geocoding API) in the Tesla settings")
 	}
@@ -284,7 +275,13 @@ func (c *Client) navigateWaypoints(ctx context.Context, stops []Stop) ([]StopRes
 	return results, nil
 }
 
-func (c *Client) navigateGPS(ctx context.Context, stops []Stop) ([]StopResult, error) {
+// NavigateGPS sends one navigation_gps_request per stop, StopDelay apart,
+// numbering them with Config.NavOrderMode, and stops at the first failure.
+// The car must be awake.
+func (c *Client) NavigateGPS(ctx context.Context, stops []Stop) ([]StopResult, error) {
+	if err := ValidateStops(stops); err != nil {
+		return nil, err
+	}
 	orders := make([]int32, len(stops))
 	for i := range stops {
 		orders[i] = OrderFor(c.Config.NavOrderMode, i)

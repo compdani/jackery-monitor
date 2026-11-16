@@ -45,16 +45,6 @@ const (
 	TransportREST   = "rest"   // plain Fleet API JSON command
 )
 
-// Navigation methods.
-const (
-	// MethodWaypoints sends the whole batch as one navigation_waypoints_request
-	// of Google place IDs: the car builds a multi-stop trip in that order.
-	MethodWaypoints = "waypoints"
-	// MethodGPS sends one navigation_gps_request per stop. Only the last one
-	// sticks on current firmware, so it is useful for single stops only.
-	MethodGPS = "gps"
-)
-
 // Navigation order modes for navigation_gps_request.
 const (
 	// OrderEnum treats order as RemoteNavTripOrder_E: the first stop
@@ -78,7 +68,6 @@ type Config struct {
 	RedirectURI string `json:"redirect_uri,omitempty"`
 
 	NavTransport string `json:"nav_transport,omitempty"`
-	NavMethod    string `json:"nav_method,omitempty"`
 	NavOrderMode string `json:"nav_order_mode,omitempty"`
 	// NavStopDelaySeconds is the pause between per-stop GPS commands; the
 	// car drops stops sent back to back. Default 10.
@@ -114,9 +103,6 @@ func (c Config) WithDefaults() Config {
 	}
 	if c.NavTransport == "" {
 		c.NavTransport = TransportSigned
-	}
-	if c.NavMethod == "" {
-		c.NavMethod = MethodGPS
 	}
 	if c.NavOrderMode == "" {
 		c.NavOrderMode = OrderEnum
@@ -158,9 +144,6 @@ func (c Config) Validate() error {
 	}
 	if c.NavTransport != TransportSigned && c.NavTransport != TransportREST {
 		return errors.New("nav_transport must be signed or rest")
-	}
-	if c.NavMethod != MethodWaypoints && c.NavMethod != MethodGPS {
-		return errors.New("nav_method must be waypoints or gps")
 	}
 	if c.NavOrderMode != OrderEnum && c.NavOrderMode != OrderPosition && c.NavOrderMode != OrderOneThree {
 		return errors.New("nav_order_mode must be enum, position or one_three")
