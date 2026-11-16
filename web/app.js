@@ -5586,7 +5586,7 @@ async function connectRealtime() {
   monitorRealtime = connectMonitorRealtime({
     getDeviceSn: () => activeJackeryDevice()?.device_sn,
     getViewId: () => _pendingViewSwitch?.id || lastStatus?.cloud?.selected_device_id,
-    onSnapshot: patch => applyStatus({ ...lastStatus, ...patch }),
+    onSnapshot: (patch, snapshot) => applyStatus(snapshot ? patch : { ...lastStatus, ...patch }),
     onQueries: () => { energyDailyCache = null; if (activeTab === 'energy') { fetchEnergyHistory(); fetchEnergyDaily(); fetchEnergyAllDevices(); } },
     onRefresh: scheduleRealtimeRefresh,
     onEvent: event => {

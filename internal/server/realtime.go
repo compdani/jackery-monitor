@@ -47,7 +47,11 @@ func (s *Server) registerRealtime() {
 		if err := e.Next(); err != nil {
 			return err
 		}
-		e.Client.Set("monitor.generation", new(int))
+		cookieView := ""
+		if cookie, err := e.Request.Cookie("view_device_id"); err == nil {
+			cookieView = cookie.Value
+		}
+		e.Client.Set("monitor.generation", &realtimeSubscription{cookieView: cookieView})
 		s.wakeRealtime()
 		return nil
 	})

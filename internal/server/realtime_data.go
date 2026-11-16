@@ -26,14 +26,28 @@ func (s *Server) RealtimeLoop(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			s.pushRealtimeData(ctx)
 		case <-s.realtime.wake:
-			s.pushRealtimeData(ctx)
 		}
+		// Coalesce bursts and impose an idle floor even under sustained writes.
+		timer := time.NewTimer(250 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return
+		case <-timer.C:
+		}
+		select {
+		case <-s.realtime.wake:
+		default:
+		}
+		s.pushRealtimeData(ctx)
 	}
 }
 
+type realtimeSubscription struct{ cookieView string }
+
 type realtimeBaseline struct {
+	view         string
 	subscription string
 	generation   any
 	at           time.Time
@@ -87,6 +101,11 @@ func (s *Server) pushRealtimeData(ctx context.Context) {
 			}
 			generation := client.Get("monitor.generation")
 			view := options.Query["view"]
+			if view == "" {
+				if sub, ok := generation.(*realtimeSubscription); ok {
+					view = sub.cookieView
+				}
+			}
 			fields, ok := snapshots[view]
 			if !ok {
 				req, _ := http.NewRequestWithContext(ctx, "GET", "/api/status?"+url.Values{"view_device_id": {view}}.Encode(), nil)
@@ -100,8 +119,15 @@ func (s *Server) pushRealtimeData(ctx context.Context) {
 				snapshots[view] = fields
 			}
 			old, _ := client.Get("monitor.baseline").(*realtimeBaseline)
-			if old == nil || old.subscription != subscription || old.generation != generation {
+			full := old == nil || old.subscription != subscription || old.view != view
+			if full {
 				old = &realtimeBaseline{subscription: subscription}
+			} else if old.generation != generation {
+				// New query subscriptions need their initial results, while the
+				// unchanged view keeps its status baseline and six-hour history.
+				copy := *old
+				copy.queries = nil
+				old = &copy
 			}
 			patch := map[string]json.RawMessage{}
 			for key, value := range fields {
@@ -142,12 +168,12 @@ func (s *Server) pushRealtimeData(ctx context.Context) {
 			if len(patch) == 0 && len(queryPatch) == 0 && time.Since(old.at) < 10*time.Second {
 				continue
 			}
-			raw, err := json.Marshal(map[string]any{"kind": "data", "status": patch, "queries": queryPatch})
+			raw, err := json.Marshal(map[string]any{"kind": "data", "snapshot": full, "status": patch, "queries": queryPatch})
 			if err != nil {
 				continue
 			}
 			if client.Get(apis.RealtimeClientAuthKey) == auth && client.Get("monitor.generation") == generation && client.HasSubscription(subscription) && sendRealtime(client, subscriptions.Message{Name: "monitor.data", Data: raw}) {
-				client.Set("monitor.baseline", &realtimeBaseline{subscription: subscription, generation: generation, at: time.Now(), fields: fields, queries: nextQueries})
+				client.Set("monitor.baseline", &realtimeBaseline{subscription: subscription, view: view, generation: generation, at: time.Now(), fields: fields, queries: nextQueries})
 			}
 		}
 	}

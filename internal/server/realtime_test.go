@@ -284,13 +284,65 @@ func TestRealtimeDroppedPayloadRetainsBaseline(t *testing.T) {
 	if _, ok := body["status"].(map[string]any)["connection_status"]; !ok {
 		t.Fatal("retry omitted initial snapshot", body)
 	}
-	client.Set("monitor.generation", new(int))
+	client.Subscribe("monitor.query." + url.PathEscape("/api/energy/devices"))
+	client.Set("monitor.generation", &realtimeSubscription{})
 	s.pushRealtimeData(context.Background())
 	message = <-client.messages
 	if err := json.Unmarshal(message.Data, &body); err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := body["status"].(map[string]any)["connection_status"]; !ok {
-		t.Fatal("new subscriptions did not reset baseline")
+	if body["snapshot"] != false || len(body["status"].(map[string]any)) != 0 {
+		t.Fatal("query update resent full status", body)
+	}
+	if _, ok := body["queries"].(map[string]any)["/api/energy/devices"]; !ok {
+		t.Fatal("new query has no initial result", body)
+	}
+}
+
+func TestRealtimeCookieViewResolution(t *testing.T) {
+	s, h := testServer(t)
+	token := contractToken(t, h)
+	for _, sn := range []string{"device-A", "device-B"} {
+		if err := s.Store.Put("devices", sn, sn, map[string]any{"device": map[string]any{"device_id": sn, "device_sn": sn}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	client := &bufferedRealtimeClient{subscriptions.NewDefaultClient(), make(chan subscriptions.Message, 10)}
+	s.Store.App.SubscriptionsBroker().Register(client)
+	defer s.Store.App.SubscriptionsBroker().Unregister(client.Id())
+	for _, test := range []struct{ option, want string }{{"", "device-B"}, {"device-A", "device-A"}} {
+		options, _ := json.Marshal(map[string]any{"query": map[string]string{"view": test.option}})
+		topics := []string{"monitor.data?options=" + url.QueryEscape(string(options)), "monitor.query." + url.PathEscape("/api/energy/devices")}
+		payload, _ := json.Marshal(map[string]any{"clientId": client.Id(), "subscriptions": topics})
+		req := httptest.NewRequest("POST", "/api/realtime", bytes.NewReader(payload))
+		req.Header.Set("Content-Type", "application/json")
+		req.AddCookie(&http.Cookie{Name: "jackery_session", Value: token})
+		req.AddCookie(&http.Cookie{Name: "view_device_id", Value: "device-B"})
+		response := httptest.NewRecorder()
+		h.ServeHTTP(response, req)
+		if response.Code != 204 {
+			t.Fatal(response.Code, response.Body.String())
+		}
+		s.pushRealtimeData(context.Background())
+		select {
+		case message := <-client.messages:
+			var body map[string]any
+			if err := json.Unmarshal(message.Data, &body); err != nil {
+				t.Fatal(err)
+			}
+			if body["snapshot"] != true {
+				t.Fatal("view change was not a full snapshot", body)
+			}
+			status := body["status"].(map[string]any)
+			if status["device"].(map[string]any)["device_sn"] != test.want {
+				t.Fatal("wrong status view", test, status)
+			}
+			devices := body["queries"].(map[string]any)["/api/energy/devices"].(map[string]any)
+			if devices["selected_device_id"] != test.want {
+				t.Fatal("mixed energy view", test, devices)
+			}
+		default:
+			t.Fatal("missing payload")
+		}
 	}
 }

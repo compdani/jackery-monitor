@@ -12,7 +12,13 @@ function queryKey(path) {
 }
 export function readRealtimeQuery(path) {
   const key = queryKey(path);
-  if (!/^\/api\/energy\/(totals|daily|history|devices)$/.test(key.split('?')[0])) return undefined;
+  if (!/^\/api\/energy\/(totals|daily|history|devices)$/.test(key.split('?')[0]) || key.length > 600) return undefined;
+  const params = new URLSearchParams(key.split('?')[1] || '');
+  for (const name of params.keys()) if (!['device_sn', 'hours', 'bucket_s', 'days'].includes(name)) return undefined;
+  for (const [name, limit] of [['hours', 8760], ['days', 365]]) {
+    const raw = params.get(name);
+    if (raw !== null && (!/^\d+$/.test(raw) || Number(raw) < 1 || Number(raw) > limit)) return undefined;
+  }
   if (!queries.has(key)) {
     const [base, search = ''] = key.split('?');
     const sn = new URLSearchParams(search).get('device_sn');
@@ -21,7 +27,7 @@ export function readRealtimeQuery(path) {
       const [oldBase, oldSearch = ''] = previous.split('?');
       if (base === oldBase && sn === new URLSearchParams(oldSearch).get('device_sn')) queries.delete(previous);
     }
-    if (queries.size >= 16) queries.delete(queries.keys().next().value);
+    if (queries.size >= 16) return undefined; // Overflow uses HTTP; never churn active subscriptions.
     queries.set(key, null); queryChanged?.();
   }
   const entry = queries.get(key);
@@ -51,7 +57,7 @@ export function connectMonitorRealtime(options) {
   function connect() {
     if (stopped) return;
     if (retry) clearTimeout(retry);
-    source?.close(); connected = false;
+    source?.close(); connected = false; lastData = 0;
     for (const key of queries.keys()) queries.set(key, null);
     const current = options.sourceFactory
       ? options.sourceFactory(`${base}/api/realtime`)
@@ -61,19 +67,28 @@ export function connectMonitorRealtime(options) {
     const active = () => !stopped && source === current;
     const sn = options.getDeviceSn();
     const topics = options.onSnapshot ? ['monitor.events'] : ['monitor.fleet', 'monitor.events', ...(sn ? [`monitor.device.${sn}`] : [])];
-    const dataTopic = 'monitor.data?options=' + encodeURIComponent(JSON.stringify({ query: { view: options.getViewId?.() || sn || '' } }));
+    const dataTopic = 'monitor.data?options=' + encodeURIComponent(JSON.stringify({ query: { view: options.getViewId?.() || '' } }));
     current.addEventListener('monitor.data', event => {
       if (!active()) return;
       try {
         const data = JSON.parse(event.data || '{}');
-        lastData = Date.now();
         for (const [path, value] of Object.entries(data.queries || {})) {
           const key = queryKey(path);
           if (queries.has(key)) queries.set(key, { data: value });
         }
-        options.onSnapshot?.(data.status || {});
+        if (data.snapshot === true || Object.keys(data.status || {}).length) options.onSnapshot?.(data.status || {}, data.snapshot === true);
         if (Object.keys(data.queries || {}).length) options.onQueries?.();
-      } catch { /* A reconnect/recovery read restores malformed frames. */ }
+        lastData = Date.now();
+      } catch {
+        // A queued delta is not acknowledged by the browser. Reconnect for a
+        // full baseline if parsing or applying it fails; never mask failure
+        // with a healthy heartbeat and permanently suppress recovery reads.
+        connected = false; lastData = 0;
+        current.close(); options.onConnected?.(false);
+        options.onError?.('Could not apply realtime payload');
+        options.onRefresh('reconnect');
+        retry = setTimeout(connect, retryDelay);
+      }
     });
     for (const topic of topics) {
       current.addEventListener(topic, (/** @type {{data?: string}} */ event) => {

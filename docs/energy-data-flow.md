@@ -53,9 +53,10 @@ hardware latency still needs measurement.
 PocketBase's native SSE broker sends dashboard payloads to authenticated users.
 Updated Svelte web, legacy web and React Native clients subscribe to `monitor.data`
 with a per-connection `view` in PocketBase subscription options. The server sends
-an initial snapshot, then only changed top-level status fields (telemetry, fleet,
+an initial snapshot marked `snapshot: true` (replaces prior view state), then only changed top-level status fields (telemetry, fleet,
 energy totals, preferences or history). Clients merge the patch into local state.
-Committed changes and subscription updates wake the publisher immediately; a two-second
+An empty view resolves from that browser's saved device cookie; explicit subscription views take precedence.
+Committed changes and subscription updates wake the publisher with a 250 ms coalescing window; a two-second
 server tick retries missed sends and catches time-dependent changes. It shares snapshot construction
 between clients viewing the same device. This replaces the former WebSocket
 snapshot delivery without adding an HTTP fetch for each notification.
@@ -66,7 +67,9 @@ into `monitor.data` only when changed. The shared API adapters serve pushed resu
 locally; existing screen loaders do not issue another GET after a payload arrives.
 Range changes replace old queries for the same endpoint/device, and leaving the
 energy screen clears its queries. At most 16 allowlisted energy queries and one
-view are accepted per connection. The server uses the same coalesced HTTP response
+view are accepted per connection. Client-side overflow uses HTTP without evicting
+active subscriptions; invalid parameters are never subscribed. Adding queries
+resends their initial results without resending unchanged status/history. The server uses the same coalesced HTTP response
 cache internally, so energy freshness still follows its 30-second refresh bound.
 
 `monitor.events` carries sanitized automation-firing, alert and Kasa-update events.
@@ -76,13 +79,17 @@ Older invalidation clients can still use `monitor.fleet` and
 The dependency-free protocol in `web/realtime.js` is shared across the frontends;
 mobile supplies a React Native EventSource implementation. Subscription POSTs use
 the existing bearer token or web session cookie, never credentials in stream URLs.
-Guest monitor subscriptions are rejected, and every payload send rechecks broker
-auth and the active view subscription. Queries cannot access arbitrary API routes.
+Guest monitor subscriptions are rejected. Every payload send checks the broker's
+attached authenticated user record and active view subscription. PocketBase's
+native auth-clearing hooks handle revocation; this is not fresh token validation
+on each send. Queries cannot access arbitrary API routes.
 
 Only a successfully queued payload advances that connection's baseline. A slow
 subscriber cannot block polling or persistence: a missed send is retried on the
 next server tick. A small heartbeat after ten idle seconds tracks stream health;
 status recovery polling runs every 30 seconds only while that stream is unhealthy.
+Heartbeats do not re-apply status. Parse/apply failures mark the stream unhealthy
+and reconnect for a full snapshot.
 Initial reads, user actions, newly selected energy queries and recovery can still
 use HTTP. Reconnects clear cached query values and establish a fresh snapshot;
 old streams and late HTTP responses cannot overwrite a newer view.

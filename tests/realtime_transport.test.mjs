@@ -132,6 +132,8 @@ test('payload SSE applies status and serves subscribed energy without follow-up 
     assert.equal(realtimeConnected(), true);
     assert.equal(patches[0].telemetry.battery_percent, 49);
     assert.equal(energyChanges, 1);
+    await source.emit('monitor.data', { status: {}, queries: {} });
+    assert.equal(patches.length, 1); // heartbeats never re-apply status
     const result = await fetchRealtimeQuery(path);
     assert.equal((await result.json()).history[0].solar_wh, 10);
     await source.emit('monitor.device.siseli:A', { kind: 'telemetry' });
@@ -142,4 +144,46 @@ test('payload SSE applies status and serves subscribed energy without follow-up 
     await source.emit('monitor.data', { status: { stale: true } });
     assert.equal(patches.length, 1);
   } finally { connection.stop(); globalThis.fetch = originalFetch; }
+});
+
+test('failed payload apply makes the stream unhealthy and reconnects for a full snapshot', async () => {
+  const { realtimeConnected } = await import('../web/realtime.js');
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => ({ ok: true });
+  let fail = false;
+  let state = { stale: true };
+  const connection = connectMonitorRealtime({
+    getDeviceSn: () => 'A', sourceFactory: url => new FakeSource(url), onRefresh: () => {},
+    onSnapshot: (patch, snapshot) => { if (fail) throw new Error('apply failed'); state = snapshot ? patch : { ...state, ...patch }; },
+  });
+  try {
+    const source = FakeSource.instances.at(-1);
+    await source.emit('PB_CONNECT', { clientId: 'apply' });
+    assert.equal(realtimeConnected(), false); // subscription success alone isn't delivery
+    await source.emit('monitor.data', { snapshot: true, status: { device: 'B' } });
+    assert.deepEqual(state, { device: 'B' }); // full snapshot removes old-view fields
+    assert.equal(realtimeConnected(), true);
+    fail = true;
+    await source.emit('monitor.data', { status: { device: 'C' } });
+    assert.equal(realtimeConnected(), false);
+    assert.equal(source.closed, true);
+  } finally { connection.stop(); globalThis.fetch = originalFetch; }
+});
+
+test('invalid queries and query overflow cannot churn or disable the payload subscription', async () => {
+  const { readRealtimeQuery, resetRealtimeQueries } = await import('../web/realtime.js');
+  resetRealtimeQueries();
+  const originalFetch = globalThis.fetch;
+  const subscriptions = [];
+  globalThis.fetch = async (_url, init) => { subscriptions.push(JSON.parse(init.body).subscriptions); return { ok: true }; };
+  const connection = connectMonitorRealtime({ getDeviceSn: () => 'A', sourceFactory: url => new FakeSource(url), onRefresh: () => {}, onSnapshot: () => {} });
+  try {
+    for (let i = 0; i < 20; i++) readRealtimeQuery(`/api/energy/history?device_sn=${i}&hours=24`);
+    for (const path of ['/api/secrets', '/api/energy/history?hours=999999', '/api/energy/daily?unexpected=1']) readRealtimeQuery(path);
+    await FakeSource.instances.at(-1).emit('PB_CONNECT', { clientId: 'bounds' });
+    const topics = subscriptions[0];
+    assert.equal(topics.filter(topic => topic.startsWith('monitor.query.')).length, 16);
+    assert.ok(topics.includes('monitor.query.' + encodeURIComponent('/api/energy/history?device_sn=0&hours=24')));
+    assert.equal(topics.some(topic => decodeURIComponent(topic).includes('999999')), false);
+  } finally { connection.stop(); resetRealtimeQueries(); globalThis.fetch = originalFetch; }
 });

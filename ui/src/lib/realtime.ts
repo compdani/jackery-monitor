@@ -31,7 +31,7 @@ export function connectRealtime(): () => void {
     timer = setTimeout(() => { timer = undefined; void refresh(); }, 75);
   }
   const connection = connectMonitorRealtime({ getDeviceSn: () => live.activeDeviceSn(), getViewId: () => live.selectedDeviceId,
-    onSnapshot: patch => { live.applyStatus({ ...live.status, ...patch } as StatusSnapshot); },
+    onSnapshot: (patch, snapshot) => { live.applyStatus((snapshot ? patch : { ...live.status, ...patch }) as StatusSnapshot); },
     onQueries: () => live.notifyEnergyChange(), onRefresh: schedule,
     onEvent: event => {
       if (event.kind === 'automation_fired') {

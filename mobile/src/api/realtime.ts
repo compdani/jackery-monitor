@@ -42,7 +42,7 @@ export function startLive() {
     getDeviceSn: () => useLive.getState().status?.device?.device_sn,
     sourceFactory: url => new EventSource(url),
     getViewId: () => useLive.getState().viewDeviceId,
-    onSnapshot: patch => useLive.getState().applyStatus({ ...useLive.getState().status, ...patch } as import('./types').StatusPayload),
+    onSnapshot: (patch, snapshot) => useLive.getState().applyStatus((snapshot ? patch : { ...useLive.getState().status, ...patch }) as import('./types').StatusPayload),
     onQueries: () => useLive.getState().energyChanged(),
     onRefresh: schedule,
     onEvent: event => {
