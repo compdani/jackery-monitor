@@ -39,6 +39,9 @@ func (f *teslaFake) Do(r *http.Request) (*http.Response, error) {
 		return reply(200, `{"access_token":"acc","refresh_token":"ref","expires_in":28800,"scope":"openid vehicle_cmds"}`)
 	case strings.HasSuffix(p, "/maps/api/geocode/json"):
 		ll := r.URL.Query().Get("latlng")
+		if ll == "40.00000,-90.00000" { // only a house 40 m north
+			return reply(200, `{"status":"OK","results":[{"place_id":"Pfar","formatted_address":"far house","geometry":{"location":{"lat":40.00036,"lng":-90},"location_type":"ROOFTOP"}}]}`)
+		}
 		parts := strings.Split(ll, ",")
 		return reply(200, `{"status":"OK","results":[{"place_id":"P`+ll+`","formatted_address":"addr","geometry":{"location":{"lat":`+parts[0]+`,"lng":`+parts[1]+`},"location_type":"ROOFTOP"}}]}`)
 	case strings.HasSuffix(p, "/wake_up"):
@@ -236,6 +239,57 @@ func TestTeslaNavigateOne(t *testing.T) {
 	}
 	if w := request(h, "GET", "/api/tesla/navigate/last", "", token); !strings.Contains(w.Body.String(), `"position":"prepend"`) {
 		t.Fatalf("last job %s", w.Body)
+	}
+}
+
+func TestTeslaResolvePlacesAndChosenPlaces(t *testing.T) {
+	_, h, token, fake := teslaSetup(t)
+	connectTesla(t, h, token)
+	stops := `[{"lat":30.1,"lng":-97.1},{"lat":40,"lng":-90}]`
+	if w := request(h, "POST", "/api/tesla/places/resolve", `{"stops":`+stops+`}`, token); w.Code != 409 {
+		t.Fatalf("resolve without key %d", w.Code)
+	}
+	if w := request(h, "POST", "/api/tesla/config", `{"client_id":"cid","vin":"5YJ3E1EA7KF000000","domain":"j.cdani.net","nav_transport":"rest","google_api_key":"gk"}`, token); w.Code != 200 {
+		t.Fatalf("config %d %s", w.Code, w.Body)
+	}
+	var out struct {
+		MaxDistanceM float64 `json:"max_distance_m"`
+		Stops        []struct {
+			Match *struct {
+				PlaceID string `json:"place_id"`
+			} `json:"match"`
+			Candidates []struct {
+				PlaceID   string  `json:"place_id"`
+				DistanceM float64 `json:"distance_m"`
+			} `json:"candidates"`
+			Error string `json:"error"`
+		} `json:"stops"`
+	}
+	w := request(h, "POST", "/api/tesla/places/resolve", `{"stops":`+stops+`}`, token)
+	_ = json.Unmarshal(w.Body.Bytes(), &out)
+	if w.Code != 200 || out.MaxDistanceM != 30 || len(out.Stops) != 2 || out.Stops[0].Match == nil ||
+		out.Stops[1].Match != nil || len(out.Stops[1].Candidates) != 1 || out.Stops[1].Candidates[0].PlaceID != "Pfar" || !strings.Contains(out.Stops[1].Error, "within 30 m") {
+		t.Fatalf("resolve %d %s", w.Code, w.Body)
+	}
+	// The app's distance override.
+	w = request(h, "POST", "/api/tesla/places/resolve", `{"max_distance_m":45,"stops":`+stops+`}`, token)
+	if !strings.Contains(w.Body.String(), `"max_distance_m":45`) || strings.Contains(w.Body.String(), `"error"`) {
+		t.Fatalf("resolve 45 m %s", w.Body)
+	}
+	if w := request(h, "POST", "/api/tesla/places/resolve", `{"max_distance_m":1,"stops":`+stops+`}`, token); w.Code != 400 {
+		t.Fatalf("1 m accepted: %d", w.Code)
+	}
+
+	// Sending: the far stop blocks the route at 30 m...
+	fake.commands = nil
+	w = request(h, "POST", "/api/tesla/navigate", `{"stops":`+stops+`}`, token)
+	if w.Code != 502 || len(fake.commands) != 0 || !strings.Contains(w.Body.String(), "stop 2: no exact address") {
+		t.Fatalf("navigate blocked %d %s", w.Code, w.Body)
+	}
+	// ...but goes once the user picked its place.
+	w = request(h, "POST", "/api/tesla/navigate", `{"stops":[{"lat":30.1,"lng":-97.1},{"lat":40,"lng":-90,"place_id":"Pfar"}]}`, token)
+	if w.Code != 200 || len(fake.commands) != 1 || fake.commands[0]["waypoints"] != "refId:P30.10000,-97.10000,refId:Pfar" {
+		t.Fatalf("navigate chosen %d %s %v", w.Code, w.Body, fake.commands)
 	}
 }
 

@@ -46,8 +46,10 @@ type Client struct {
 	// Sessions caches signed-command sessions between calls, avoiding a
 	// handshake round trip. Optional.
 	Sessions *cache.SessionCache
-	// Places resolves stops to Google place IDs for NavigateWaypoints.
-	Places *PlaceResolver
+	// Places resolves stops to Google place IDs for NavigateWaypoints,
+	// accepting matches within PlaceMaxDistanceM of the pin (0: default).
+	Places            *PlaceResolver
+	PlaceMaxDistanceM float64
 	// StopDelay is the pause between per-stop GPS commands (zero: none).
 	StopDelay time.Duration
 	UserAgent string
@@ -231,8 +233,8 @@ type StopResult struct {
 	Address string `json:"address,omitempty"`
 	// DistanceM is how far the matched place is from the stop's pin.
 	DistanceM *float64 `json:"distance_m,omitempty"`
-	OK      bool   `json:"ok"`
-	Error   string `json:"error,omitempty"`
+	OK        bool     `json:"ok"`
+	Error     string   `json:"error,omitempty"`
 }
 
 // NavigateWaypoints sends up to MaxStops stops as one trip: every stop is
@@ -243,21 +245,37 @@ func (c *Client) NavigateWaypoints(ctx context.Context, stops []Stop) ([]StopRes
 	if err := ValidateStops(stops); err != nil {
 		return nil, err
 	}
-	if c.Places == nil || c.Places.APIKey == "" {
-		return nil, errors.New("multi-stop routes need a Google Maps API key (Geocoding API) in the Tesla settings")
-	}
 	results := make([]StopResult, len(stops))
 	places := make([]Place, len(stops))
+	unmatched := 0
 	for i, s := range stops {
 		results[i].Index = i
-		pl, err := c.Places.Resolve(ctx, s)
+		if s.PlaceID != "" {
+			places[i] = Place{ID: s.PlaceID}
+			results[i].PlaceID = s.PlaceID
+			continue
+		}
+		if c.Places == nil || c.Places.APIKey == "" {
+			return nil, errors.New("multi-stop routes need a Google Maps API key (Geocoding API) in the Tesla settings")
+		}
+		pl, err := c.Places.Match(ctx, s, c.PlaceMaxDistanceM)
 		if err != nil {
+			// Keep checking the rest so every problem stop is reported.
 			results[i].Error = err.Error()
-			return results[:i+1], nil
+			unmatched++
+			continue
 		}
 		places[i] = pl
 		d := pl.DistanceM
 		results[i].PlaceID, results[i].Address, results[i].DistanceM = pl.ID, pl.Address, &d
+	}
+	if unmatched > 0 {
+		for i := range results {
+			if results[i].Error == "" {
+				results[i].Error = "not sent: another stop needs an address"
+			}
+		}
+		return results, nil
 	}
 	waypoints := WaypointsString(places)
 	var err error

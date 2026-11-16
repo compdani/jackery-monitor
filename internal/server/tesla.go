@@ -188,7 +188,7 @@ func (s *Server) saveTeslaSessionCache(c *cache.SessionCache) {
 }
 
 func (s *Server) teslaClient(cfg tesla.Config, withKey bool) (*tesla.Client, error) {
-	c := &tesla.Client{Config: cfg, HTTP: s.tesla.http(), Tokens: teslaTokenSource{s: s, cfg: cfg}, Places: s.teslaPlaces(cfg.GoogleAPIKey, cfg.PlaceMaxDistanceM)}
+	c := &tesla.Client{Config: cfg, HTTP: s.tesla.http(), Tokens: teslaTokenSource{s: s, cfg: cfg}, Places: s.teslaPlaces(cfg.GoogleAPIKey), PlaceMaxDistanceM: cfg.PlaceMaxDistanceM}
 	if withKey {
 		k, err := s.teslaPrivateKey()
 		if err != nil {
@@ -201,13 +201,13 @@ func (s *Server) teslaClient(cfg tesla.Config, withKey bool) (*tesla.Client, err
 }
 
 // teslaPlaces returns the shared place resolver for this API key.
-func (s *Server) teslaPlaces(key string, maxDistanceM float64) *tesla.PlaceResolver {
+func (s *Server) teslaPlaces(key string) *tesla.PlaceResolver {
 	rt := &s.tesla
 	rt.mu.Lock()
 	defer rt.mu.Unlock()
-	// A new key or distance limit starts a fresh cache.
-	if rt.places == nil || rt.places.APIKey != key || rt.places.MaxDistanceM != maxDistanceM {
-		rt.places = &tesla.PlaceResolver{HTTP: rt.http(), APIKey: key, MaxDistanceM: maxDistanceM}
+	// A new key starts a fresh cache.
+	if rt.places == nil || rt.places.APIKey != key {
+		rt.places = &tesla.PlaceResolver{HTTP: rt.http(), APIKey: key}
 	}
 	return rt.places
 }
@@ -388,6 +388,8 @@ func (s *Server) teslaRoutes(w http.ResponseWriter, r *http.Request, b map[strin
 		s.teslaNavigate(w, r, b)
 	case "POST /navigate/gps":
 		s.teslaNavigateGPS(w, r, b)
+	case "POST /places/resolve":
+		s.teslaResolvePlaces(w, r, b)
 	case "POST /navigate/one":
 		s.teslaNavigateOne(w, r, b)
 	case "GET /navigate/last":
@@ -590,7 +592,7 @@ func (s *Server) teslaNavigate(w http.ResponseWriter, r *http.Request, b map[str
 	if !ok {
 		return
 	}
-	opts := map[string]string{"method": "places", "transport": cfg.NavTransport}
+	opts := map[string]string{"method": "places", "transport": cfg.NavTransport, "max_distance_m": strconv.FormatFloat(tesla.LimitOrDefault(cfg.PlaceMaxDistanceM), 'f', -1, 64)}
 	s.teslaRunJob(w, b, cfg, stops, opts, func(ctx context.Context, c *tesla.Client) ([]tesla.StopResult, error) {
 		return c.NavigateWaypoints(ctx, stops)
 	})
@@ -648,6 +650,62 @@ func (s *Server) teslaBatchRequest(w http.ResponseWriter, b map[string]any) (tes
 	return cfg, req.Stops, true
 }
 
+// teslaResolvePlaces looks up each stop's nearby addresses without
+// sending anything: the match a places route would use (if any is within
+// the limit) and the nearest candidates, for the app to let the user pick.
+func (s *Server) teslaResolvePlaces(w http.ResponseWriter, r *http.Request, b map[string]any) {
+	cfg, err := s.teslaConfig()
+	if err != nil {
+		fail(w, 409, "tesla not configured")
+		return
+	}
+	if cfg.GoogleAPIKey == "" {
+		fail(w, 409, "no Google Maps API key in the Tesla settings")
+		return
+	}
+	var req struct {
+		Stops []tesla.Stop `json:"stops"`
+	}
+	if err := fromMap(b, &req); err != nil {
+		fail(w, 400, "invalid stops")
+		return
+	}
+	if err := tesla.ValidateStops(req.Stops); err != nil {
+		fail(w, 400, err.Error())
+		return
+	}
+	if cfg, err = teslaNavOverrides(cfg, b); err != nil {
+		fail(w, 400, err.Error())
+		return
+	}
+	limit := tesla.LimitOrDefault(cfg.PlaceMaxDistanceM)
+	resolver := s.teslaPlaces(cfg.GoogleAPIKey)
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+	type stopOut struct {
+		Index      int           `json:"index"`
+		Match      *tesla.Place  `json:"match,omitempty"`
+		Candidates []tesla.Place `json:"candidates"`
+		Error      string        `json:"error,omitempty"`
+	}
+	out := make([]stopOut, len(req.Stops))
+	for i, st := range req.Stops {
+		out[i] = stopOut{Index: i, Candidates: []tesla.Place{}}
+		cands, err := resolver.Candidates(ctx, st)
+		if err != nil {
+			out[i].Error = err.Error()
+			continue
+		}
+		out[i].Candidates = cands
+		if m, err := resolver.Match(ctx, st, limit); err == nil {
+			out[i].Match = &m
+		} else {
+			out[i].Error = err.Error()
+		}
+	}
+	jsonOut(w, 200, map[string]any{"max_distance_m": limit, "stops": out})
+}
+
 // teslaNavigateOne sends a single stop placed before (prepend) or after
 // (append) the trip already on the car, leaving the rest of the trip alone.
 func (s *Server) teslaNavigateOne(w http.ResponseWriter, r *http.Request, b map[string]any) {
@@ -702,6 +760,13 @@ func teslaNavOverrides(cfg tesla.Config, b map[string]any) (tesla.Config, error)
 	if transport != "" {
 		cfg.NavTransport = transport
 	}
+	if v, ok := b["max_distance_m"]; ok && v != nil {
+		f, ok := v.(float64)
+		if !ok || f < 5 || f > 200 {
+			return cfg, errors.New("max_distance_m must be from 5 to 200")
+		}
+		cfg.PlaceMaxDistanceM = f
+	}
 	if v, ok := b["stop_delay_seconds"]; ok && v != nil {
 		f, ok := v.(float64)
 		if !ok || f < 0 || f > tesla.MaxStopDelaySeconds || f != float64(int(f)) {
@@ -747,11 +812,22 @@ func (s *Server) teslaRunJob(w http.ResponseWriter, b map[string]any, cfg tesla.
 		if err != nil {
 			job.Status, job.Error = "failed", err.Error()
 		} else {
+			failed := 0
 			for _, res := range results {
-				if !res.OK {
-					job.Status = "failed"
+				if res.OK {
+					continue
+				}
+				job.Status = "failed"
+				if strings.HasPrefix(res.Error, "not sent:") {
+					continue // a consequence of another stop's failure
+				}
+				failed++
+				if job.Error == "" {
 					job.Error = fmt.Sprintf("stop %d: %s", res.Index+1, res.Error)
 				}
+			}
+			if failed > 1 {
+				job.Error += fmt.Sprintf(" (and %d more stops)", failed-1)
 			}
 		}
 		snapshot := *job
@@ -840,6 +916,7 @@ func (s *Server) teslaStatus() map[string]any {
 		out["nav_transport"] = cfg.NavTransport
 		out["nav_order_mode"] = cfg.NavOrderMode
 		out["nav_stop_delay_seconds"] = cfg.NavStopDelaySeconds
+		out["place_max_distance_m"] = tesla.LimitOrDefault(cfg.PlaceMaxDistanceM)
 		out["has_google_api_key"] = cfg.GoogleAPIKey != ""
 		out["polling_disabled"] = cfg.PollingDisabled
 	}

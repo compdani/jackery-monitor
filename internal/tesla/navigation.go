@@ -13,6 +13,9 @@ type Stop struct {
 	Lat   float64 `json:"lat"`
 	Lng   float64 `json:"lng"`
 	Label string  `json:"label,omitempty"`
+	// PlaceID, when set, is the Google place to use for this stop in a
+	// places route (chosen by the user), skipping the lookup.
+	PlaceID string `json:"place_id,omitempty"`
 }
 
 // Validate rejects impossible coordinates.
@@ -22,6 +25,13 @@ func (s Stop) Validate() error {
 	}
 	if s.Lat == 0 && s.Lng == 0 {
 		return errors.New("coordinates 0,0")
+	}
+	for _, r := range s.PlaceID {
+		// Google place IDs are URL-safe base64; anything else could break
+		// the comma-separated waypoints string.
+		if !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '_' || r == '-') {
+			return errors.New("invalid place_id")
+		}
 	}
 	return nil
 }

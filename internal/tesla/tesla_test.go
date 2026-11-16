@@ -271,34 +271,41 @@ func TestPlaceResolverPicksNearestRooftopWithinLimit(t *testing.T) {
 	reply := ""
 	h := &fakeHTTP{handle: func(r *http.Request) (int, string) { return 200, reply }}
 	res := func() *PlaceResolver { return &PlaceResolver{HTTP: h, APIKey: "k"} }
+	ctx := context.Background()
 
 	// Google's first result is across the street; the house at the pin is
 	// second. An interpolated address even closer is ignored.
 	reply = `{"status":"OK","results":[` +
 		geoResult("across", "12 Across St", pin.Lat+22*m, pin.Lng, "ROOFTOP") + `,` +
 		geoResult("street", "10-20 Main St", pin.Lat+1*m, pin.Lng, "RANGE_INTERPOLATED") + `,` +
+		geoResult("house", "11 Main St", pin.Lat-6*m, pin.Lng, "ROOFTOP") + `,` +
 		geoResult("house", "11 Main St", pin.Lat-6*m, pin.Lng, "ROOFTOP") + `]}`
-	pl, err := res().Resolve(context.Background(), pin)
-	if err != nil || pl.ID != "house" || pl.DistanceM < 5 || pl.DistanceM > 7 {
+	r := res()
+	pl, err := r.Match(ctx, pin, 0)
+	if err != nil || pl.ID != "house" || pl.DistanceM < 5 || pl.DistanceM > 7 || pl.Lat == 0 {
 		t.Fatalf("got %+v %v", pl, err)
 	}
+	cands, _ := r.Candidates(ctx, pin)
+	if len(cands) != 2 || cands[0].ID != "house" || cands[1].ID != "across" {
+		t.Fatalf("candidates %+v", cands)
+	}
 
-	// Nothing within 50 m: refuse, naming the nearest.
-	reply = `{"status":"OK","results":[` + geoResult("far", "99 Far Rd", pin.Lat+60*m, pin.Lng, "ROOFTOP") + `]}`
-	_, err = res().Resolve(context.Background(), pin)
+	// Nothing within the default 30 m: refuse, naming the nearest. The
+	// limit applies per call, so a wider one needs no new lookup.
+	reply = `{"status":"OK","results":[` + geoResult("far", "99 Far Rd", pin.Lat+40*m, pin.Lng, "ROOFTOP") + `]}`
+	r = res()
+	_, err = r.Match(ctx, pin, 0)
 	var nm *NoMatchError
-	if !errors.As(err, &nm) || nm.Nearest == nil || nm.Nearest.ID != "far" || !strings.Contains(err.Error(), "99 Far Rd, 59.9 m away") {
+	if !errors.As(err, &nm) || nm.Nearest == nil || nm.Nearest.ID != "far" || !strings.Contains(err.Error(), "within 30 m") || !strings.Contains(err.Error(), "99 Far Rd, 40.0 m away") {
 		t.Fatalf("far err %v", err)
 	}
-	// A wider limit accepts it.
-	wide := res()
-	wide.MaxDistanceM = 80
-	if pl, err := wide.Resolve(context.Background(), pin); err != nil || pl.ID != "far" {
-		t.Fatalf("wide %+v %v", pl, err)
+	n := len(h.reqs)
+	if pl, err := r.Match(ctx, pin, 50); err != nil || pl.ID != "far" || len(h.reqs) != n {
+		t.Fatalf("wide %+v %v (requests %d)", pl, err, len(h.reqs)-n)
 	}
 
 	reply = `{"status":"ZERO_RESULTS","results":[]}`
-	if _, err := res().Resolve(context.Background(), pin); !errors.As(err, &nm) || nm.Nearest != nil {
+	if _, err := res().Match(ctx, pin, 0); !errors.As(err, &nm) || nm.Nearest != nil {
 		t.Fatalf("zero err %v", err)
 	}
 }
@@ -368,7 +375,8 @@ func TestNavigateWaypointsSendsNothingIfAStopFails(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(res) != 1 || res[0].OK || !strings.Contains(res[0].Error, "REQUEST_DENIED") {
+	// Every stop is checked and reported.
+	if len(res) != 2 || res[0].OK || res[1].OK || !strings.Contains(res[0].Error, "REQUEST_DENIED") || !strings.Contains(res[1].Error, "REQUEST_DENIED") {
 		t.Fatalf("results %+v", res)
 	}
 	for _, r := range h.reqs {
@@ -379,6 +387,15 @@ func TestNavigateWaypointsSendsNothingIfAStopFails(t *testing.T) {
 	c.Places = nil
 	if _, err := c.NavigateWaypoints(context.Background(), []Stop{{Lat: 1, Lng: 1}}); err == nil || !strings.Contains(err.Error(), "Google Maps API key") {
 		t.Fatalf("missing key err %v", err)
+	}
+	// Stops with a chosen place need no key and no lookup.
+	n := len(h.reqs)
+	res, err = c.NavigateWaypoints(context.Background(), []Stop{{Lat: 1, Lng: 1, PlaceID: "ChIJabc"}, {Lat: 2, Lng: 2, PlaceID: "ChIJdef"}})
+	if err != nil || !res[0].OK || !res[1].OK || len(h.reqs) != n+1 || !strings.Contains(h.bodies[n], "refId:ChIJabc,refId:ChIJdef") {
+		t.Fatalf("chosen places %+v %v %v", res, err, h.bodies[n:])
+	}
+	if _, err := c.NavigateWaypoints(context.Background(), []Stop{{Lat: 1, Lng: 1, PlaceID: "ChIJ,refId:evil"}}); err == nil {
+		t.Fatal("bad place_id accepted")
 	}
 }
 

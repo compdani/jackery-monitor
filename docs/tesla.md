@@ -30,7 +30,7 @@ The field numbers come from the community `tesla-protocol` definitions, and the 
 
 There are two batch endpoints:
 
-- `POST /api/tesla/navigate` sends **places**: each stop is reverse-geocoded to a Google place ID (needs `google_api_key`, Geocoding API) and the batch goes as one `navigation_waypoints_request`, so the car builds one trip in order. Only rooftop-accurate addresses are used, the nearest to the pin wins, and it must be within `place_max_distance_m` (default 50 m); otherwise the send fails naming the nearest address, rather than routing to the wrong house. Nothing is sent unless every stop resolves. Each result records its `address` and `distance_m` from the pin.
+- `POST /api/tesla/navigate` sends **places**: each stop is reverse-geocoded to a Google place ID (needs `google_api_key`, Geocoding API) and the batch goes as one `navigation_waypoints_request`, so the car builds one trip in order. Only rooftop-accurate addresses are used, the nearest to the pin wins, and it must be within `place_max_distance_m` (default 30 m; `max_distance_m` overrides it per request); otherwise the send fails naming the nearest address, rather than routing to the wrong house. Nothing is sent unless every stop resolves, and every failing stop is reported. A stop may carry a `place_id` (chosen by the user) to skip the lookup. Each result records its `address` and `distance_m` from the pin.
 - `POST /api/tesla/navigate/gps` sends one `navigation_gps_request` per stop, numbered by `order_mode` and `stop_delay_seconds` apart (defaults: the saved `nav_order_mode` and `nav_stop_delay_seconds`, 10; delay 0–60).
 
 Both accept a `transport` override. Single stops (`/navigate/one`) always use GPS.
@@ -67,6 +67,7 @@ All require the app session or bearer token, except the public key and the OAuth
 | `POST /api/tesla/wake` | Wake the car and wait until online |
 | `POST /api/tesla/navigate/one` | One stop added to the car's current trip: `{"lat","lng","position":"append"\|"prepend", "wait"}` (append = order 2, prepend = order 1; `"order":n` sends a raw value). Same job record as `/navigate`. |
 | `POST /api/tesla/navigate` | Places route: `{"stops":[{"lat","lng"}…≤8], "wait":true, "transport"}`. With `"wait":false` it returns 202; poll `GET /api/tesla/navigate/last`. |
+| `POST /api/tesla/places/resolve` | `{"stops":[…], "max_distance_m"}` → per stop: `match` (the place a places route would use, if within the limit), up to 6 rooftop `candidates` nearest first (`place_id`, `address`, `lat`, `lng`, `distance_m`), and `error`. Sends nothing. |
 | `POST /api/tesla/navigate/gps` | GPS per stop: same body plus `"order_mode"`, `"stop_delay_seconds"`. Stops at the first failed stop. |
 | `GET /api/tesla/charging/sessions` | Sessions with kWh and cost (`?limit=`) |
 | `POST /api/tesla/charging/poll` | Poll now |

@@ -323,8 +323,8 @@
         <label class="settings-label" for="t-pdist">
           <span class="settings-label-text">Max distance from pin (m)</span>
           <span class="settings-hint">
-            Only exact (rooftop) addresses this close to Flex's pin are used; the nearest one wins. Farther stops make
-            the send fail rather than go to the wrong house.
+            Only exact (rooftop) addresses this close to Flex's pin are used; the nearest one wins (default 30). For
+            farther stops nothing is sent and the app asks you to pick the address on a map. The app can override this.
           </span>
         </label>
         <div class="settings-control">

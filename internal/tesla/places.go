@@ -9,6 +9,7 @@ import (
 	"math"
 	"net/http"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -17,36 +18,49 @@ import (
 // GeocodeURL is Google's Geocoding API (reverse geocoding by latlng).
 var GeocodeURL = "https://maps.googleapis.com/maps/api/geocode/json"
 
-// Place is a stop resolved to a Google place.
+// Place is a Google place near a stop.
 type Place struct {
-	ID      string `json:"place_id"`
-	Address string `json:"address,omitempty"`
-	// DistanceM is how far the place is from the stop's coordinates.
+	ID      string  `json:"place_id"`
+	Address string  `json:"address,omitempty"`
+	Lat     float64 `json:"lat"`
+	Lng     float64 `json:"lng"`
+	// DistanceM is how far the place is from the stop's pin.
 	DistanceM float64 `json:"distance_m"`
 }
 
 // DefaultPlaceMaxDistanceM is how far a matched address may be from the pin.
-const DefaultPlaceMaxDistanceM = 50
+const DefaultPlaceMaxDistanceM = 30
+
+// MaxCandidates is how many nearby addresses Candidates returns.
+const MaxCandidates = 6
 
 // PlaceResolver turns coordinates into Google place IDs, which is what the
 // car's multi-stop navigation_waypoints_request accepts.
 //
 // Only rooftop-accurate addresses are used (not ones estimated along the
-// street), and of those the one nearest the pin, within MaxDistanceM.
+// street), and of those the one nearest the pin, within a distance limit.
 // Google ranks results by its own relevance, not distance, and Flex pins
 // often sit at the curb, so taking the first result picked houses across
-// the street. Lookups are cached by coordinate (about 1 m).
+// the street. Lookups are cached by coordinate (about 1 m); the limit is
+// applied per call, so changing it needs no new lookup.
 type PlaceResolver struct {
-	HTTP         HTTPDoer
-	APIKey       string
-	MaxDistanceM float64
+	HTTP   HTTPDoer
+	APIKey string
 
 	mu    sync.Mutex
-	cache map[string]Place
+	cache map[string][]Place
 }
 
 func coordKey(s Stop) string {
 	return strconv.FormatFloat(s.Lat, 'f', 5, 64) + "," + strconv.FormatFloat(s.Lng, 'f', 5, 64)
+}
+
+// LimitOrDefault returns m, or the default limit when m is not positive.
+func LimitOrDefault(m float64) float64 {
+	if m > 0 {
+		return m
+	}
+	return DefaultPlaceMaxDistanceM
 }
 
 // NoMatchError means no rooftop address is close enough to the pin.
@@ -60,43 +74,54 @@ func (e *NoMatchError) Error() string {
 	if e.Nearest != nil {
 		msg += fmt.Sprintf(" (nearest: %s, %.1f m away)", e.Nearest.Address, e.Nearest.DistanceM)
 	}
-	return msg + "; send this batch with GPS instead"
+	return msg
 }
 
-// Resolve returns the place for one stop.
-func (p *PlaceResolver) Resolve(ctx context.Context, s Stop) (Place, error) {
-	if p.APIKey == "" {
-		return Place{}, errors.New("google maps api key not configured")
-	}
-	key := coordKey(s)
-	p.mu.Lock()
-	if pl, ok := p.cache[key]; ok {
-		p.mu.Unlock()
-		return pl, nil
-	}
-	p.mu.Unlock()
-
-	pl, err := p.lookup(ctx, s)
+// Match returns the nearest rooftop address within maxDistanceM (0: the
+// default) of the stop, or a *NoMatchError.
+func (p *PlaceResolver) Match(ctx context.Context, s Stop, maxDistanceM float64) (Place, error) {
+	cands, err := p.Candidates(ctx, s)
 	if err != nil {
 		return Place{}, err
 	}
+	limit := LimitOrDefault(maxDistanceM)
+	if len(cands) == 0 {
+		return Place{}, &NoMatchError{MaxDistanceM: limit}
+	}
+	if cands[0].DistanceM > limit {
+		return Place{}, &NoMatchError{MaxDistanceM: limit, Nearest: &cands[0]}
+	}
+	return cands[0], nil
+}
+
+// Candidates returns up to MaxCandidates rooftop addresses near the stop,
+// nearest first, with no distance limit.
+func (p *PlaceResolver) Candidates(ctx context.Context, s Stop) ([]Place, error) {
+	if p.APIKey == "" {
+		return nil, errors.New("google maps api key not configured")
+	}
+	key := coordKey(s)
+	p.mu.Lock()
+	if c, ok := p.cache[key]; ok {
+		p.mu.Unlock()
+		return c, nil
+	}
+	p.mu.Unlock()
+
+	c, err := p.lookup(ctx, s)
+	if err != nil {
+		return nil, err
+	}
 	p.mu.Lock()
 	if p.cache == nil {
-		p.cache = map[string]Place{}
+		p.cache = map[string][]Place{}
 	}
-	p.cache[key] = pl
+	p.cache[key] = c
 	p.mu.Unlock()
-	return pl, nil
+	return c, nil
 }
 
-func (p *PlaceResolver) maxDistance() float64 {
-	if p.MaxDistanceM > 0 {
-		return p.MaxDistanceM
-	}
-	return DefaultPlaceMaxDistanceM
-}
-
-func (p *PlaceResolver) lookup(ctx context.Context, s Stop) (Place, error) {
+func (p *PlaceResolver) lookup(ctx context.Context, s Stop) ([]Place, error) {
 	q := url.Values{
 		"latlng":        {coordKey(s)},
 		"key":           {p.APIKey},
@@ -105,16 +130,16 @@ func (p *PlaceResolver) lookup(ctx context.Context, s Stop) (Place, error) {
 	}
 	req, err := http.NewRequestWithContext(ctx, "GET", GeocodeURL+"?"+q.Encode(), nil)
 	if err != nil {
-		return Place{}, err
+		return nil, err
 	}
 	resp, err := p.HTTP.Do(req)
 	if err != nil {
-		return Place{}, fmt.Errorf("geocode: %w", err)
+		return nil, fmt.Errorf("geocode: %w", err)
 	}
 	defer resp.Body.Close()
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
 	if err != nil {
-		return Place{}, err
+		return nil, err
 	}
 	var out struct {
 		Status  string `json:"status"`
@@ -132,35 +157,39 @@ func (p *PlaceResolver) lookup(ctx context.Context, s Stop) (Place, error) {
 		} `json:"results"`
 	}
 	if err := json.Unmarshal(raw, &out); err != nil {
-		return Place{}, fmt.Errorf("geocode: http %d: unreadable response", resp.StatusCode)
+		return nil, fmt.Errorf("geocode: http %d: unreadable response", resp.StatusCode)
 	}
-	limit := p.maxDistance()
 	switch out.Status {
 	case "OK":
 	case "ZERO_RESULTS":
-		return Place{}, &NoMatchError{MaxDistanceM: limit}
+		return []Place{}, nil
 	default:
 		msg := out.Status
 		if out.Message != "" {
 			msg += ": " + out.Message
 		}
-		return Place{}, fmt.Errorf("geocode: %s", msg)
+		return nil, fmt.Errorf("geocode: %s", msg)
 	}
-	var best *Place
+	seen := map[string]bool{}
+	var cands []Place
 	for _, r := range out.Results {
 		// The filter is a request; check it anyway.
-		if r.PlaceID == "" || (r.Geometry.LocationType != "" && r.Geometry.LocationType != "ROOFTOP") {
+		if r.PlaceID == "" || seen[r.PlaceID] || (r.Geometry.LocationType != "" && r.Geometry.LocationType != "ROOFTOP") {
 			continue
 		}
+		seen[r.PlaceID] = true
 		d := DistanceM(s.Lat, s.Lng, r.Geometry.Location.Lat, r.Geometry.Location.Lng)
-		if best == nil || d < best.DistanceM {
-			best = &Place{ID: r.PlaceID, Address: r.Address, DistanceM: math.Round(d*10) / 10}
-		}
+		cands = append(cands, Place{
+			ID: r.PlaceID, Address: r.Address,
+			Lat: r.Geometry.Location.Lat, Lng: r.Geometry.Location.Lng,
+			DistanceM: math.Round(d*10) / 10,
+		})
 	}
-	if best == nil || best.DistanceM > limit {
-		return Place{}, &NoMatchError{MaxDistanceM: limit, Nearest: best}
+	sort.SliceStable(cands, func(i, j int) bool { return cands[i].DistanceM < cands[j].DistanceM })
+	if len(cands) > MaxCandidates {
+		cands = cands[:MaxCandidates]
 	}
-	return *best, nil
+	return cands, nil
 }
 
 // WaypointsString formats place IDs for navigation_waypoints_request: in
