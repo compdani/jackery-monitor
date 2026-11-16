@@ -536,3 +536,19 @@ func TestDistanceM(t *testing.T) {
 		t.Fatalf("distance %v", d)
 	}
 }
+
+func TestCommandLogKeepsNewestFirst(t *testing.T) {
+	l := NewCommandLog(3)
+	for i := 0; i < 5; i++ {
+		l.Add(CommandRecord{Command: strconv.Itoa(i)})
+	}
+	got := l.List(0)
+	if len(got) != 3 || got[0].Command != "4" || got[2].Command != "2" {
+		t.Fatalf("got %+v", got)
+	}
+	if got := l.List(1); len(got) != 1 || got[0].Command != "4" {
+		t.Fatalf("limit: %+v", got)
+	}
+	var nilLog *CommandLog
+	nilLog.Add(CommandRecord{}) // must not panic
+}

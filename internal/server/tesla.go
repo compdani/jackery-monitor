@@ -49,6 +49,7 @@ type teslaRuntime struct {
 	job         *teslaJob
 	pollNow     chan struct{}
 	places      *tesla.PlaceResolver // keeps its lookup cache across batches
+	cmdLog      *tesla.CommandLog    // recent commands sent to the car
 
 	// HTTP overrides the Fleet API transport in tests.
 	HTTP tesla.HTTPDoer
@@ -197,7 +198,19 @@ func (s *Server) teslaClient(cfg tesla.Config, withKey bool) (*tesla.Client, err
 		c.PrivateKeyHex = k
 		c.Sessions = s.teslaSessionCache()
 	}
+	c.Log = s.teslaCommandLog()
 	return c, nil
+}
+
+// teslaCommandLog returns the shared log of commands sent to the car.
+func (s *Server) teslaCommandLog() *tesla.CommandLog {
+	rt := &s.tesla
+	rt.mu.Lock()
+	defer rt.mu.Unlock()
+	if rt.cmdLog == nil {
+		rt.cmdLog = tesla.NewCommandLog(0)
+	}
+	return rt.cmdLog
 }
 
 // teslaPlaces returns the shared place resolver for this API key.
@@ -401,6 +414,13 @@ func (s *Server) teslaRoutes(w http.ResponseWriter, r *http.Request, b map[strin
 			return true
 		}
 		jsonOut(w, 200, job)
+	case "GET /commands":
+		// The raw commands sent to the car, newest first (in memory only).
+		limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+		jsonOut(w, 200, map[string]any{"commands": s.teslaCommandLog().List(limit)})
+	case "POST /commands/clear":
+		s.teslaCommandLog().Clear()
+		jsonOut(w, 200, map[string]any{"ok": true})
 	case "GET /charging/sessions":
 		limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
 		if limit <= 0 || limit > 500 {

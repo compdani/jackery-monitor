@@ -240,6 +240,30 @@ func TestTeslaNavigateOne(t *testing.T) {
 	if w := request(h, "GET", "/api/tesla/navigate/last", "", token); !strings.Contains(w.Body.String(), `"position":"prepend"`) {
 		t.Fatalf("last job %s", w.Body)
 	}
+	// Every command sent shows up in the raw command log, newest first.
+	var log struct {
+		Commands []struct {
+			Command, Transport, Endpoint, Response string
+			Params                                 map[string]any
+			OK                                     bool
+		} `json:"commands"`
+	}
+	w := request(h, "GET", "/api/tesla/commands?limit=2", "", token)
+	_ = json.Unmarshal(w.Body.Bytes(), &log)
+	if w.Code != 200 || len(log.Commands) != 2 {
+		t.Fatalf("command log %d %s", w.Code, w.Body)
+	}
+	got := log.Commands[0]
+	if got.Command != "navigation_gps_request" || got.Transport != "rest" || !got.OK || got.Params["order"] != 3.0 ||
+		!strings.HasSuffix(got.Endpoint, "/command/navigation_gps_request") || !strings.Contains(got.Response, "result") {
+		t.Fatalf("newest record %+v", got)
+	}
+	if w := request(h, "POST", "/api/tesla/commands/clear", "", token); w.Code != 200 {
+		t.Fatalf("clear %d", w.Code)
+	}
+	if w := request(h, "GET", "/api/tesla/commands", "", token); !strings.Contains(w.Body.String(), `"commands":[]`) {
+		t.Fatalf("after clear %s", w.Body)
+	}
 }
 
 func TestTeslaResolvePlacesAndChosenPlaces(t *testing.T) {

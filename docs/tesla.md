@@ -69,6 +69,8 @@ All require the app session or bearer token, except the public key and the OAuth
 | `POST /api/tesla/navigate` | Places route: `{"stops":[{"lat","lng"}…≤8], "wait":true, "transport"}`. With `"wait":false` it returns 202; poll `GET /api/tesla/navigate/last`. |
 | `POST /api/tesla/places/resolve` | `{"stops":[…], "max_distance_m"}` → per stop: `match` (the place a places route would use, if within the limit), up to 6 rooftop `candidates` nearest first (`place_id`, `address`, `lat`, `lng`, `distance_m`), and `error`. Sends nothing. |
 | `POST /api/tesla/navigate/gps` | GPS per stop: same body plus `"order_mode"`, `"stop_delay_seconds"`. Stops at the first failed stop. |
+| `GET /api/tesla/commands` | The last 100 commands sent to the car, newest first (`?limit=`): `command`, `transport`, `endpoint`, `params`, `payload_hex` (signed: the `carserver.Action` before signing/encryption), `response` (REST `response` JSON, or the decoded `carserver.Response`), `ok`, `error`, `duration_ms`. In memory only; resets on restart. |
+| `POST /api/tesla/commands/clear` | Empty the command log |
 | `GET /api/tesla/charging/sessions` | Sessions with kWh and cost (`?limit=`) |
 | `POST /api/tesla/charging/poll` | Poll now |
 | `POST /api/tesla/app_token` | `{"days":365}` |

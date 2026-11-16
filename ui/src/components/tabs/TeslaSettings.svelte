@@ -74,7 +74,21 @@
     results?: { index: number; order: number; ok: boolean; error?: string; place_id?: string; address?: string; distance_m?: number }[];
   };
 
+  type CommandRecord = {
+    ts: number;
+    command: string;
+    transport: string;
+    endpoint: string;
+    params?: Record<string, unknown>;
+    payload_hex?: string;
+    response?: string;
+    ok: boolean;
+    error?: string;
+    duration_ms: number;
+  };
+
   let status = $state<Status | null>(null);
+  let commands = $state.raw<CommandRecord[]>([]);
   let cfg = $state<Config>({ region: 'na', nav_transport: 'signed', nav_order_mode: 'enum' });
   let secret = $state('');
   let googleKey = $state('');
@@ -116,7 +130,27 @@
     } catch (err) {
       msg = err instanceof Error ? err.message : 'Failed to load Tesla status';
     }
+    await loadCommands();
   }
+
+  async function loadCommands() {
+    try {
+      commands = (await api<{ commands: CommandRecord[] }>('/tesla/commands?limit=50')).commands || [];
+    } catch {
+      commands = [];
+    }
+  }
+
+  const fmtMs = (ms: number) =>
+    new Date(ms).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', second: '2-digit' });
+  const pretty = (raw?: string) => {
+    if (!raw) return '';
+    try {
+      return JSON.stringify(JSON.parse(raw), null, 2);
+    } catch {
+      return raw;
+    }
+  };
 
   async function run(label: string, fn: () => Promise<string | void>) {
     busy = true;
@@ -434,6 +468,48 @@
 {/if}
 
 <section class="card device-card">
+  <div class="card-header">
+    <h2>Commands sent</h2>
+    <span class="hint">{commands.length} kept in memory</span>
+  </div>
+  <p class="hint" style="margin:6px 0 8px">
+    Exactly what went to the car, newest first. Signed commands show the protobuf payload before it is signed and
+    encrypted. The log resets when the server restarts.
+  </p>
+  <div style="display:flex; gap:8px; margin-bottom:8px">
+    <button class="btn btn-ghost" type="button" onclick={loadCommands}>Refresh</button>
+    <button
+      class="btn btn-ghost"
+      type="button"
+      disabled={busy || commands.length === 0}
+      onclick={() => run('Clear command log', async () => void (await apiPost('/tesla/commands/clear', {})))}
+    >Clear</button>
+  </div>
+  {#if commands.length === 0}
+    <p class="hint">No commands sent since the server started.</p>
+  {/if}
+  {#each commands as c, i (c.ts + ':' + i)}
+    <details class="tesla-cmd">
+      <summary>
+        <span class={c.ok ? 'cmd-ok' : 'cmd-fail'}>{c.ok ? '✓' : '✕'}</span>
+        {fmtMs(c.ts)} · <code>{c.command}</code> · {c.transport} · {c.duration_ms} ms
+        {#if c.error}<br /><span class="cmd-fail">{c.error}</span>{/if}
+      </summary>
+      <div class="hint">Endpoint</div>
+      <pre>{c.endpoint}</pre>
+      <div class="hint">Sent</div>
+      <pre>{JSON.stringify(c.params ?? {}, null, 2)}</pre>
+      {#if c.payload_hex}
+        <div class="hint">Payload (hex, {c.payload_hex.length / 2} bytes)</div>
+        <pre>{c.payload_hex}</pre>
+      {/if}
+      <div class="hint">Car replied</div>
+      <pre>{pretty(c.response) || '(nothing)'}</pre>
+    </details>
+  {/each}
+</section>
+
+<section class="card device-card">
   <div class="card-header"><h2>TeslaHelper app token</h2></div>
   <p class="hint" style="margin:6px 0 12px">
     Paste into TeslaHelper → Settings. It acts as your dashboard login; changing your password revokes it.
@@ -516,6 +592,29 @@
     font-size: 13px;
     color: var(--text-dim);
     font-weight: 500;
+  }
+  .tesla-cmd {
+    border-top: 1px solid var(--border, rgba(127, 127, 127, 0.25));
+    padding: 6px 0;
+    font-size: 13px;
+  }
+  .tesla-cmd summary {
+    cursor: pointer;
+  }
+  .tesla-cmd pre {
+    margin: 2px 0 8px;
+    padding: 6px 8px;
+    border-radius: 6px;
+    background: var(--bg-subtle, rgba(127, 127, 127, 0.12));
+    font-size: 12px;
+    white-space: pre-wrap;
+    word-break: break-all;
+  }
+  .cmd-ok {
+    color: var(--ok, #2a7);
+  }
+  .cmd-fail {
+    color: var(--danger, #d33);
   }
   .tesla-table {
     width: 100%;

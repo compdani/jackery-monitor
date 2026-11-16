@@ -3,6 +3,7 @@ package tesla
 import (
 	"bytes"
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -17,6 +18,7 @@ import (
 	"github.com/teslamotors/vehicle-command/pkg/protocol/protobuf/carserver"
 	universal "github.com/teslamotors/vehicle-command/pkg/protocol/protobuf/universalmessage"
 	"github.com/teslamotors/vehicle-command/pkg/vehicle"
+	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -52,6 +54,8 @@ type Client struct {
 	PlaceMaxDistanceM float64
 	// StopDelay is the pause between per-stop GPS commands (zero: none).
 	StopDelay time.Duration
+	// Log records every command sent to the car. Optional.
+	Log       *CommandLog
 	UserAgent string
 	Now       func() time.Time
 	// PollInterval is how often Wake checks whether the car came online.
@@ -282,8 +286,8 @@ func (c *Client) NavigateWaypoints(ctx context.Context, stops []Stop) ([]StopRes
 	if c.Config.NavTransport == TransportREST {
 		err = c.restCommand(ctx, "navigation_waypoints_request", map[string]any{"waypoints": waypoints})
 	} else {
-		err = c.withInfotainment(ctx, func(send func([]byte) error) error {
-			return send(EncodeWaypointsAction(waypoints))
+		err = c.withInfotainment(ctx, func(send sendFunc) error {
+			return send("navigation_waypoints_request", map[string]any{"waypoints": waypoints}, EncodeWaypointsAction(waypoints))
 		})
 	}
 	for i := range results {
@@ -355,16 +359,26 @@ func (c *Client) sendGPS(ctx context.Context, stops []Stop, orders []int32) ([]S
 		})
 		return results, nil
 	}
-	err := c.withInfotainment(ctx, func(send func([]byte) error) error {
-		sendAll(func(s Stop, order int32) error { return send(EncodeGPSAction(s, order)) })
+	err := c.withInfotainment(ctx, func(send sendFunc) error {
+		sendAll(func(s Stop, order int32) error {
+			return send("navigation_gps_request", map[string]any{"lat": s.Lat, "lon": s.Lng, "order": order}, EncodeGPSAction(s, order))
+		})
 		return nil
 	})
 	return results, err
 }
 
 // restCommand posts a plain Fleet API command and checks its result.
-func (c *Client) restCommand(ctx context.Context, name string, body map[string]any) error {
-	raw, err := c.do(ctx, "POST", c.vinPath()+"/command/"+name, body)
+func (c *Client) restCommand(ctx context.Context, name string, body map[string]any) (err error) {
+	start := time.Now()
+	path := c.vinPath() + "/command/" + name
+	var raw json.RawMessage
+	defer func() {
+		c.Log.Add(record(start, CommandRecord{
+			Command: name, Transport: "rest", Endpoint: "POST " + path, Params: body, Response: string(raw),
+		}, err))
+	}()
+	raw, err = c.do(ctx, "POST", path, body)
 	if err != nil {
 		return err
 	}
@@ -381,9 +395,13 @@ func (c *Client) restCommand(ctx context.Context, name string, body map[string]a
 	return nil
 }
 
+// sendFunc sends one serialized carserver.Action; name and params describe
+// it for the command log.
+type sendFunc func(name string, params map[string]any, payload []byte) error
+
 // withInfotainment opens a signed infotainment session and runs fn with a
 // sender for serialized carserver.Action payloads.
-func (c *Client) withInfotainment(ctx context.Context, fn func(send func([]byte) error) error) error {
+func (c *Client) withInfotainment(ctx context.Context, fn func(send sendFunc) error) error {
 	if c.PrivateKeyHex == "" {
 		return errors.New("no virtual key generated")
 	}
@@ -411,17 +429,32 @@ func (c *Client) withInfotainment(ctx context.Context, fn func(send func([]byte)
 	if c.Sessions != nil {
 		defer func() { _ = car.UpdateCachedSessions(c.Sessions) }()
 	}
-	return fn(func(payload []byte) error { return sendInfotainment(ctx, car, conn, payload) })
+	return fn(func(name string, params map[string]any, payload []byte) (err error) {
+		start := time.Now()
+		var reply string
+		defer func() {
+			c.Log.Add(record(start, CommandRecord{
+				Command: name, Transport: "signed", Endpoint: "signed_command (infotainment)",
+				Params: params, PayloadHex: hex.EncodeToString(payload), Response: reply,
+			}, err))
+		}()
+		return sendInfotainment(ctx, car, conn, payload, &reply)
+	})
 }
 
-func sendInfotainment(ctx context.Context, car *vehicle.Vehicle, conn *inet.Connection, payload []byte) error {
+// sendInfotainment sends payload and stores the car's decoded reply in reply.
+func sendInfotainment(ctx context.Context, car *vehicle.Vehicle, conn *inet.Connection, payload []byte, reply *string) error {
 	raw, err := car.Send(ctx, universal.Domain_DOMAIN_INFOTAINMENT, payload, conn.PreferredAuthMethod())
 	if err != nil {
 		return err
 	}
 	var resp carserver.Response
 	if err := proto.Unmarshal(raw, &resp); err != nil {
+		*reply = hex.EncodeToString(raw)
 		return fmt.Errorf("unreadable vehicle response (command may have succeeded): %w", err)
+	}
+	if j, err := protojson.Marshal(&resp); err == nil {
+		*reply = string(j)
 	}
 	if resp.GetActionStatus().GetResult() == carserver.OperationStatus_E_OPERATIONSTATUS_ERROR {
 		reason := resp.GetActionStatus().GetResultReason().GetPlainText()
