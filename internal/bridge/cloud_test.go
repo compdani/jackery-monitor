@@ -115,3 +115,31 @@ func TestCloudMissingSOCDoesNotBecomeCriticalZero(t *testing.T) {
 		t.Fatal("real zero lost", got)
 	}
 }
+
+func TestCloudPreservesNumericDeviceIDs(t *testing.T) {
+	const id = "496529289672392701"
+	h := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/device/bind/list":
+			ioJSON(w, `{"code":0,"data":[{"devId":`+id+`,"devSn":"SN","modelCode":2}]}`)
+		case "/v1/device/property":
+			if got := r.URL.Query().Get("deviceId"); got != id {
+				t.Errorf("deviceId = %q, want %q", got, id)
+			}
+			ioJSON(w, `{"code":0,"data":{"properties":{"rb":67}}}`)
+		}
+	}))
+	defer h.Close()
+	c := &Cloud{BaseURL: h.URL, token: "token"}
+	devices, err := c.Devices(context.Background())
+	if err != nil || len(devices) != 1 {
+		t.Fatalf("devices=%v err=%v", devices, err)
+	}
+	if devices[0].ID != id {
+		t.Fatalf("device ID = %q", devices[0].ID)
+	}
+	props, err := c.Properties(context.Background(), devices[0].ID)
+	if err != nil || CloudTelemetry(props)["battery_percent"] != float64(67) {
+		t.Fatalf("props=%v err=%v", props, err)
+	}
+}

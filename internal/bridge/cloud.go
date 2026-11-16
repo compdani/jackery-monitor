@@ -132,7 +132,11 @@ func (c *Cloud) request(ctx context.Context, method, path string, q url.Values, 
 		return nil, fmt.Errorf("Jackery HTTP %d", resp.StatusCode)
 	}
 	var m map[string]any
-	if err = json.NewDecoder(io.LimitReader(resp.Body, 8<<20)).Decode(&m); err != nil {
+	// Cloud IDs exceed the exact integer range of float64. Preserve their
+	// decimal representation for subsequent device and MQTT requests.
+	decoder := json.NewDecoder(io.LimitReader(resp.Body, 8<<20))
+	decoder.UseNumber()
+	if err = decoder.Decode(&m); err != nil {
 		return nil, err
 	}
 	code := int(number(m["code"]))

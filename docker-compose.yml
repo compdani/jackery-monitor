@@ -17,6 +17,7 @@ services:
     network_mode: host
     environment:
       BACKEND: native
+      JACKERY_MQTT_INSECURE_TLS: "${JACKERY_MQTT_INSECURE_TLS:-false}"
       JACKERY_MQTT_CA_FILE: "${JACKERY_MQTT_CA_FILE:-}"
       JACKERY_CF_ACCESS_TEAM: "${JACKERY_CF_ACCESS_TEAM:-}"
       JACKERY_CF_ACCESS_AUD: "${JACKERY_CF_ACCESS_AUD:-}"

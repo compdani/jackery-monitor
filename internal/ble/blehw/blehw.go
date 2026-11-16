@@ -10,8 +10,8 @@
 //   - ATT handles are not exposed, so Characteristic.Handle is a stable
 //     1-based index in discovery order.
 //   - Connecting needs the Address object from a prior scan (on macOS the
-//     address is a CoreBluetooth UUID); Connect scans briefly when the
-//     address has not been seen yet.
+//     address is a CoreBluetooth UUID); Connect refreshes discovery before
+//     every connection to avoid stale BlueZ device state.
 package blehw
 
 import (
@@ -36,7 +36,7 @@ type Adapter struct {
 
 	mu   sync.Mutex
 	seen map[string]bluetooth.Address // upper-cased address string → address
-	// ConnectScan bounds the lookup scan when an address is unknown.
+	// ConnectScan bounds the fresh advertisement lookup before connecting.
 	ConnectScan time.Duration
 }
 
@@ -118,12 +118,9 @@ func (a *Adapter) Scan(ctx context.Context, onAdv func(ble.Advertisement)) error
 
 func (a *Adapter) lookup(ctx context.Context, address string) (bluetooth.Address, error) {
 	key := strings.ToUpper(address)
-	a.mu.Lock()
-	addr, ok := a.seen[key]
-	a.mu.Unlock()
-	if ok {
-		return addr, nil
-	}
+	// Refresh discovery before each connection, as Bleak does when passed a
+	// MAC address. A cached BlueZ device may no longer be connectable without
+	// a fresh advertisement (le-connection-abort-by-local).
 	sctx, cancel := context.WithTimeout(ctx, a.ConnectScan)
 	defer cancel()
 	found := make(chan struct{})
@@ -146,8 +143,13 @@ func (a *Adapter) lookup(ctx context.Context, address string) (bluetooth.Address
 	// (le-connection-abort-by-local), so wait for StopScan to finish.
 	<-scanDone
 	a.mu.Lock()
-	addr, ok = a.seen[key]
+	addr, ok := a.seen[key]
 	a.mu.Unlock()
+	select {
+	case <-found:
+	default:
+		return bluetooth.Address{}, fmt.Errorf("device %s not found while scanning", address)
+	}
 	if !ok {
 		return addr, fmt.Errorf("device %s not found while scanning", address)
 	}
@@ -179,7 +181,7 @@ func (a *Adapter) Connect(ctx context.Context, address string) (ble.Conn, error)
 	}
 	rc := make(chan res, 1)
 	go func() {
-		d, err := a.bt.Connect(addr, bluetooth.ConnectionParams{})
+		d, err := a.connect(ctx, addr)
 		rc <- res{d, err}
 	}()
 	var dev bluetooth.Device

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"github.com/compdani/jackery-monitor/internal/bridge"
 	"os"
+	"strconv"
 	"time"
 )
 
@@ -34,6 +35,9 @@ func (s *Server) UseNativeCloud() {
 		if err != nil {
 			return err
 		}
+		// Compatibility opt-in for Jackery's private broker CA, matching
+		// the legacy Python client. This applies only to MQTT.
+		config.InsecureSkipVerify, _ = strconv.ParseBool(os.Getenv("JACKERY_MQTT_INSECURE_TLS"))
 		c.TLSConfig = config
 		c.Broker = os.Getenv("JACKERY_MQTT_BROKER")
 		return nil
