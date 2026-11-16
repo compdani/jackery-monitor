@@ -283,16 +283,16 @@ func TestPlaceResolverPicksNearestRooftopWithinLimit(t *testing.T) {
 		t.Fatalf("got %+v %v", pl, err)
 	}
 
-	// Nothing within 25 m: refuse, naming the nearest.
-	reply = `{"status":"OK","results":[` + geoResult("far", "99 Far Rd", pin.Lat+40*m, pin.Lng, "ROOFTOP") + `]}`
+	// Nothing within 50 m: refuse, naming the nearest.
+	reply = `{"status":"OK","results":[` + geoResult("far", "99 Far Rd", pin.Lat+60*m, pin.Lng, "ROOFTOP") + `]}`
 	_, err = res().Resolve(context.Background(), pin)
 	var nm *NoMatchError
-	if !errors.As(err, &nm) || nm.Nearest == nil || nm.Nearest.ID != "far" || !strings.Contains(err.Error(), "99 Far Rd, 40 m") {
+	if !errors.As(err, &nm) || nm.Nearest == nil || nm.Nearest.ID != "far" || !strings.Contains(err.Error(), "99 Far Rd, 59.9 m away") {
 		t.Fatalf("far err %v", err)
 	}
 	// A wider limit accepts it.
 	wide := res()
-	wide.MaxDistanceM = 50
+	wide.MaxDistanceM = 80
 	if pl, err := wide.Resolve(context.Background(), pin); err != nil || pl.ID != "far" {
 		t.Fatalf("wide %+v %v", pl, err)
 	}

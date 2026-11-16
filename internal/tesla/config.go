@@ -76,7 +76,7 @@ type Config struct {
 	// that navigation_waypoints_request needs. Secret, like ClientSecret.
 	GoogleAPIKey string `json:"google_api_key,omitempty"`
 	// PlaceMaxDistanceM is how far a matched address may be from the stop's
-	// pin for places sends. Default 25 m.
+	// pin for places sends. Default 50 m.
 	PlaceMaxDistanceM float64 `json:"place_max_distance_m,omitempty"`
 
 	// ChargeEfficiency converts energy added to the battery into energy

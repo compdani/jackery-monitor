@@ -26,7 +26,7 @@ type Place struct {
 }
 
 // DefaultPlaceMaxDistanceM is how far a matched address may be from the pin.
-const DefaultPlaceMaxDistanceM = 25
+const DefaultPlaceMaxDistanceM = 50
 
 // PlaceResolver turns coordinates into Google place IDs, which is what the
 // car's multi-stop navigation_waypoints_request accepts.
@@ -58,7 +58,7 @@ type NoMatchError struct {
 func (e *NoMatchError) Error() string {
 	msg := fmt.Sprintf("no exact address within %.0f m of the pin", e.MaxDistanceM)
 	if e.Nearest != nil {
-		msg += fmt.Sprintf(" (nearest: %s, %.0f m away)", e.Nearest.Address, e.Nearest.DistanceM)
+		msg += fmt.Sprintf(" (nearest: %s, %.1f m away)", e.Nearest.Address, e.Nearest.DistanceM)
 	}
 	return msg + "; send this batch with GPS instead"
 }
