@@ -4,6 +4,7 @@
   import { live } from '$lib/stores/live.svelte';
   import { formatDeviceErrorCode, fmtSecsMMSS } from '$lib/format';
   import { saveCloudCredentials, forgetCloudCredentials, cloudAuthStatus } from '$lib/auth';
+  import { isSiseliDevice, viewingSiseli, viewingEcoflow } from '$lib/siseli';
 
   type DeviceParam = {
     key: string;
@@ -20,15 +21,32 @@
     raw_sn?: string;
     alias?: string;
     device_type?: string;
+    capacity_wh?: number | null;
+    siseli_device_sn?: string | null;
+    roles?: string[] | null;
   };
 
+  type EcoflowRole = 'solar' | 'battery' | 'output';
+  const EF_ROLES: EcoflowRole[] = ['solar', 'battery', 'output'];
+  const EF_TYPES = [
+    { value: 'DELTA_3_MAX_PLUS', label: 'Delta 3 Max Plus' },
+    { value: 'DELTA_3', label: 'Delta 3' },
+    { value: 'DELTA_3_1500', label: 'Delta 3 1500' },
+  ];
+
+  /** `/api/bms/saved` row: live values live under `reading` (no top-level `online`). */
   type BmsPack = {
     mac?: string;
     alias?: string;
     capacity_wh?: number | null;
-    online?: boolean;
-    soc_pct?: number | null;
+    siseli_device_sn?: string | null;
+    error?: string | null;
+    last_seen_ts?: number | null;
+    reading?: { soc_pct?: number | null; error?: string | null; ts?: number | null };
   };
+
+  /** A pack is online when its last good reading is recent (poller runs every ~15 s). */
+  const BMS_STALE_S = 120;
 
   let capacityWh = $state('');
   let capacityDefault = $state<number | null>(null);
@@ -57,6 +75,19 @@
   let ecoflowStatus = $state('—');
   let ecoflowMsg = $state('');
   let ecoflowDevices = $state.raw<EcoflowDevice[]>([]);
+  let ecoflowHost = $state('api.ecoflow.com');
+  let ecoflowHasCreds = $state(false);
+  let efSn = $state('');
+  let efType = $state('DELTA_3_MAX_PLUS');
+  let efAlias = $state('');
+  let efSiseli = $state('');
+  let efRoles = $state<Record<EcoflowRole, boolean>>({ solar: true, battery: true, output: true });
+  let efEditing = $state(false);
+  let efDeviceMsg = $state('');
+  let efAuto = $state(true);
+  let efStart = $state('');
+  let efEnd = $state('');
+  let efReconnectMsg = $state('');
 
   let f7Enabled = $state(false);
   let f7Cooldown = $state(30);
@@ -77,6 +108,14 @@
   let bmsScan = $state.raw<{ mac?: string; name?: string; likely_jbd?: boolean }[]>([]);
   let bmsMsg = $state('');
   let bmsBleOk = $state(true);
+  let bmsInverters = $state.raw<Record<string, { use_as_main?: boolean }>>({});
+  let bmsMac = $state('');
+  let bmsAlias = $state('');
+  let bmsCapacity = $state('');
+  let bmsSiseli = $state('');
+  let bmsEditing = $state(false);
+  let bmsFormMsg = $state('');
+  let prefsMsg = $state('');
 
   let lanRead = $state(false);
   let lanHybrid = $state(false);
@@ -98,6 +137,49 @@
       device?.device_sn ||
       '',
   );
+
+  // Jackery-only cards (F7, learned params, polling) hide for Siseli/EcoFlow,
+  // like the legacy `data-jackery-only` gating.
+  const isSiseli = $derived(viewingSiseli(live.status));
+  const isEcoflow = $derived(viewingEcoflow(live.status));
+  const isJackery = $derived(!isSiseli && !isEcoflow);
+  const siseliInverters = $derived(live.devices.filter((d) => isSiseliDevice(d)));
+  const activeSn = $derived(live.activeDeviceSn() || '');
+  const prefs = $derived(live.status?.device_prefs);
+  const useAsMain = $derived(bmsInverters[activeSn]?.use_as_main !== false);
+  const bmsPacksHere = $derived(
+    isSiseli ? bmsPacks.filter((p) => p.siseli_device_sn === activeSn) : bmsPacks,
+  );
+
+  function inverterName(sn?: string | null) {
+    if (!sn) return 'unassigned';
+    const d = live.devices.find((x) => x.device_sn === sn || x.device_id === sn);
+    return d?.name || sn;
+  }
+
+  function packSoc(p: BmsPack): number | null {
+    const v = p.reading?.soc_pct;
+    return typeof v === 'number' && Number.isFinite(v) ? v : null;
+  }
+
+  function packError(p: BmsPack): string {
+    return String(p.error || p.reading?.error || '');
+  }
+
+  function packOnline(p: BmsPack): boolean {
+    const ts = Number(p.reading?.ts ?? p.last_seen_ts ?? 0);
+    if (packSoc(p) == null || !ts) return false;
+    return Date.now() / 1000 - ts < BMS_STALE_S;
+  }
+
+  function packAge(p: BmsPack): string {
+    const ts = Number(p.reading?.ts ?? p.last_seen_ts ?? 0);
+    if (!ts) return 'never read';
+    const s = Math.max(0, Math.round(Date.now() / 1000 - ts));
+    if (s < 90) return `${s}s ago`;
+    if (s < 5400) return `${Math.round(s / 60)}m ago`;
+    return `${Math.round(s / 3600)}h ago`;
+  }
 
   const upsLabel = $derived.by(() => {
     const parts = [t?.ups_on && 'UPS', t?.super_charge_on && 'Super charge'].filter(Boolean);
@@ -175,19 +257,180 @@
     }
   }
 
+  type EcoflowStatus = {
+    has_credentials?: boolean;
+    email?: string | null;
+    api_host?: string | null;
+    state?: string;
+    error?: string | null;
+    last_poll_ts?: number | null;
+    mqtt_msg_count?: number;
+    mqtt_update_count?: number;
+    devices?: EcoflowDevice[];
+    reconnect?: { auto_reconnect?: boolean; reconnect_start?: string | null; reconnect_end?: string | null };
+  };
+
+  function ecoflowStatusText(j: EcoflowStatus) {
+    if (!j.has_credentials) return 'no credentials';
+    const email = j.email ? ` · ${j.email}` : '';
+    if (j.error) return `error: ${j.error}`;
+    if (j.state === 'connected') {
+      if (j.last_poll_ts) {
+        const age = Math.max(0, Math.round(Date.now() / 1000 - Number(j.last_poll_ts)));
+        return `connected · live ${age}s ago${email}`;
+      }
+      if ((j.mqtt_msg_count || 0) > 0 && !j.mqtt_update_count) {
+        return `connected · MQTT msgs but decode empty${email}`;
+      }
+      return `connected · waiting for telemetry${email}`;
+    }
+    if (j.state && j.state !== 'idle') return `${j.state}${email}`;
+    return `saved${email}`;
+  }
+
   async function loadEcoflow() {
     try {
-      const [creds, devices] = await Promise.all([
-        api<{ has_credentials?: boolean; email?: string }>('/ecoflow/credentials'),
-        api<{ devices?: EcoflowDevice[] }>('/ecoflow/devices').catch(() => ({ devices: [] })),
-      ]);
-      ecoflowStatus = creds.has_credentials
-        ? `saved${creds.email ? ` · ${creds.email}` : ''}`
-        : 'no credentials';
-      if (creds.email) ecoflowEmail = creds.email;
-      ecoflowDevices = devices.devices || [];
+      const j = await api<EcoflowStatus>('/ecoflow/credentials');
+      ecoflowHasCreds = !!j.has_credentials;
+      ecoflowStatus = ecoflowStatusText(j);
+      if (j.email) ecoflowEmail = j.email;
+      ecoflowHost = j.api_host || 'api.ecoflow.com';
+      ecoflowDevices = j.devices || [];
+      efAuto = j.reconnect?.auto_reconnect !== false;
+      efStart = j.reconnect?.reconnect_start || '';
+      efEnd = j.reconnect?.reconnect_end || '';
     } catch (err) {
       ecoflowStatus = err instanceof Error ? err.message : 'unavailable';
+    }
+  }
+
+  function resetEfForm() {
+    efSn = '';
+    efType = 'DELTA_3_MAX_PLUS';
+    efAlias = '';
+    efSiseli = isSiseli ? activeSn : '';
+    efRoles = { solar: true, battery: true, output: true };
+    efEditing = false;
+  }
+
+  function editEcoflowDevice(d: EcoflowDevice) {
+    efSn = d.raw_sn || String(d.sn || '').replace(/^ecoflow:/, '');
+    efType = d.device_type || 'DELTA_3_MAX_PLUS';
+    efAlias = d.alias || '';
+    efSiseli = d.siseli_device_sn || '';
+    const set = new Set((d.roles || []).map((r) => String(r).toLowerCase()));
+    const all = set.size === 0;
+    efRoles = {
+      solar: all || set.has('solar'),
+      battery: all || set.has('battery'),
+      output: all || set.has('output'),
+    };
+    efEditing = true;
+    efDeviceMsg = 'Editing — save to update.';
+  }
+
+  async function saveEcoflowDevice(e: SubmitEvent) {
+    e.preventDefault();
+    const raw = efSn.trim();
+    if (!raw) {
+      efDeviceMsg = 'Serial number is required.';
+      return;
+    }
+    const roles = EF_ROLES.filter((r) => efRoles[r]);
+    busy = true;
+    efDeviceMsg = 'Saving…';
+    try {
+      await apiPost('/ecoflow/devices', {
+        raw_sn: raw,
+        device_type: efType,
+        alias: efAlias.trim(),
+        siseli_device_sn: efSiseli,
+        roles: roles.length ? roles : EF_ROLES,
+      });
+      efDeviceMsg = efSiseli
+        ? `Saved · linked to ${inverterName(efSiseli)}.`
+        : 'Saved · not linked (shows as its own device).';
+      resetEfForm();
+      await loadEcoflow();
+      await live.refreshStatus();
+    } catch (err) {
+      efDeviceMsg = err instanceof Error ? err.message : 'Save failed';
+    } finally {
+      busy = false;
+    }
+  }
+
+  async function linkEcoflowHere(d: EcoflowDevice) {
+    if (!d.sn || !activeSn) return;
+    busy = true;
+    efDeviceMsg = 'Linking…';
+    try {
+      await apiPost(`/ecoflow/devices/${encodeURIComponent(d.sn)}/link`, {
+        siseli_device_sn: activeSn,
+        roles: d.roles?.length ? d.roles : EF_ROLES,
+      });
+      efDeviceMsg = `Linked to ${inverterName(activeSn)}.`;
+      await loadEcoflow();
+      await live.refreshStatus();
+    } catch (err) {
+      efDeviceMsg = err instanceof Error ? err.message : 'Link failed';
+    } finally {
+      busy = false;
+    }
+  }
+
+  async function removeEcoflowDevice(d: EcoflowDevice) {
+    if (!d.sn || !confirm(`Remove ${d.alias || d.sn}?`)) return;
+    busy = true;
+    try {
+      await api(`/ecoflow/devices/${encodeURIComponent(d.sn)}`, { method: 'DELETE' });
+      efDeviceMsg = 'Removed.';
+      await loadEcoflow();
+      await live.refreshStatus();
+    } catch (err) {
+      efDeviceMsg = err instanceof Error ? err.message : 'Remove failed';
+    } finally {
+      busy = false;
+    }
+  }
+
+  async function forgetEcoflow() {
+    if (!confirm('Forget EcoFlow credentials? Linked EcoFlow data stops updating.')) return;
+    busy = true;
+    try {
+      await api('/ecoflow/credentials', { method: 'DELETE' });
+      ecoflowPass = '';
+      ecoflowMsg = 'Credentials forgotten.';
+      await loadEcoflow();
+    } catch (err) {
+      ecoflowMsg = err instanceof Error ? err.message : 'Forget failed';
+    } finally {
+      busy = false;
+    }
+  }
+
+  async function saveEcoflowReconnect(e: SubmitEvent) {
+    e.preventDefault();
+    busy = true;
+    efReconnectMsg = 'Saving…';
+    try {
+      const j = await apiPost<{
+        auto_reconnect?: boolean;
+        reconnect_start?: string | null;
+        reconnect_end?: string | null;
+      }>('/ecoflow/reconnect_settings', {
+        auto_reconnect: efAuto,
+        reconnect_start: efStart.trim() || null,
+        reconnect_end: efEnd.trim() || null,
+      });
+      efAuto = j.auto_reconnect !== false;
+      efStart = j.reconnect_start || '';
+      efEnd = j.reconnect_end || '';
+      efReconnectMsg = 'Saved.';
+    } catch (err) {
+      efReconnectMsg = err instanceof Error ? err.message : 'Save failed';
+    } finally {
+      busy = false;
     }
   }
 
@@ -291,14 +534,120 @@
     try {
       const j = await api<{
         packs?: BmsPack[];
+        inverters?: Record<string, { use_as_main?: boolean }>;
         ble?: { available?: boolean; error?: string };
       }>('/bms/saved');
       bmsPacks = j.packs || [];
+      bmsInverters = j.inverters || {};
       bmsBleOk = j.ble?.available !== false;
       if (j.ble?.error) bmsMsg = j.ble.error;
     } catch (err) {
       bmsPacks = [];
       bmsMsg = err instanceof Error ? err.message : 'BMS load failed';
+    }
+  }
+
+  function resetBmsForm() {
+    bmsMac = '';
+    bmsAlias = '';
+    bmsCapacity = '';
+    bmsSiseli = isSiseli ? activeSn : '';
+    bmsEditing = false;
+  }
+
+  function editBms(p: BmsPack) {
+    bmsMac = p.mac || '';
+    bmsAlias = p.alias || '';
+    bmsCapacity = p.capacity_wh ? String(p.capacity_wh) : '';
+    bmsSiseli = p.siseli_device_sn || '';
+    bmsEditing = true;
+    bmsFormMsg = 'Editing — save to update.';
+  }
+
+  function pickScanned(d: { mac?: string; name?: string }) {
+    bmsMac = d.mac || '';
+    if (!bmsAlias && d.name && d.name !== d.mac) bmsAlias = d.name;
+    if (!bmsSiseli && isSiseli) bmsSiseli = activeSn;
+    bmsEditing = bmsPacks.some((p) => p.mac === d.mac);
+    bmsFormMsg = bmsEditing ? 'Already saved — editing.' : 'Fill in and save the pack.';
+  }
+
+  async function saveBms(e: SubmitEvent) {
+    e.preventDefault();
+    const mac = bmsMac.trim();
+    if (!mac) {
+      bmsFormMsg = 'MAC is required.';
+      return;
+    }
+    const cap = bmsCapacity.trim() === '' ? null : Number(bmsCapacity);
+    if (cap != null && (!Number.isInteger(cap) || cap <= 0)) {
+      bmsFormMsg = 'Capacity must be a whole number of Wh.';
+      return;
+    }
+    busy = true;
+    bmsFormMsg = 'Saving…';
+    try {
+      await apiPost('/bms/saved', {
+        mac,
+        alias: bmsAlias.trim(),
+        capacity_wh: cap,
+        siseli_device_sn: bmsSiseli,
+      });
+      bmsFormMsg = bmsSiseli
+        ? `Saved · assigned to ${inverterName(bmsSiseli)}.`
+        : 'Saved · unassigned (not used for any inverter SOC).';
+      resetBmsForm();
+      await loadBms();
+      await live.refreshStatus();
+    } catch (err) {
+      bmsFormMsg = err instanceof Error ? err.message : 'Save failed';
+    } finally {
+      busy = false;
+    }
+  }
+
+  async function deleteBms(p: BmsPack) {
+    if (!p.mac || !confirm(`Remove BMS ${p.alias || p.mac}?`)) return;
+    busy = true;
+    try {
+      await api(`/bms/saved/${encodeURIComponent(p.mac)}`, { method: 'DELETE' });
+      bmsFormMsg = 'Removed.';
+      if (bmsMac === p.mac) resetBmsForm();
+      await loadBms();
+      await live.refreshStatus();
+    } catch (err) {
+      bmsFormMsg = err instanceof Error ? err.message : 'Remove failed';
+    } finally {
+      busy = false;
+    }
+  }
+
+  async function setUseAsMain(on: boolean) {
+    if (!activeSn) return;
+    busy = true;
+    try {
+      await apiPost(`/bms/inverter/${encodeURIComponent(activeSn)}`, { use_as_main: on });
+      bmsInverters = { ...bmsInverters, [activeSn]: { ...bmsInverters[activeSn], use_as_main: on } };
+      await live.refreshStatus();
+    } catch (err) {
+      prefsMsg = err instanceof Error ? err.message : 'Save failed';
+    } finally {
+      busy = false;
+    }
+  }
+
+  async function savePref(key: 'ignore_inverter_soc' | 'calc_grid', on: boolean) {
+    const did = String(deviceId || '');
+    if (!did) return;
+    busy = true;
+    prefsMsg = '';
+    try {
+      await apiPost('/device_prefs', { device_id: did, [key]: on });
+      await live.refreshStatus();
+    } catch (err) {
+      prefsMsg = err instanceof Error ? err.message : 'Save failed';
+    } finally {
+      busy = false;
     }
   }
 
@@ -316,10 +665,16 @@
     ]);
   }
 
+  /** New-entry forms default their inverter picker to the JJN being viewed. */
+  function defaultLinkTargets() {
+    if (!efEditing) efSiseli = isSiseli ? activeSn : '';
+    if (!bmsEditing) bmsSiseli = isSiseli ? activeSn : '';
+  }
+
   onMount(() => {
-    void refreshDevicePanels();
+    void refreshDevicePanels().then(defaultLinkTargets);
     return live.onDeviceChange(() => {
-      void refreshDevicePanels();
+      void refreshDevicePanels().then(defaultLinkTargets);
     });
   });
 
@@ -457,6 +812,7 @@
       await apiPost('/ecoflow/credentials', {
         email: ecoflowEmail.trim(),
         password: ecoflowPass,
+        api_host: ecoflowHost,
       });
       ecoflowPass = '';
       ecoflowMsg = 'EcoFlow credentials saved.';
@@ -719,6 +1075,7 @@
     </form>
   </section>
 
+  {#if isJackery}
   <section class="card device-card">
     <div class="card-header">
       <h2>Polling</h2>
@@ -742,6 +1099,7 @@
       {/if}
     </div>
   </section>
+  {/if}
 
   <section class="card device-card">
     <div class="card-header">
@@ -872,9 +1230,14 @@
 
   <section class="card device-card">
     <div class="card-header">
-      <h2>EcoFlow account</h2>
+      <h2>EcoFlow</h2>
       <span class="hint">{ecoflowStatus}</span>
     </div>
+    <p class="hint" style="margin:6px 0 12px">
+      EcoFlow power stations linked to a Siseli inverter (JJN) become part of it: their solar,
+      battery and output fold into the inverter's Live view and they leave the fleet strip.
+      Unlinked devices show as their own card.
+    </p>
     <form onsubmit={saveEcoflow}>
       <div class="auto-form-grid">
         <label class="auto-field">
@@ -883,38 +1246,158 @@
         </label>
         <label class="auto-field">
           <span class="auto-label">Password</span>
-          <input type="password" bind:value={ecoflowPass} autocomplete="current-password" />
+          <input
+            type="password"
+            bind:value={ecoflowPass}
+            autocomplete="current-password"
+            placeholder={ecoflowHasCreds ? 'blank keeps saved' : 'required first time'}
+          />
+        </label>
+        <label class="auto-field">
+          <span class="auto-label">API host</span>
+          <select bind:value={ecoflowHost}>
+            <option value="api.ecoflow.com">Global / US (api.ecoflow.com)</option>
+            <option value="api-e.ecoflow.com">Europe (api-e.ecoflow.com)</option>
+          </select>
         </label>
       </div>
-      <button class="btn btn-primary" type="submit" style="margin-top:12px" disabled={busy}>
-        Save EcoFlow credentials
-      </button>
+      <div style="margin-top:12px; display:flex; gap:8px; flex-wrap:wrap">
+        <button class="btn btn-primary" type="submit" disabled={busy}>Save credentials</button>
+        {#if ecoflowHasCreds}
+          <button class="btn btn-ghost" type="button" disabled={busy} onclick={forgetEcoflow}>
+            Forget
+          </button>
+        {/if}
+      </div>
     </form>
     {#if ecoflowMsg}
       <p class="hint" style="margin-top:10px" role="status">{ecoflowMsg}</p>
     {/if}
+
+    <h3 style="margin:18px 0 8px; font-size:14px">Devices</h3>
     {#if ecoflowDevices.length}
-      <h3 style="margin:14px 0 8px; font-size:14px">Devices</h3>
       <ul class="device-params-list" style="list-style:none; padding:0; margin:0">
         {#each ecoflowDevices as d, i (d.sn || d.raw_sn || i)}
-          <li style="padding:6px 0; border-bottom:1px solid var(--border-soft)">
-            <strong>{d.alias || d.sn || d.raw_sn || '—'}</strong>
-            <span class="hint"> · {d.device_type || 'device'} · {d.sn || d.raw_sn || ''}</span>
+          <li
+            style="display:flex; gap:8px; align-items:center; justify-content:space-between; flex-wrap:wrap; padding:8px 0; border-bottom:1px solid var(--border-soft)"
+          >
+            <div style="flex:1; min-width:200px">
+              <strong>{d.alias || d.raw_sn || d.sn || '—'}</strong>
+              <span class="hint"> · {d.device_type || 'device'} · {d.raw_sn || d.sn}</span>
+              <div class="hint">
+                {#if d.siseli_device_sn}
+                  part of {inverterName(d.siseli_device_sn)} ·
+                  {(d.roles?.length ? d.roles : EF_ROLES).join(', ')}
+                {:else}
+                  not linked · shows as its own device
+                {/if}
+              </div>
+            </div>
+            <div style="display:flex; gap:6px; flex-wrap:wrap">
+              {#if isSiseli && d.siseli_device_sn !== activeSn}
+                <button class="btn btn-ghost btn-tiny" type="button" disabled={busy} onclick={() => linkEcoflowHere(d)}>
+                  Link to {inverterName(activeSn)}
+                </button>
+              {/if}
+              <button class="btn btn-ghost btn-tiny" type="button" disabled={busy} onclick={() => editEcoflowDevice(d)}>
+                Edit
+              </button>
+              <button class="btn btn-ghost btn-tiny" type="button" disabled={busy} onclick={() => removeEcoflowDevice(d)}>
+                Remove
+              </button>
+            </div>
           </li>
         {/each}
       </ul>
+    {:else}
+      <p class="hint">No EcoFlow devices yet.</p>
     {/if}
-    <button
-      class="btn btn-ghost"
-      type="button"
-      style="margin-top:10px"
-      disabled={busy}
-      onclick={loadEcoflow}
-    >
-      Refresh devices
-    </button>
+
+    <form onsubmit={saveEcoflowDevice} style="margin-top:14px">
+      <div class="auto-form-grid">
+        <label class="auto-field">
+          <span class="auto-label">Serial number</span>
+          <input type="text" bind:value={efSn} required placeholder="from EcoFlow app" autocomplete="off" readonly={efEditing} />
+        </label>
+        <label class="auto-field">
+          <span class="auto-label">Model</span>
+          <select bind:value={efType}>
+            {#each EF_TYPES as o (o.value)}
+              <option value={o.value}>{o.label}</option>
+            {/each}
+          </select>
+        </label>
+        <label class="auto-field">
+          <span class="auto-label">Alias</span>
+          <input type="text" bind:value={efAlias} placeholder="optional" />
+        </label>
+        <label class="auto-field">
+          <span class="auto-label">Part of inverter</span>
+          <select bind:value={efSiseli}>
+            <option value="">— none (own device) —</option>
+            {#each siseliInverters as inv (inv.device_id)}
+              <option value={inv.device_sn || inv.device_id}>{inv.name || inv.device_sn || inv.device_id}</option>
+            {/each}
+          </select>
+        </label>
+        <div class="auto-field" style="grid-column:1/-1">
+          <span class="auto-label">Roles when linked</span>
+          <span style="display:flex; gap:14px; flex-wrap:wrap">
+            {#each EF_ROLES as r (r)}
+              <label><input type="checkbox" bind:checked={efRoles[r]} disabled={!efSiseli} /> {r}</label>
+            {/each}
+          </span>
+        </div>
+      </div>
+      <div style="margin-top:12px; display:flex; gap:8px; flex-wrap:wrap">
+        <button class="btn btn-primary" type="submit" disabled={busy}>
+          {efEditing ? 'Update device' : 'Add device'}
+        </button>
+        {#if efEditing}
+          <button class="btn btn-ghost" type="button" disabled={busy} onclick={() => { resetEfForm(); efDeviceMsg = ''; }}>
+            Cancel
+          </button>
+        {/if}
+      </div>
+    </form>
+    {#if efDeviceMsg}
+      <p class="hint" style="margin-top:10px" role="status">{efDeviceMsg}</p>
+    {/if}
+
+    <h3 style="margin:18px 0 8px; font-size:14px">Auto-reconnect</h3>
+    <p class="hint" style="margin:0 0 10px">
+      Restart the MQTT session when it stays connected but silent. Leave both times blank to allow
+      any hour.
+    </p>
+    <form onsubmit={saveEcoflowReconnect}>
+      <div class="settings-row">
+        <label class="settings-label" for="ef-auto">
+          <span class="settings-label-text">Enable auto-reconnect</span>
+        </label>
+        <div class="settings-control">
+          <input id="ef-auto" type="checkbox" bind:checked={efAuto} />
+        </div>
+      </div>
+      <div class="auto-form-grid">
+        <label class="auto-field">
+          <span class="auto-label">Window start</span>
+          <input type="time" bind:value={efStart} />
+        </label>
+        <label class="auto-field">
+          <span class="auto-label">Window end</span>
+          <input type="time" bind:value={efEnd} />
+        </label>
+      </div>
+      <button class="btn btn-primary" type="submit" style="margin-top:12px" disabled={busy}>
+        Save reconnect settings
+      </button>
+    </form>
+    {#if efReconnectMsg}
+      <p class="hint" style="margin-top:10px" role="status">{efReconnectMsg}</p>
+    {/if}
   </section>
 
+  {#if isJackery}
   <section class="card device-card">
     <div class="card-header">
       <h2>F7 AC reset</h2>
@@ -956,6 +1439,7 @@
       <p class="hint" style="margin-top:10px" role="status">{f7Msg}</p>
     {/if}
   </section>
+  {/if}
 
   {#if watchdogApplicable}
     <section class="card device-card">
@@ -987,6 +1471,7 @@
     </section>
   {/if}
 
+  {#if isJackery}
   <section class="card device-card">
     <div class="card-header">
       <h2>Learned parameters</h2>
@@ -1058,46 +1543,162 @@
     {/if}
   </section>
 
+  {/if}
+
   <section class="card device-card">
     <div class="card-header">
-      <h2>BMS packs</h2>
-      <span class="hint">{bmsBleOk ? `${bmsPacks.length} saved` : 'BLE unavailable'}</span>
+      <h2>Bluetooth BMS</h2>
+      <span class="hint">
+        {bmsBleOk ? `${bmsPacks.length} saved` : 'BLE unavailable'}
+      </span>
     </div>
+    <p class="hint" style="margin:6px 0 12px">
+      JBD / Overkill packs assigned to a Siseli inverter replace its voltage-based SOC on Live,
+      capacity-weighted across packs. Unassigned packs are polled but not used.
+    </p>
+
+    {#if isSiseli}
+      <div class="settings-row">
+        <label class="settings-label" for="bms-main">
+          <span class="settings-label-text">Use packs as main battery display</span>
+        </label>
+        <div class="settings-control">
+          <input id="bms-main" type="checkbox" checked={useAsMain} disabled={busy}
+            onchange={(e) => setUseAsMain(e.currentTarget.checked)} />
+        </div>
+      </div>
+      <div class="settings-row">
+        <label class="settings-label" for="bms-ignore-soc">
+          <span class="settings-label-text">Ignore inverter SOC</span>
+          <span class="hint">Use pack SOC only; the inverter's reading is hidden and not stored.</span>
+        </label>
+        <div class="settings-control">
+          <input id="bms-ignore-soc" type="checkbox" checked={!!prefs?.ignore_inverter_soc} disabled={busy}
+            onchange={(e) => savePref('ignore_inverter_soc', e.currentTarget.checked)} />
+        </div>
+      </div>
+      <div class="settings-row">
+        <label class="settings-label" for="bms-calc-grid">
+          <span class="settings-label-text">Calculate grid</span>
+          <span class="hint">Estimate grid watts when solar + battery fall short of load (display only).</span>
+        </label>
+        <div class="settings-control">
+          <input id="bms-calc-grid" type="checkbox" checked={!!prefs?.calc_grid} disabled={busy}
+            onchange={(e) => savePref('calc_grid', e.currentTarget.checked)} />
+        </div>
+      </div>
+      {#if prefsMsg}<p class="hint" role="status">{prefsMsg}</p>{/if}
+    {/if}
+
     {#if bmsMsg}
       <p class="hint" role="status">{bmsMsg}</p>
     {/if}
     {#if bmsPacks.length}
       <ul class="device-params-list" style="list-style:none; padding:0; margin:0">
         {#each bmsPacks as p (p.mac)}
-          <li style="padding:6px 0; border-bottom:1px solid var(--border-soft)">
-            <strong>{p.alias || p.mac || '—'}</strong>
-            <span class="hint">
-              · {p.mac}
-              {#if p.soc_pct != null} · {Math.round(p.soc_pct)}%{/if}
-              {#if p.capacity_wh != null} · {p.capacity_wh} Wh{/if}
-              · {p.online ? 'online' : 'offline'}
-            </span>
+          {@const soc = packSoc(p)}
+          {@const err = packError(p)}
+          {@const online = packOnline(p)}
+          <li
+            style="display:flex; gap:8px; align-items:center; justify-content:space-between; flex-wrap:wrap; padding:8px 0; border-bottom:1px solid var(--border-soft)"
+          >
+            <div style="flex:1; min-width:200px">
+              <strong>{p.alias || p.mac || '—'}</strong>
+              <span class="hint">
+                · {p.mac}
+                {#if soc != null} · {Math.round(soc)}%{/if}
+                · {p.capacity_wh ? `${p.capacity_wh} Wh` : 'capacity unset'}
+                · <span style="color:{online ? 'var(--ok, #2f9e44)' : 'var(--warn, #c92a2a)'}">{online ? 'online' : 'offline'}</span>
+                ({packAge(p)})
+              </span>
+              <div class="hint">→ {inverterName(p.siseli_device_sn)}</div>
+              {#if err}
+                <div class="hint" style="color:var(--warn, #c92a2a)" title={err}>⚠ {err.slice(0, 140)}</div>
+              {/if}
+            </div>
+            <div style="display:flex; gap:6px; flex-wrap:wrap">
+              <button class="btn btn-ghost btn-tiny" type="button" disabled={busy} onclick={() => editBms(p)}>
+                Edit
+              </button>
+              <button class="btn btn-ghost btn-tiny" type="button" disabled={busy} onclick={() => deleteBms(p)}>
+                Remove
+              </button>
+            </div>
           </li>
         {/each}
       </ul>
+      {#if isSiseli && !bmsPacksHere.length}
+        <p class="hint" style="margin-top:8px">
+          No pack is assigned to {inverterName(activeSn)} yet — Edit a pack and pick it under
+          “Inverter”.
+        </p>
+      {/if}
     {:else}
-      <p class="hint">No saved BMS packs.</p>
+      <p class="hint">No saved BMS packs. Scan or enter a MAC.</p>
     {/if}
-    <div style="margin-top:10px; display:flex; gap:8px; flex-wrap:wrap">
+
+    <form onsubmit={saveBms} style="margin-top:14px">
+      <div class="auto-form-grid">
+        <label class="auto-field">
+          <span class="auto-label">MAC</span>
+          <input type="text" bind:value={bmsMac} placeholder="AA:BB:CC:DD:EE:FF" autocomplete="off" required readonly={bmsEditing} />
+        </label>
+        <label class="auto-field">
+          <span class="auto-label">Alias</span>
+          <input type="text" bind:value={bmsAlias} placeholder="Pack 1" />
+        </label>
+        <label class="auto-field">
+          <span class="auto-label">Capacity (Wh)</span>
+          <input type="number" min="1" step="1" bind:value={bmsCapacity} placeholder="blank = infer" />
+        </label>
+        <label class="auto-field">
+          <span class="auto-label">Inverter</span>
+          <select bind:value={bmsSiseli}>
+            <option value="">— unassigned —</option>
+            {#each siseliInverters as inv (inv.device_id)}
+              <option value={inv.device_sn || inv.device_id}>{inv.name || inv.device_sn || inv.device_id}</option>
+            {/each}
+          </select>
+        </label>
+      </div>
+      <div style="margin-top:12px; display:flex; gap:8px; flex-wrap:wrap">
+        <button class="btn btn-primary" type="submit" disabled={busy}>
+          {bmsEditing ? 'Update pack' : 'Save pack'}
+        </button>
+        {#if bmsEditing}
+          <button class="btn btn-ghost" type="button" disabled={busy} onclick={() => { resetBmsForm(); bmsFormMsg = ''; }}>
+            Cancel
+          </button>
+        {/if}
+      </div>
+    </form>
+    {#if bmsFormMsg}
+      <p class="hint" style="margin-top:10px" role="status">{bmsFormMsg}</p>
+    {/if}
+
+    <div style="margin-top:12px; display:flex; gap:8px; flex-wrap:wrap; align-items:center">
       <button class="btn btn-ghost" type="button" disabled={busy} onclick={scanBms}>
-        Scan BLE
+        {busy && bmsMsg === 'Scanning…' ? 'Scanning…' : 'Scan BLE'}
       </button>
       <button class="btn btn-ghost" type="button" disabled={busy} onclick={loadBms}>
-        Refresh saved
+        Refresh
       </button>
+      <span class="hint">Scan takes ~8 s.</span>
     </div>
     {#if bmsScan.length}
       <h3 style="margin:14px 0 8px; font-size:14px">Scan results</h3>
       <ul style="list-style:none; padding:0; margin:0">
         {#each bmsScan as d, i (`${d.mac ?? i}`)}
-          <li style="padding:4px 0" class="hint">
-            {d.name || 'unknown'} · {d.mac || '—'}
-            {#if d.likely_jbd} · likely JBD{/if}
+          {@const saved = bmsPacks.some((p) => p.mac === d.mac)}
+          <li style="display:flex; gap:8px; align-items:center; justify-content:space-between; padding:4px 0">
+            <span class="hint">
+              {d.name || 'unknown'} · {d.mac || '—'}
+              {#if d.likely_jbd} · likely JBD{/if}
+              {#if saved} · saved{/if}
+            </span>
+            <button class="btn btn-ghost btn-tiny" type="button" disabled={busy || !d.mac} onclick={() => pickScanned(d)}>
+              {saved ? 'Edit' : 'Use'}
+            </button>
           </li>
         {/each}
       </ul>
