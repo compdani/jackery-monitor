@@ -62,6 +62,7 @@ type Energy struct {
 	TS                         int64
 	OutputWH, SolarWH, InputWH float64
 	ACInputWH                  *float64
+	UTCOffsetSeconds           *int
 }
 
 func Savings(rows []Energy, p CostPlan, offset int) map[string]any {
@@ -71,7 +72,11 @@ func Savings(rows []Energy, p CostPlan, offset int) map[string]any {
 		if r.ACInputWH != nil {
 			g = math.Max(0, *r.ACInputWH)
 		}
-		rate := p.RateAt(r.TS, offset)
+		rowOffset := offset
+		if r.UTCOffsetSeconds != nil {
+			rowOffset = *r.UTCOffsetSeconds
+		}
+		rate := p.RateAt(r.TS, rowOffset)
 		saved += r.OutputWH / 1000 * rate
 		cost += g / 1000 * rate
 		output += r.OutputWH / 1000

@@ -213,3 +213,24 @@ func TestDailyProductionIntervals(t *testing.T) {
 		t.Fatal(stamp)
 	}
 }
+
+func TestPortalPreservesLargeNumericDeviceID(t *testing.T) {
+	c := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+		reply(w, `{"code":0,"data":{"id":525039200608948225,"name":"Controller"}}`)
+	}, Credentials{AccessToken: "tok"})
+	v, err := c.request(context.Background(), "GET", "/fixture", nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := NormalizeDevice(object(v["data"]))
+	if d["device_id"] != "siseli:525039200608948225" {
+		t.Fatal(d)
+	}
+}
+
+func TestEmptyTelemetryIsNotSuccessfulObservation(t *testing.T) {
+	c := testClient(t, func(w http.ResponseWriter, r *http.Request) { reply(w, `{"code":0,"data":{}}`) }, Credentials{AccessToken: "tok"})
+	if _, err := c.FetchLatestData(context.Background(), "99"); err == nil {
+		t.Fatal("empty response accepted")
+	}
+}

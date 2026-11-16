@@ -5362,6 +5362,7 @@ async function selectViewDevice(device_id) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ device_id }),
     });
+    scheduleRealtimeRefresh('reconnect');
   } catch (err) {
     _pendingViewSwitch = null;  // switch didn't happen — stop dropping frames
     setDeviceSwitching(false);
@@ -5547,39 +5548,44 @@ $('brand-home')?.addEventListener('click', (e) => {
 // ============================================================
 // WEBSOCKET
 // ============================================================
-function connectWs() {
-  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-  const ws = new WebSocket(`${proto}//${location.host}/ws`);
-  ws.onmessage = (ev) => {
-    let msg;
-    try { msg = JSON.parse(ev.data); } catch { return; }
-    if (msg.type === 'snapshot' || msg.type === 'telemetry' || msg.type === 'status') {
-      applyStatus(msg.data);
-    } else if (msg.type === 'alert') {
-      const b = $('alert-banner');
-      b.textContent = msg.data?.message || 'Alert';
-      show(b, true);
-      setTimeout(() => show(b, false), 8000);
-    } else if (msg.type === 'kasa_updated') {
-      // Server-side reconciler / probe just changed a Kasa device's
-      // user-visible state (online/is_on/error). Re-fetch the cached
-      // list so the row flips immediately, no waiting for the 60s poll.
-      _onKasaUpdatedPush();
-      // Also refresh the Automation tab dot — its only other refresh
-      // is a 3-min poll, so a Kasa device coming back online (or going
-      // offline) used to leave the dot stale until the next tick. That
-      // produced "lit dot, nothing to act on" when the user clicked in.
-      refreshAutomationDot();
-    } else if (msg.type === 'automation_fired') {
-      // A rule just edge-triggered. Patch our local cache so last_fired
-      // updates without re-fetching, and re-render if the user is on
-      // the Automation tab.
-      _onAutomationFiredPush(msg.data);
+let monitorRealtime;
+let realtimeRefreshRunning = false;
+let realtimeRefreshPending = false;
+let realtimeRefreshTimer;
+async function refreshRealtimeSnapshot(kind) {
+  if (realtimeRefreshRunning) { realtimeRefreshPending = true; return; }
+  realtimeRefreshRunning = true;
+  try {
+    const view = _pendingViewSwitch?.id || lastStatus?.cloud?.selected_device_id;
+    const r = await fetch('/api/status' + (view ? '?view_device_id=' + encodeURIComponent(view) : ''), { cache: 'no-store' });
+    if (r.ok) applyStatus(await r.json());
+    if (kind === 'energy' || kind === 'reconnect') {
+      energyDailyCache = null;
+      if (activeTab === 'energy') { fetchEnergyHistory(); fetchEnergyDaily(); fetchEnergyAllDevices(); }
     }
-  };
-  ws.onclose = () => setTimeout(connectWs, 2000);
-  ws.onerror = () => { try { ws.close(); } catch {} };
+  } catch {} finally {
+    realtimeRefreshRunning = false;
+    if (realtimeRefreshPending) { realtimeRefreshPending = false; scheduleRealtimeRefresh('energy'); }
+  }
 }
+function scheduleRealtimeRefresh(kind) {
+  if (realtimeRefreshTimer) { realtimeRefreshPending = true; return; }
+  realtimeRefreshTimer = setTimeout(() => { realtimeRefreshTimer = null; refreshRealtimeSnapshot(kind); }, 75);
+}
+async function connectRealtime() {
+  const { connectMonitorRealtime } = await import('/realtime.js');
+  monitorRealtime?.stop();
+  monitorRealtime = connectMonitorRealtime({
+    getDeviceSn: () => activeJackeryDevice()?.device_sn,
+    onRefresh: scheduleRealtimeRefresh,
+    onEvent: event => {
+      if (event.kind === 'automation_fired') _onAutomationFiredPush(event);
+      if (event.kind === 'kasa_updated') { _onKasaUpdatedPush(); refreshAutomationDot(); }
+      if (event.kind === 'alert') { const banner = $('alert-banner'); if (banner) { banner.textContent = String(event.message || 'Alert'); show(banner, true); setTimeout(() => show(banner, false), 8000); } }
+    },
+  });
+}
+window.addEventListener('pagehide', () => monitorRealtime?.stop());
 
 // Push handlers — keep the polling fallbacks in place but free-ride
 // on WS broadcasts when they arrive so the common case is real-time.
@@ -5670,6 +5676,7 @@ function applyStatus(s) {
   // If the active Jackery device changed and we're on the Automation tab,
   // re-render the rules list so the "Showing rules for: X" filter follows.
   const newDeviceSn = activeJackeryDevice()?.device_sn;
+  if (prevDeviceSn !== newDeviceSn) monitorRealtime?.reconnect();
   if (activeTab === 'automation' && prevDeviceSn !== newDeviceSn) {
     if (_allRules.length) renderRulesWithFilter();
     // Smart-charge config + AI insights are per-device — reload both.
@@ -10598,7 +10605,7 @@ function initHeroSortable() {
 
   const ok = await checkAuth();
   // Always start the WS — server returns whatever it has, even if cloud is logging in
-  connectWs();
+  connectRealtime();
   initHeroSortable();
 
   // Pre-load history so the Live chart and Energy tab have data immediately
@@ -10621,15 +10628,13 @@ function initHeroSortable() {
   if (ok) fetchBatteryPacks();
   setInterval(fetchBatteryPacks, 30_000);
 
-  // Poll /api/status every 2s as a safety net in case the WebSocket lags
-  // or drops a frame. The WS still pushes telemetry as it arrives — this
-  // just guarantees the UI is never more than 2 seconds stale.
+  // Reconcile every 30s if an SSE notification was missed while offline.
   setInterval(async () => {
     try {
       const r = await fetch('/api/status', { cache: 'no-store' });
       if (r.ok) applyStatus(await r.json());
     } catch {}
-  }, 2000);
+  }, 30000);
 
   // Refresh energy history at a slower cadence — it's a heavier query and
   // doesn't change every tick. Picks up new samples for the chart.

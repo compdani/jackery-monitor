@@ -60,6 +60,7 @@ func main() {
 		go s.SolarChargeLoop(ctx)
 		go s.ForecastRecorderLoop(ctx)
 		go s.KasaReconcileLoop(ctx)
+		go s.EnergyLoop(ctx)
 		go s.SiseliLoop(ctx)
 		go s.EcoFlowLoop(ctx)
 		go s.BMSLoop(ctx)

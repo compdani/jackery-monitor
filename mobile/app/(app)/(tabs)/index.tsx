@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ActivityIndicator, Alert, Animated, Pressable, Text, View } from "react-native";
 import { endpoints } from "../../../src/api/client";
-import { reconnectLive } from "../../../src/api/ws";
+import { reconnectLive } from "../../../src/api/realtime";
 import type { LinkedEcoflow } from "../../../src/api/types";
 import { LineChart } from "../../../src/components/LineChart";
 import { PowerFlow } from "../../../src/components/PowerFlow";

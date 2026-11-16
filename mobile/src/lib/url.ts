@@ -15,17 +15,3 @@ export function normalizeBaseUrl(raw: string): string {
   if (!parsed.hostname) throw new Error("URL is missing a host");
   return `${parsed.protocol}//${parsed.host}`;
 }
-
-export function wsUrl(
-  base: string,
-  token?: string | null,
-  viewDeviceId?: string | null,
-): string {
-  const u = new URL(base);
-  u.protocol = u.protocol === "https:" ? "wss:" : "ws:";
-  u.pathname = "/ws";
-  u.search = "";
-  if (token) u.searchParams.set("token", token);
-  if (viewDeviceId) u.searchParams.set("view_device_id", viewDeviceId);
-  return u.toString();
-}

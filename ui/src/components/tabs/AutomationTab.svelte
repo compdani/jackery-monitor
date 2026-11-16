@@ -262,7 +262,9 @@
 
   onMount(() => {
     void refreshAll();
-    return live.onDeviceChange(() => {
+    const onKasa = () => void loadKasa();
+    window.addEventListener('monitor-kasa-updated', onKasa);
+    const offDevice = live.onDeviceChange(() => {
       scConflictsDismissed = false;
       void loadSmart();
       void loadSolar();
@@ -270,6 +272,7 @@
       void loadInsights();
       if (!ruleSn) ruleSn = live.activeDeviceSn() || '';
     });
+    return () => { offDevice(); window.removeEventListener('monitor-kasa-updated', onKasa); };
   });
 
   async function saveSmart(e: SubmitEvent) {

@@ -18,6 +18,10 @@ class LiveStore {
   pendingToggles = $state<Record<string, PendingToggle>>({});
   automationDot = $state(false);
 
+  #energyListeners = new Set<() => void>();
+  onEnergyChange(fn: () => void) { this.#energyListeners.add(fn); return () => this.#energyListeners.delete(fn); }
+  notifyEnergyChange() { for (const fn of this.#energyListeners) fn(); }
+
   #pendingViewSwitch: { id: string; until: number } | null = null;
   #alertTimer: ReturnType<typeof setTimeout> | undefined;
   #deviceChangeListeners = new Set<(prevSn: string | undefined, nextSn: string | undefined) => void>();

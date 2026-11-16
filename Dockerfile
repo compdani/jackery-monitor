@@ -7,6 +7,7 @@ WORKDIR /ui
 COPY ui/package.json ui/package-lock.json ./
 RUN npm ci
 COPY ui/ ./
+COPY web/realtime.js web/realtime.d.ts /web/
 RUN npm run build
 
 # ---------- Stage 2: Python runtime ----------

@@ -18,13 +18,21 @@ func (s *Server) energy(w http.ResponseWriter, r *http.Request) bool {
 		devices := []any{}
 		for _, row := range rows {
 			if d, ok := row["device"].(map[string]any); ok {
-				devices = append(devices, s.deviceAlias(d))
+				device := s.deviceAlias(d)
+				if r.URL.Path == "/api/energy/devices" {
+					if totals := s.statusEnergy(str(d, "device_sn")); totals != nil {
+						for k, v := range totals {
+							if k != "device_sn" {
+								device[k] = v
+							}
+						}
+					}
+				}
+				devices = append(devices, device)
 			}
 		}
 		var selected any
-		if cloud, ok := s.status(r)["cloud"].(map[string]any); ok {
-			selected = cloud["selected_device_id"]
-		}
+		selected = s.selectedSerial(r)
 		jsonOut(w, 200, map[string]any{"devices": devices, "selected_device_id": selected})
 		return true
 	case "/api/energy/history", "/api/energy/totals", "/api/energy/daily":

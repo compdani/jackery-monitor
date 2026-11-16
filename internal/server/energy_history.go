@@ -1,8 +1,7 @@
 package server
 
 import (
-	"encoding/json"
-	"github.com/compdani/jackery-monitor/internal/automation"
+	"errors"
 	"github.com/compdani/jackery-monitor/internal/forecast"
 	"github.com/compdani/jackery-monitor/internal/store"
 	"math"
@@ -17,20 +16,32 @@ func (s *Server) energySerial(r *http.Request, b map[string]any) string {
 		sn = str(b, "device_sn")
 	}
 	if sn == "" {
-		d, _ := s.status(r)["device"].(map[string]any)
-		sn = str(d, "device_sn")
+		sn = s.selectedSerial(r)
 	}
 	return sn
 }
-func (s *Server) energyOffset() int {
-	loc, err := s.Store.Secret(s.Key, "location")
-	if err != nil {
-		return 0
+func (s *Server) energyLocation() *time.Location {
+	loc, _, _ := s.savedLocation()
+	zone := str(loc, "timezone")
+	if zone == "" {
+		if v, ok := loc["utc_offset_seconds"].(float64); ok {
+			return time.FixedZone("configured", int(v))
+		}
+		if creds, err := s.siseliCreds(); err == nil && creds != nil {
+			zone = creds.TimeZone
+		}
 	}
-	v, _ := loc["utc_offset_seconds"].(float64)
-	return int(v)
+	if tz, err := time.LoadLocation(zone); err == nil && zone != "" {
+		return tz
+	}
+	return time.UTC
 }
-func (s *Server) energyRead(w http.ResponseWriter, r *http.Request) bool {
+func (s *Server) energyOffset() int {
+	_, offset := time.Now().In(s.energyLocation()).Zone()
+	return offset
+}
+
+func (s *Server) energyReadNow(w http.ResponseWriter, r *http.Request) bool {
 	sn := s.energySerial(r, nil)
 	path := r.URL.Path
 	offset := s.energyOffset()
@@ -67,40 +78,15 @@ func (s *Server) energyRead(w http.ResponseWriter, r *http.Request) bool {
 		}
 		since = now - float64(max(1, min(365, days)))*86400
 	}
-	minutes, err := s.Store.EnergyMinutes(sn, since)
-	if err != nil {
-		storageError(w, err)
-		return true
-	}
 	if path == "/api/energy/totals" {
-		out := store.EnergyTotals(minutes, now, offset)
-		out["device_sn"] = sn
-		var plan automation.CostPlan
-		v, err := s.Store.Get("settings", "cost_plan")
-		if isMissing(err) {
-			v = map[string]any{"type": "flat", "rate_per_kwh": .30, "currency": "USD"}
+		out, err := s.energyTotals(sn, now, offset)
+		if errors.Is(err, store.ErrEnergyBuilding) {
+			jsonOut(w, 202, map[string]any{"building": true, "device_sn": sn})
+		} else if err != nil {
+			storageError(w, err)
+		} else {
+			jsonOut(w, 200, out)
 		}
-		if err == nil || isMissing(err) {
-			data, _ := json.Marshal(v)
-			json.Unmarshal(data, &plan)
-			for _, window := range []string{"lifetime", "today", "last_7d", "last_30d"} {
-				totals := out[window].(map[string]any)
-				since, _ := totals["since_ts"].(float64)
-				rows := []automation.Energy{}
-				for _, m := range minutes {
-					ts, _ := m["ts"].(float64)
-					if ts < since {
-						continue
-					}
-					n := func(k string) float64 { v, _ := m[k].(float64); return v }
-					ac := n("ac_input_wh")
-					rows = append(rows, automation.Energy{TS: int64(ts), InputWH: n("input_wh"), OutputWH: n("output_wh"), SolarWH: n("solar_wh"), ACInputWH: &ac})
-				}
-				totals["savings"] = automation.Savings(rows, plan, offset)
-				out[window+"_savings"] = totals["savings"]
-			}
-		}
-		jsonOut(w, 200, out)
 		return true
 	}
 	if path == "/api/energy/daily" {
@@ -109,16 +95,22 @@ func (s *Server) energyRead(w http.ResponseWriter, r *http.Request) bool {
 			days = 90
 		}
 		days = max(1, min(365, days))
-		filtered := []map[string]any{}
-		for _, m := range minutes {
-			ts, _ := m["ts"].(float64)
-			if ts >= now-float64(days)*86400 {
-				filtered = append(filtered, m)
-			}
+		daily, err := s.Store.EnergyDailyAtLocation(sn, since, s.energyLocation())
+		if errors.Is(err, store.ErrEnergyBuilding) {
+			jsonOut(w, 202, map[string]any{"building": true, "device_sn": sn})
+		} else if err != nil {
+			storageError(w, err)
+		} else {
+			jsonOut(w, 200, map[string]any{"device_sn": sn, "days": days, "tz_offset_s": offset, "daily": daily})
 		}
-		jsonOut(w, 200, map[string]any{"device_sn": sn, "days": days, "tz_offset_s": offset, "daily": store.EnergyDaily(filtered, offset)})
 		return true
 	}
+	minutes, err := s.Store.EnergyMinutes(sn, since)
+	if err != nil {
+		storageError(w, err)
+		return true
+	}
+
 	hours, _ := strconv.Atoi(r.URL.Query().Get("hours"))
 	if hours == 0 {
 		hours = 24
@@ -161,6 +153,7 @@ func (s *Server) energyMutation(w http.ResponseWriter, r *http.Request, b map[st
 			out["ok"] = true
 			out["device_sn"] = sn
 			out["live_points_patched"] = 0
+			s.energyReads.invalidate()
 			jsonOut(w, 200, out)
 		}
 		return true

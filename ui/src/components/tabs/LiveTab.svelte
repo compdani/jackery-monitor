@@ -52,11 +52,12 @@
   });
 
   const t = $derived(live.status?.telemetry ?? null);
-  const today = $derived(live.status?.energy?.today);
+  const energy = $derived(live.status?.energy);
+  const today = $derived(energy?.today);
   const savings = $derived(
     savingsLines(
-      live.status?.energy?.today_savings as Parameters<typeof savingsLines>[0],
-      live.status?.energy?.cost_plan?.currency || 'USD',
+      energy?.today_savings as Parameters<typeof savingsLines>[0],
+      energy?.cost_plan?.currency || 'USD',
     ),
   );
   const history = $derived(

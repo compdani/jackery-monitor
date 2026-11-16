@@ -5,6 +5,8 @@ type Alert = { level?: string; message: string; at: number };
 
 type LiveState = {
   status: StatusPayload | null;
+  energyRevision: number;
+  energyChanged: () => void;
   connected: boolean;
   lastError: string | null;
   alerts: Alert[];
@@ -19,6 +21,8 @@ type LiveState = {
 
 export const useLive = create<LiveState>((set) => ({
   status: null,
+  energyRevision: 0,
+  energyChanged: () => set(state => ({ energyRevision: state.energyRevision + 1 })),
   connected: false,
   lastError: null,
   alerts: [],

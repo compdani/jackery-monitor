@@ -19,6 +19,7 @@ import (
 // packet capture is retired on the Pi).
 type siseliRuntime struct {
 	mu        sync.Mutex
+	revisions map[string]uint64
 	state     string
 	err       any
 	devices   []map[string]any
@@ -187,15 +188,51 @@ func (s *Server) siseliPollOnce(ctx context.Context) error {
 	rt.mu.Lock()
 	rt.devices = devices
 	previous := rt.telemetry
+	revisions := map[string]uint64{}
+	for sn, v := range rt.revisions {
+		revisions[sn] = v
+	}
 	rt.mu.Unlock()
 	ts := float64(time.Now().UnixNano()) / 1e9
 	telemetry := map[string]map[string]any{}
 	settings, rawSettings := map[string][]siseli.Values{}, map[string]siseli.Values{}
 	for _, d := range devices {
 		pid, sn := str(d, "portal_device_id"), str(d, "device_sn")
+		liveCtx, cancelLive := context.WithTimeout(ctx, 15*time.Second)
+		values, e := client.FetchLatestData(liveCtx, pid)
+		cancelLive()
+		if e != nil {
+			s.Store.App.Logger().Warn("siseli fetch", "device", pid, "error", e)
+			if prev := previous[sn]; prev != nil {
+				telemetry[sn] = prev
+			}
+			continue
+		}
+		sampleTS := float64(time.Now().UnixNano()) / 1e9
+		if stamp, ok := siseli.Number(values["_observed_ts"]); ok && stamp > 0 {
+			sampleTS = stamp
+		}
+		tele := map[string]any(siseli.ToTelemetry(values))
+		interval := 300.0
+		if values, _, err := s.settingValues(); err == nil && forecast.Number(values, "siseli_poll_interval_s") > 0 {
+			interval = forecast.Number(values, "siseli_poll_interval_s")
+		}
+		tele["energy_max_gap_s"] = max(300, interval*1.5+30)
+		telemetry[sn] = map[string]any{"telemetry": tele, "ts": sampleTS, "origin": "http"}
+		rt.mu.Lock()
+		rt.telemetry = mergeEntries(rt.telemetry, sn, telemetry[sn])
+		rt.mu.Unlock()
+		s.recordSiseli(ctx, sn, tele, sampleTS)
+
+	}
+	// Publish all live device observations before slower auxiliary requests.
+	auxCtx, cancelAux := context.WithTimeout(ctx, 20*time.Second)
+	defer cancelAux()
+	for _, d := range devices {
+		pid, sn := str(d, "portal_device_id"), str(d, "device_sn")
 		// Reconcile reported production independently of the live power sample.
 		for _, date := range client.ProductionDates() {
-			rows, err := client.FetchDailyProduction(ctx, pid, date)
+			rows, err := client.FetchDailyProduction(auxCtx, pid, date)
 			if err != nil {
 				s.Store.App.Logger().Warn("siseli production", "device", pid, "error", err)
 				continue
@@ -207,26 +244,25 @@ func (s *Server) siseliPollOnce(ctx context.Context) error {
 				}
 			}
 		}
-		if v, e := client.GetDeviceSettings(ctx, pid); e == nil && v != nil {
+		if v, e := client.GetDeviceSettings(auxCtx, pid); e == nil && v != nil {
 			rawSettings[sn], settings[sn] = v, siseli.NormalizeControls(v)
 		}
-		values, e := client.FetchLatestData(ctx, pid)
-		if e != nil {
-			s.Store.App.Logger().Warn("siseli fetch", "device", pid, "error", e)
-			if prev := previous[sn]; prev != nil {
-				telemetry[sn] = prev
-			}
-			continue
-		}
-		tele := map[string]any(siseli.ToTelemetry(values))
-		telemetry[sn] = map[string]any{"telemetry": tele, "ts": ts, "origin": "http"}
-		rt.mu.Lock()
-		rt.telemetry = mergeEntries(rt.telemetry, sn, telemetry[sn])
-		rt.mu.Unlock()
-		s.recordSiseli(ctx, sn, tele, ts)
+
 	}
 	rt.mu.Lock()
-	rt.state, rt.err, rt.devices, rt.telemetry, rt.settings, rt.raw, rt.lastPoll = "connected", nil, devices, telemetry, settings, rawSettings, ts
+	rt.state, rt.err, rt.devices, rt.telemetry, rt.lastPoll = "connected", nil, devices, telemetry, ts
+	if rt.settings == nil {
+		rt.settings = map[string][]siseli.Values{}
+	}
+	if rt.raw == nil {
+		rt.raw = map[string]siseli.Values{}
+	}
+	for sn, v := range settings {
+		if rt.revisions[sn] == revisions[sn] {
+			rt.settings[sn] = v
+			rt.raw[sn] = rawSettings[sn]
+		}
+	}
 	rt.mu.Unlock()
 	return nil
 }
@@ -244,6 +280,7 @@ func mergeEntries(m map[string]map[string]any, k string, v map[string]any) map[s
 func (s *Server) SiseliLoop(ctx context.Context) {
 	wake := s.siseliWake()
 	for {
+		started := time.Now()
 		if err := s.siseliPollOnce(ctx); err != nil {
 			s.Store.App.Logger().Warn("siseli poll", "error", err)
 		}
@@ -255,7 +292,7 @@ func (s *Server) SiseliLoop(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-wake:
-		case <-time.After(time.Duration(max(30, wait)) * time.Second):
+		case <-time.After(max(time.Second, time.Duration(max(30, wait))*time.Second-time.Since(started))):
 		}
 	}
 }
@@ -411,6 +448,10 @@ func (s *Server) siseliRoutes(w http.ResponseWriter, r *http.Request, b map[stri
 			if fresh, err = client.GetDeviceSettings(r.Context(), pid); err == nil && fresh != nil {
 				rt.mu.Lock()
 				rt.raw[sn], rt.settings[sn] = fresh, siseli.NormalizeControls(fresh)
+				if rt.revisions == nil {
+					rt.revisions = map[string]uint64{}
+				}
+				rt.revisions[sn]++
 				rt.mu.Unlock()
 			}
 		}
@@ -494,6 +535,23 @@ func (s *Server) mergeFleetStatus(out map[string]any) {
 	for sn, l := range live {
 		tele[sn] = map[string]any{"telemetry": l.Telemetry, "detail": l.Detail, "ts": l.TS}
 	}
-	cloud["devices"], cloud["devices_telemetry"] = list, tele
+	unique := []any{}
+	seen := map[string]bool{}
+	for _, item := range list {
+		d, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		id := str(d, "device_id")
+		if id == "" {
+			id = str(d, "device_sn")
+		}
+		if id == "" || seen[id] {
+			continue
+		}
+		seen[id] = true
+		unique = append(unique, s.deviceAlias(d))
+	}
+	cloud["devices"], cloud["devices_telemetry"] = unique, tele
 	out["cloud"] = cloud
 }

@@ -6,7 +6,7 @@
   import AssistantPanel from '../components/assistant/AssistantPanel.svelte';
   import { probeAuthGate, me } from '$lib/auth';
   import { setUnauthorizedHandler } from '$lib/api';
-  import { connectWs } from '$lib/ws';
+  import { connectRealtime } from '$lib/realtime';
   import { live } from '$lib/stores/live.svelte';
   import { assistant } from '$lib/stores/assistant.svelte';
   import { VALID_TABS, type TabName } from '$lib/types';
@@ -75,35 +75,20 @@
     void goto('/login');
   }
 
-  let stopWs: (() => void) | undefined;
+  let stopRealtime: (() => void) | undefined;
   let pollTimer: ReturnType<typeof setInterval> | undefined;
 
   function bootLive() {
-    stopWs?.();
+    stopRealtime?.();
     if (pollTimer) clearInterval(pollTimer);
     void live.refreshStatus();
-    stopWs = connectWs({
-      onStatus: (data) => live.applyStatus(data),
-      onAlert: (msg) => live.showAlert(msg),
-      onKasaUpdated: () => {
-        /* AutomationTab polls; WS nudge is enough for now */
-      },
-      onAutomationFired: (data) => {
-        live.automationDot = true;
-        if (data?.name) {
-          live.showAlert(
-            `Rule fired: ${data.name} → ${(data.action || '').toUpperCase()} ${data.kasa_alias || ''}`,
-            5000,
-          );
-        }
-      },
-    });
+    stopRealtime = connectRealtime();
     pollTimer = setInterval(() => void live.refreshStatus(), 30_000);
   }
 
   function stopLive() {
-    stopWs?.();
-    stopWs = undefined;
+    stopRealtime?.();
+    stopRealtime = undefined;
     if (pollTimer) {
       clearInterval(pollTimer);
       pollTimer = undefined;

@@ -6,6 +6,7 @@ import (
 	"github.com/pocketbase/pocketbase/core"
 	"math"
 	"sort"
+	"strings"
 	"time"
 )
 
@@ -13,10 +14,37 @@ import (
 // observations are integrated only with other raw observations, never with an
 // aggregate row or across an outage. Aggregate minutes win on overlap.
 func (s *Store) EnergyMinutes(sn string, since float64) ([]map[string]any, error) {
-	rows, err := s.List("samples", sn, math.Max(0, since-1800), 0)
+	return s.energyMinutesRange(sn, since, 0)
+}
+func (s *Store) energyMinutesRange(sn string, since, until float64) ([]map[string]any, error) {
+	readUntil := until
+	if readUntil > 0 {
+		readUntil += 1800
+	} // include the ending observation of boundary intervals
+	rows, err := s.ListRange("samples", sn, math.Max(0, since-1800), readUntil, 0)
 	if err != nil {
 		return nil, err
 	}
+	readSince := math.Max(0, since-1800)
+	if readSince > 0 {
+		neighbor, e := s.rawEnergyNeighbor(sn, readSince, true)
+		if e != nil {
+			return nil, e
+		}
+		if neighbor != nil {
+			rows = append(rows, neighbor)
+		}
+	}
+	if readUntil > 0 {
+		neighbor, e := s.rawEnergyNeighbor(sn, math.Nextafter(readUntil, math.Inf(-1)), false)
+		if e != nil {
+			return nil, e
+		}
+		if neighbor != nil {
+			rows = append(rows, neighbor)
+		}
+	}
+	sort.SliceStable(rows, func(i, j int) bool { return num(rows[i]["ts"]) < num(rows[j]["ts"]) })
 	buckets := map[int64]map[string]any{}
 	raw := []map[string]any{}
 	portal := []map[string]any{}
@@ -39,11 +67,7 @@ func (s *Store) EnergyMinutes(sn string, since float64) ([]map[string]any, error
 	for b := range buckets {
 		imported[b] = true
 	}
-	for i, r := range raw {
-		b := int64(num(r["ts"])) / 60 * 60
-		if imported[b] {
-			continue
-		}
+	ensure := func(b int64) map[string]any {
 		row := buckets[b]
 		if row == nil {
 			row = map[string]any{"ts": float64(b), "bucket": float64(b), "sample_count": 0.0}
@@ -52,34 +76,64 @@ func (s *Store) EnergyMinutes(sn string, since float64) ([]map[string]any, error
 			}
 			buckets[b] = row
 		}
-		for dst, src := range map[string]string{"last_input_w": "input_power_w", "last_output_w": "output_power_w", "last_solar_w": "solar_input_w", "last_ac_input_w": "ac_input_w", "last_battery_pct": "battery_percent", "system_soc": "system_soc"} {
-			if r[src] != nil {
-				row[dst] = r[src]
+		return row
+	}
+	for i, r := range raw {
+		b := int64(num(r["ts"])) / 60 * 60
+		if !imported[b] {
+			row := ensure(b)
+			for dst, src := range map[string]string{"last_input_w": "input_power_w", "last_output_w": "output_power_w", "last_solar_w": "solar_input_w", "last_ac_input_w": "ac_input_w", "last_battery_pct": "battery_percent", "system_soc": "system_soc"} {
+				if r[src] != nil {
+					row[dst] = r[src]
+				}
 			}
+			row["sample_count"] = num(row["sample_count"]) + 1
 		}
-		row["sample_count"] = num(row["sample_count"]) + 1
 		if i == 0 {
 			continue
 		}
-		a := raw[i-1]
-		dt := num(r["ts"]) - num(a["ts"])
-		if dt <= 0 || dt > 300 {
+		prev := raw[i-1]
+		from, to := num(prev["ts"]), num(r["ts"])
+		dt := to - from
+		// Cloud polling explicitly supplies its expected gap. Other sources
+		// retain the short outage cutoff rather than bridging long outages.
+		baseGap := 300.0
+		// Historical Siseli observations predate the explicit cadence field.
+		// Allow the default five-minute poll plus network overhead for those.
+		if strings.HasPrefix(sn, "siseli:") {
+			baseGap = 480
+		}
+		maxGap := math.Min(MaxEnergyGapSeconds, math.Max(baseGap, math.Max(num(prev["energy_max_gap_s"]), num(r["energy_max_gap_s"]))))
+		if dt <= 0 || dt > maxGap {
 			continue
 		}
-		for dst, src := range map[string]string{"input_wh": "input_power_w", "output_wh": "output_power_w", "solar_wh": "solar_input_w", "ac_input_wh": "ac_input_w", "solar_charge_diverted_wh": "solar_charge_diverted_w"} {
-			av, zv := num(a[src]), num(r[src])
-			if src == "solar_input_w" {
-				if a[src] == nil {
-					av = num(a["solar_w"])
-				}
-				if r[src] == nil {
-					zv = num(r["solar_w"])
-				}
-			}
-			wh := math.Max(0, (av+zv)/2) * dt / 3600
-			row[dst] = num(row[dst]) + wh
+		integrationFrom, integrationTo := math.Max(from, math.Floor(since/60)*60), to
+		if until > 0 {
+			integrationTo = math.Min(integrationTo, until)
 		}
-		row["solar_charge_diverted_wh"] = math.Min(num(row["solar_charge_diverted_wh"]), num(row["output_wh"]))
+		for cursor := integrationFrom; cursor < integrationTo; {
+			minute := int64(math.Floor(cursor/60)) * 60
+			end := math.Min(integrationTo, float64(minute+60))
+			if !imported[minute] {
+				row := ensure(minute)
+				for dst, src := range map[string]string{"input_wh": "input_power_w", "output_wh": "output_power_w", "solar_wh": "solar_input_w", "ac_input_wh": "ac_input_w", "solar_charge_diverted_wh": "solar_charge_diverted_w"} {
+					av, zv := num(prev[src]), num(r[src])
+					if src == "solar_input_w" {
+						if prev[src] == nil {
+							av = num(prev["solar_w"])
+						}
+						if r[src] == nil {
+							zv = num(r["solar_w"])
+						}
+					}
+					left := av + (zv-av)*(cursor-from)/dt
+					right := av + (zv-av)*(end-from)/dt
+					row[dst] = num(row[dst]) + math.Max(0, (left+right)/2)*(end-cursor)/3600
+				}
+				row["solar_charge_diverted_wh"] = math.Min(num(row["solar_charge_diverted_wh"]), num(row["output_wh"]))
+			}
+			cursor = end
+		}
 	}
 	// Reported interval production replaces only solar energy. Keep measured
 	// battery charging, consumption and SOC independent. Split uniformly for
@@ -102,7 +156,7 @@ func (s *Store) EnergyMinutes(sn string, since float64) ([]map[string]any, error
 	}
 	out := []map[string]any{}
 	for b, row := range buckets {
-		if float64(b) >= since {
+		if float64(b) >= since && (until == 0 || float64(b) < until) {
 			out = append(out, row)
 		}
 	}

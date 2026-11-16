@@ -63,14 +63,17 @@
   let totals = $state<Record<string, unknown> | undefined>();
   const energy = $derived(totals ?? live.status?.energy as Record<string, unknown> | undefined);
   let totalsRequest = 0;
+  let preparingHistory = $state(false);
   async function loadTotals() {
     const request = ++totalsRequest;
-    totals = undefined;
     const sn = live.activeDeviceSn();
     if (!sn) return;
     try {
       const result = await api<Record<string, unknown>>(`/energy/totals?device_sn=${encodeURIComponent(sn)}`);
-      if (request === totalsRequest) totals = result;
+      if (request === totalsRequest) {
+        preparingHistory = result.building === true;
+        if (!preparingHistory) totals = result;
+      }
     } catch (err) {
       if (request === totalsRequest) error = err instanceof Error ? err.message : 'Could not load totals';
     }
@@ -222,7 +225,11 @@
     return ordered;
   }
 
+  let historyRequest = 0;
+  let dailyRequest = 0;
   async function loadHistory() {
+    const request = ++historyRequest;
+    const requestedHours = hours;
     busy = true;
     error = '';
     try {
@@ -257,25 +264,30 @@
           }
         }),
       );
-      historyPayload = { hours, series: results };
+      if (request === historyRequest) historyPayload = { hours: requestedHours, series: results };
     } catch (err) {
-      error = err instanceof Error ? err.message : 'Failed to load history';
-      historyPayload = null;
+      if (request === historyRequest) {
+        error = err instanceof Error ? err.message : 'Failed to load history';
+        historyPayload = null;
+      }
     } finally {
-      busy = false;
+      if (request === historyRequest) busy = false;
     }
   }
 
   async function loadDaily() {
+    const request = ++dailyRequest;
     try {
       const sn = live.activeDeviceSn() || live.status?.device?.device_sn;
       const q = new URLSearchParams({ days: '365' });
       if (sn) q.set('device_sn', sn);
-      const j = await api<{ daily?: DailyRow[]; device_sn?: string }>(`/energy/daily?${q}`);
-      daily = j.daily || [];
-      dailyDeviceSn = j.device_sn || sn || '';
+      const j = await api<{ daily?: DailyRow[]; device_sn?: string; building?: boolean }>(`/energy/daily?${q}`);
+      if (request === dailyRequest && !j.building) {
+        daily = j.daily || [];
+        dailyDeviceSn = j.device_sn || sn || '';
+      }
     } catch {
-      daily = [];
+      if (request === dailyRequest) daily = [];
     }
   }
 
@@ -285,12 +297,29 @@
     loadHistory();
     loadDaily();
     loadTotals();
-    return live.onDeviceChange(() => {
+    const offEnergy = live.onEnergyChange(() => { loadHistory(); loadDaily(); loadTotals(); });
+    const refreshTimer = setInterval(() => {
+      if (busy || document.hidden) return;
+      loadHistory();
+      loadDaily();
+      loadTotals();
+    }, 30_000);
+    const unsubscribe = live.onDeviceChange(() => {
+      totals = undefined;
+      daily = [];
+      dailyDeviceSn = '';
+      compareSns.clear();
       seedCompare();
       loadHistory();
       loadDaily();
       loadTotals();
     });
+    return () => {
+      offEnergy();
+      clearInterval(refreshTimer);
+      unsubscribe();
+      ++historyRequest; ++dailyRequest; ++totalsRequest;
+    };
   });
 
   function attachEnergyChart(payload: { hours: number; series: HistorySeries[] } | null) {
@@ -475,6 +504,7 @@
     </section>
   {/if}
 
+  {#if preparingHistory && !energy?.lifetime}<p class="muted">Preparing energy history…</p>{/if}
   <section class="card">
     <div class="card-header">
       <h2>Energy history</h2>

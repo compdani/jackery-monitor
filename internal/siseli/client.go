@@ -162,7 +162,9 @@ func (c *Client) raw(ctx context.Context, method, path string, query url.Values,
 		return nil, resp.StatusCode, fmt.Errorf("Siseli HTTP %d", resp.StatusCode)
 	}
 	v := Values{}
-	err = json.NewDecoder(io.LimitReader(resp.Body, 16<<20)).Decode(&v)
+	decoder := json.NewDecoder(io.LimitReader(resp.Body, 16<<20))
+	decoder.UseNumber() // Portal device IDs exceed IEEE-754 integer precision.
+	err = decoder.Decode(&v)
 	return v, resp.StatusCode, err
 }
 func (c *Client) storeTokens(v Values) error {
@@ -318,7 +320,13 @@ func (c *Client) FetchLatestData(ctx context.Context, id string) (Values, error)
 		return nil, err
 	}
 	if err == nil {
-		out = MapLatestStateFields(object(object(v["data"])["fields"]))
+		data := object(v["data"])
+		out = MapLatestStateFields(object(data["fields"]))
+		if len(out) > 0 {
+			if stamp, e := time.Parse(time.RFC3339, text(data["time"])); e == nil {
+				out["_observed_ts"] = float64(stamp.Unix())
+			}
+		}
 	}
 	if out["batterySOC"] == nil {
 		history, e := c.fetchHistory(ctx, id)
@@ -339,6 +347,9 @@ func (c *Client) FetchLatestData(ctx context.Context, id string) (Values, error)
 			mergeMissing(mapped, MapEnergyFlowFields(f))
 			mergeMissing(out, mapped)
 		}
+	}
+	if len(out) == 0 {
+		return nil, fmt.Errorf("Siseli returned no telemetry from latest state or fallbacks")
 	}
 	ApplyDerivedValues(out)
 	return out, nil

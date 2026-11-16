@@ -1,7 +1,7 @@
 import { Slot } from "expo-router";
 import { useEffect, useState } from "react";
 import { endpoints } from "../../src/api/client";
-import { startLive, stopLive } from "../../src/api/ws";
+import { startLive, stopLive } from "../../src/api/realtime";
 import { JackeryLoginModal } from "../../src/components/JackeryLoginModal";
 import { pushWidgetSnapshot } from "../../src/lib/widgetSync";
 import { useLive } from "../../src/store/live";

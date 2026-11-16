@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	_ "github.com/compdani/jackery-monitor/migrations"
 	"github.com/pocketbase/pocketbase"
 	"os"
@@ -130,5 +131,31 @@ func TestLegacyImportReadOnlyIdempotent(t *testing.T) {
 	after, e := os.ReadFile(source)
 	if e != nil || !bytes.Equal(before, after) {
 		t.Fatal("source database changed", e)
+	}
+}
+
+func TestListCursorAcrossEqualTimestampPages(t *testing.T) {
+	s := predictionStore(t)
+	for i := 0; i < 1100; i++ {
+		key := fmt.Sprintf("page:%04d", i)
+		if err := s.Put("samples", key, "paged", map[string]any{"ts": 100.0, "n": float64(i)}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	rows, err := s.List("samples", "paged", 0, 0)
+	if err != nil || len(rows) != 1100 {
+		t.Fatal(len(rows), err)
+	}
+	seen := map[float64]bool{}
+	for _, row := range rows {
+		n := row["n"].(float64)
+		if seen[n] {
+			t.Fatal("duplicate", n)
+		}
+		seen[n] = true
+	}
+	limited, err := s.List("samples", "paged", 0, 1050)
+	if err != nil || len(limited) != 1050 {
+		t.Fatal(len(limited), err)
 	}
 }

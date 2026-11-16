@@ -1,6 +1,6 @@
 import { File, Paths } from "expo-file-system";
 import * as Sharing from "expo-sharing";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, useRef } from "react";
 import { Pressable, Text, View } from "react-native";
 import { activeSn, endpoints } from "../../../src/api/client";
 import type { DailyRow, EnergyTotals, EnergyWindow } from "../../../src/api/types";
@@ -66,6 +66,7 @@ function mergeHistories(lists: HistPoint[][]): HistPoint[] {
 }
 
 export default function EnergyScreen() {
+  const energyRevision = useLive(state => state.energyRevision);
   const energy = useLive((s) => s.status?.energy);
   const energyBucketS = usePrefs((s) => s.energyBucketS);
   const [hours, setHours] = useState("24");
@@ -75,17 +76,20 @@ export default function EnergyScreen() {
   const [daily, setDaily] = useState<DailyRow[]>([]);
   const [dRange, setDRange] = useState("90");
 
+  const loadGeneration = useRef(0);
   const load = useCallback(async () => {
+    const generation = ++loadGeneration.current;
+    const viewed = activeSn();
+    const current = () => generation === loadGeneration.current && viewed === activeSn();
     let list: EnergyTotals[] = [];
     try {
       const d = (await endpoints.energyDevices()) as { devices?: EnergyTotals[] };
       list = d.devices || [];
-      setDevices(list);
+      if (current()) setDevices(list);
     } catch {
       /* ignore */
     }
 
-    const viewed = activeSn();
     const sns =
       chartSn === ALL
         ? list.map((d) => d.device_sn).filter((sn): sn is string => !!sn)
@@ -98,25 +102,26 @@ export default function EnergyScreen() {
           return h.history || [];
         }),
       );
-      setHist(results.length > 1 ? mergeHistories(results) : results[0] || []);
+      if (current()) setHist(results.length > 1 ? mergeHistories(results) : results[0] || []);
     } catch {
-      setHist([]);
+      if (current()) setHist([]);
     }
 
     const dailySn = chartSn === ALL ? viewed : chartSn;
     if (dailySn) {
       try {
         const r = await endpoints.energyDaily(dailySn, 365);
-        setDaily(r.daily || []);
+        if (current() && r.daily) setDaily(r.daily);
       } catch {
-        setDaily([]);
+        if (current()) setDaily([]);
       }
     }
   }, [hours, chartSn, energyBucketS]);
 
   useEffect(() => {
     void load();
-  }, [load]);
+    return () => { ++loadGeneration.current; };
+  }, [load, energyRevision]);
 
   const filteredDaily = useMemo(() => {
     const n = Number(dRange);

@@ -31,6 +31,9 @@ import (
 )
 
 type Server struct {
+	realtime      realtimeState
+	energyReads   energyReadCache
+	liveHistories liveHistoryCache
 	actions       actionArbiter
 	watchdog      watchdogRuntime
 	f7            f7Runtime
@@ -76,11 +79,15 @@ type Server struct {
 }
 
 func (s *Server) Register(e *core.ServeEvent) {
+	s.registerRealtime()
 	// Intercept legacy API paths before PocketBase's collection-specific
 	// middleware. /api/settings is shared with PocketBase and must not be
 	// registered twice in Go's ServeMux.
 	e.Router.BindFunc(func(ev *core.RequestEvent) error {
 		p := ev.Request.URL.Path
+		if p == "/api/realtime" && ev.Request.Method == "POST" && ev.Auth == nil {
+			ev.Auth = s.user(ev.Request)
+		}
 		// The PocketBase dashboard lists collections at the bare
 		// /api/collections path and shares /api/settings with the app, so
 		// superuser-authenticated requests always go to PocketBase.
@@ -530,11 +537,69 @@ func (s *Server) status(r *http.Request) map[string]any {
 		out[k] = v
 	}
 	s.mu.RUnlock()
+	// Persisted devices are available immediately after restart, before any
+	// upstream login/poll completes. Merge them with bridge metadata by identity.
+	cloud := map[string]any{}
+	if old, ok := out["cloud"].(map[string]any); ok {
+		for k, v := range old {
+			cloud[k] = v
+		}
+	}
+	devices := []map[string]any{}
+	seen := map[string]bool{}
+	addDevice := func(d map[string]any) {
+		id := str(d, "device_id")
+		if id == "" {
+			id = str(d, "device_sn")
+		}
+		if id == "" || seen[id] {
+			return
+		}
+		copy := s.deviceAlias(d)
+		copy["device_id"] = id
+		devices = append(devices, copy)
+		seen[id] = true
+	}
+	switch rows := cloud["devices"].(type) {
+	case []any:
+		for _, row := range rows {
+			if d, ok := row.(map[string]any); ok {
+				addDevice(d)
+			}
+		}
+	case []map[string]any:
+		for _, d := range rows {
+			addDevice(d)
+		}
+	}
+	fleetTelemetry := map[string]any{}
+	if old, ok := cloud["devices_telemetry"].(map[string]any); ok {
+		for k, v := range old {
+			fleetTelemetry[k] = v
+		}
+	}
+	if rows, err := s.Store.List("devices", "", 0, 1000); err == nil {
+		for _, row := range rows {
+			if d, ok := row["device"].(map[string]any); ok {
+				addDevice(d)
+				sn := str(d, "device_sn")
+				if fleetTelemetry[sn] == nil {
+					fleetTelemetry[sn] = map[string]any{"telemetry": row["telemetry"], "ts": row["last_update_ts"]}
+				}
+			}
+		}
+	}
+	cloud["devices_telemetry"] = fleetTelemetry
+	cloud["devices"] = devices
+	out["cloud"] = cloud
 	view := r.URL.Query().Get("view_device_id")
 	if view == "" {
 		if c, e := r.Cookie("view_device_id"); e == nil {
 			view = c.Value
 		}
+	}
+	if view == "" {
+		view = s.selectedSerial(r)
 	}
 	if view != "" {
 		// Resolve both cloud IDs and serials. Unknown views retain the active
@@ -561,7 +626,11 @@ func (s *Server) status(r *http.Request) map[string]any {
 				if source == "siseli" || source == "ecoflow" || strings.HasPrefix(str(d, "device_sn"), "siseli:") || strings.HasPrefix(str(d, "device_sn"), "ecoflow:") {
 					out["connection_status"] = "disconnected"
 					out["connection_error"] = nil
-					if ts, ok := cached["last_update_ts"].(float64); ok && ts > float64(time.Now().Unix())-600 {
+					freshFor := 600.0
+					if tele, ok := cached["telemetry"].(map[string]any); ok {
+						freshFor = max(freshFor, forecast.Number(tele, "energy_max_gap_s"))
+					}
+					if ts, ok := cached["last_update_ts"].(float64); ok && ts > float64(time.Now().Unix())-freshFor {
 						out["connection_status"] = "connected"
 					}
 				}
@@ -591,6 +660,12 @@ func (s *Server) status(r *http.Request) map[string]any {
 		out["device"] = s.deviceAlias(d)
 	}
 	s.mergeFleetStatus(out)
+	populateFleetOverview(out)
+	if d, ok := out["device"].(map[string]any); ok {
+		if sn := str(d, "device_sn"); sn != "" {
+			s.statusDetails(out, sn)
+		}
+	}
 	return out
 }
 func (s *Server) Poll(ctx context.Context, interval time.Duration) {
@@ -623,6 +698,7 @@ func (s *Server) pollOnce(ctx context.Context) {
 		s.mu.Lock()
 		s.snapshot = map[string]any{"connection_status": "disconnected", "connection_error": e.Error()}
 		s.mu.Unlock()
+		s.publishRealtime(fleetTopic, map[string]any{"kind": "status"})
 		return
 	}
 	s.acceptSnapshot(ctx, p)

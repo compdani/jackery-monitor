@@ -2,6 +2,7 @@ package server
 
 import (
 	"encoding/json"
+	"github.com/compdani/jackery-monitor/internal/siseli"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -136,5 +137,75 @@ func TestViewedCloudHealthIndependentOfBridge(t *testing.T) {
 		if out["connection_status"] != want || out["connection_error"] != nil || out["source"] != "siseli" {
 			t.Fatal(out)
 		}
+	}
+}
+
+func TestStoredFleetAndLiveHistoryAvailableBeforeBridgePoll(t *testing.T) {
+	s, _ := testServer(t)
+	now := float64(time.Now().Unix())
+	for _, sn := range []string{"siseli:99", "ecoflow:88"} {
+		if err := s.Store.Put("devices", sn, sn, map[string]any{"device": map[string]any{"device_sn": sn, "device_id": sn}, "telemetry": map[string]any{"battery_percent": 49.0}, "last_update_ts": now}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := s.Store.Put("samples", "live:99", "siseli:99", map[string]any{"ts": now, "input_power_w": 16.0, "output_power_w": 0.0, "battery_percent": 49.0}); err != nil {
+		t.Fatal(err)
+	}
+	out := s.status(httptest.NewRequest("GET", "/api/status?view_device_id=siseli:99", nil))
+	cloud := out["cloud"].(map[string]any)
+	if len(cloud["devices"].([]map[string]any)) != 2 || cloud["selected_device_id"] != "siseli:99" {
+		t.Fatal(cloud)
+	}
+	overview := cloud["devices_overview"].([]map[string]any)
+	if len(overview) != 2 {
+		t.Fatal(overview)
+	}
+	history := out["history"].([]map[string]any)
+	if len(history) != 1 || history[0]["input_power_w"] != 16.0 {
+		t.Fatal(history)
+	}
+}
+
+func TestViewedStatusContractWithCachedStats(t *testing.T) {
+	s, _ := testServer(t)
+	sn := "siseli:99"
+	now := float64(time.Now().Unix())
+	if err := s.Store.Put("devices", sn, sn, map[string]any{"device": map[string]any{"device_id": sn, "device_sn": sn, "source": "siseli"}, "last_update_ts": now}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Store.Put("device_prefs", sn, sn, map[string]any{"solar_flow_unified": true}); err != nil {
+		t.Fatal(err)
+	}
+	s.fleet.siseli.settings = map[string][]siseli.Values{sn: {{"canonical": "LoadSwitchSetting", "value": "0"}}}
+	w := httptest.NewRecorder()
+	s.energyRead(w, httptest.NewRequest("GET", "/api/energy/totals?device_sn="+sn, nil))
+	if w.Code != 200 {
+		t.Fatal(w.Body.String())
+	}
+	out := s.status(httptest.NewRequest("GET", "/api/status?view_device_id="+sn, nil))
+	for _, key := range []string{"energy", "device_prefs", "siseli_controls", "inverter_watchdog", "siseli", "ecoflow", "history"} {
+		if out[key] == nil {
+			t.Fatal("missing status contract", key)
+		}
+	}
+	prefs := out["device_prefs"].(map[string]any)
+	if prefs["solar_flow_unified"] != true || len(prefs["live_controls"].([]string)) != 1 {
+		t.Fatal(prefs)
+	}
+}
+
+func TestStatusAndDefaultEnergyUseSameActiveDevice(t *testing.T) {
+	s, _ := testServer(t)
+	for _, sn := range []string{"SN-A", "SN-Z"} {
+		if err := s.Store.Put("devices", sn, sn, map[string]any{"device": map[string]any{"device_sn": sn, "device_id": "id-" + sn}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	s.snapshot = map[string]any{"device": map[string]any{"device_sn": "SN-Z", "device_id": "id-SN-Z"}, "cloud": map[string]any{}}
+	r := httptest.NewRequest("GET", "/api/status", nil)
+	out := s.status(r)
+	d := out["device"].(map[string]any)
+	if d["device_sn"] != s.energySerial(r, nil) || d["device_sn"] != "SN-Z" {
+		t.Fatal(out, s.energySerial(r, nil))
 	}
 }
