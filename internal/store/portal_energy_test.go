@@ -5,9 +5,44 @@ import (
 	"fmt"
 	"github.com/pocketbase/dbx"
 	"math"
+	"reflect"
 	"testing"
 	"time"
 )
+
+func TestForecastHourlyRollupPreservesTelemetry(t *testing.T) {
+	s := predictionStore(t)
+	const sn = "forecast"
+	start := math.Floor(1794762000.0/3600) * 3600
+	for _, row := range []map[string]any{
+		{"ts": start, "bucket": start, "last_ac_input_w": 100.0, "ac_input_wh": 100.0 / 60,
+			"last_input_w": 100.0, "input_wh": 100.0 / 60, "last_solar_w": 300.0, "solar_wh": 5.0,
+			"last_output_w": 500.0, "output_wh": 500.0 / 60, "last_battery_pct": 50.0, "system_soc": 55.0},
+		{"ts": start + 60, "bucket": start + 60},
+		{"ts": start + 3600, "solar_input_w": 0.0},
+		{"ts": start + 3900, "solar_input_w": 0.0},
+		{"ts": start + 4200}, // no solar reading at the end of this interval
+	} {
+		if err := s.Put("samples", SampleKey(sn, num(row["ts"])), sn, row); err != nil {
+			t.Fatal(err)
+		}
+	}
+	minutes, err := s.EnergyMinutes(sn, start)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw := EnergyHistory(minutes, start, 3600)
+	rolled, err := s.EnergyHourlyFromRollups(sn, start)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(raw, rolled) {
+		t.Fatalf("raw %v\nrollup %v", raw, rolled)
+	}
+	if len(rolled) != 2 || rolled[0]["solar_coverage_s"] != 60.0 || rolled[1]["solar_coverage_s"] != 300.0 {
+		t.Fatalf("wrong observed solar coverage: %v", rolled)
+	}
+}
 
 func TestPortalProductionOverridesSolarOnlyAndReconciles(t *testing.T) {
 	s := predictionStore(t)

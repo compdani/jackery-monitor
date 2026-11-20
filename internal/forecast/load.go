@@ -22,6 +22,13 @@ func trimmedMedian(v []float64) float64 {
 	return v[len(v)/2]
 }
 func FitLoadProfile(rows []Row, now int64, carLoad float64, bucket int) map[LoadKey]float64 {
+	_, offset := time.Unix(now, 0).In(time.Local).Zone()
+	return FitLoadProfileOffset(rows, now, carLoad, bucket, offset)
+}
+
+// FitLoadProfileOffset buckets historical load by the device's configured UTC
+// offset so load schedules stay aligned even when the server runs in UTC.
+func FitLoadProfileOffset(rows []Row, now int64, carLoad float64, bucket, offset int) map[LoadKey]float64 {
 	net := func(r Row) float64 {
 		out := Number(r, "output_w")
 		if r["solar_charge_plug_on_frac"] != nil && carLoad != 0 {
@@ -55,7 +62,7 @@ func FitLoadProfile(rows []Row, now int64, carLoad float64, bucket int) map[Load
 			continue
 		}
 		ts := int64(Number(r, "ts"))
-		t := time.Unix(ts, 0).In(time.Local)
+		t := time.Unix(ts+int64(offset), 0).UTC()
 		w := 0
 		if t.Weekday() == time.Saturday || t.Weekday() == time.Sunday {
 			w = 1

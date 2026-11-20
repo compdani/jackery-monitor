@@ -14,7 +14,7 @@ import (
 // and marker removal, so updates cannot be lost during reconciliation.
 func missing(err error) bool { return errors.Is(err, sql.ErrNoRows) }
 
-const EnergyRollupVersion = 3
+const EnergyRollupVersion = 4
 
 var ErrEnergyBuilding = errors.New("energy history is being prepared")
 
@@ -95,9 +95,21 @@ func (s *Store) EnsureEnergyRollups(sn string) error {
 				return err
 			}
 			for _, row := range minutes {
-				params := dbx.Params{"id": ID()[:15], "sn": sn, "ts": num(row["ts"]), "input": num(row["input_wh"]), "output": num(row["output_wh"]), "solar": num(row["solar_wh"]), "ac": num(row["ac_input_wh"]), "diverted": num(row["solar_charge_diverted_wh"]), "solar_w": num(row["last_solar_w"]), "output_w": num(row["last_output_w"]), "soc": num(row["last_battery_pct"]), "has_soc": row["last_battery_pct"] != nil}
-				_, err := app.DB().NewQuery(`INSERT INTO energy_minutes (id,device_sn,ts,input_wh,output_wh,solar_wh,ac_input_wh,solar_charge_diverted_wh,solar_w,output_w,soc,has_soc)
-    VALUES ({:id},{:sn},{:ts},{:input},{:output},{:solar},{:ac},{:diverted},{:solar_w},{:output_w},{:soc},{:has_soc})`).Bind(params).Execute()
+				params := dbx.Params{
+					"id": ID()[:15], "sn": sn, "ts": num(row["ts"]),
+					"input": num(row["input_wh"]), "output": num(row["output_wh"]),
+					"solar": num(row["solar_wh"]), "ac": num(row["ac_input_wh"]),
+					"diverted": num(row["solar_charge_diverted_wh"]), "coverage": num(row["solar_coverage_s"]),
+				}
+				for column, field := range minuteTelemetry {
+					params[column] = num(row[field])
+					params["has_"+column] = row[field] != nil
+				}
+				_, err := app.DB().NewQuery(`INSERT INTO energy_minutes (
+    id,device_sn,ts,input_wh,output_wh,solar_wh,ac_input_wh,solar_charge_diverted_wh,solar_coverage_s,
+    input_w,output_w,solar_w,ac_input_w,soc,system_soc,has_input_w,has_output_w,has_solar_w,has_ac_input_w,has_soc,has_system_soc)
+    VALUES ({:id},{:sn},{:ts},{:input},{:output},{:solar},{:ac},{:diverted},{:coverage},
+    {:input_w},{:output_w},{:solar_w},{:ac_input_w},{:soc},{:system_soc},{:has_input_w},{:has_output_w},{:has_solar_w},{:has_ac_input_w},{:has_soc},{:has_system_soc})`).Bind(params).Execute()
 				if err != nil {
 					return err
 				}
@@ -133,6 +145,11 @@ func (s *Store) EnsureEnergyRollups(sn string) error {
 		return ErrEnergyBuilding
 	}
 	return nil
+}
+
+var minuteTelemetry = map[string]string{
+	"input_w": "last_input_w", "output_w": "last_output_w", "solar_w": "last_solar_w",
+	"ac_input_w": "last_ac_input_w", "soc": "last_battery_pct", "system_soc": "system_soc",
 }
 
 // Small typed SQL rows avoid decoding telemetry JSON during stats requests.
@@ -201,4 +218,83 @@ func (s *Store) EnergyDailySummary(sn string, since float64, offset int) ([]map[
 		out = append(out, row)
 	}
 	return out, nil
+}
+
+type energyHourlyRow struct {
+	TS         float64  `db:"ts"`
+	Input      float64  `db:"input_wh"`
+	Output     float64  `db:"output_wh"`
+	Solar      float64  `db:"solar_wh"`
+	AC         float64  `db:"ac_input_wh"`
+	Diverted   float64  `db:"solar_charge_diverted_wh"`
+	AvgSolarW  float64  `db:"solar_w"`
+	AvgOutputW float64  `db:"output_w"`
+	AvgInputW  float64  `db:"input_w"`
+	AvgACW     float64  `db:"ac_input_w"`
+	AvgSOC     *float64 `db:"battery_pct"`
+	SystemSOC  *float64 `db:"system_soc"`
+	Coverage   float64  `db:"solar_coverage_s"`
+}
+
+// EnergyHourlyFromRollups reads hourly history directly from the indexed
+// numeric energy_minutes table, avoiding raw sample JSON decoding. Returns
+// ErrEnergyBuilding when initial rollups are not yet materialized.
+func (s *Store) EnergyHourlyFromRollups(sn string, since float64) ([]map[string]any, error) {
+	if err := s.EnsureEnergyRollups(sn); err != nil {
+		return nil, err
+	}
+	var rows []energyHourlyRow
+	query := `SELECT cast(ts/3600 AS INTEGER)*3600 AS ts,` + summaryColumns + `,
+	 coalesce(avg(CASE WHEN has_solar_w THEN solar_w END), 0) AS solar_w,
+	 coalesce(avg(CASE WHEN has_output_w THEN output_w END), 0) AS output_w,
+	 coalesce(avg(CASE WHEN has_input_w THEN input_w END), 0) AS input_w,
+	 coalesce(avg(CASE WHEN has_ac_input_w THEN ac_input_w END), 0) AS ac_input_w,
+	 avg(CASE WHEN has_soc THEN soc END) AS battery_pct,
+	 avg(CASE WHEN has_system_soc THEN system_soc END) AS system_soc,
+	 sum(solar_coverage_s) AS solar_coverage_s
+ FROM energy_minutes WHERE device_sn={:sn} AND ts>={:since}
+ GROUP BY cast(ts/3600 AS INTEGER) ORDER BY ts`
+	if err := s.App.DB().NewQuery(query).Bind(dbx.Params{"sn": sn, "since": since}).All(&rows); err != nil {
+		return nil, err
+	}
+	out := make([]map[string]any, 0, len(rows))
+	for _, r := range rows {
+		var soc any
+		if r.AvgSOC != nil {
+			soc = *r.AvgSOC
+		}
+		var systemSOC any
+		if r.SystemSOC != nil {
+			systemSOC = *r.SystemSOC
+		}
+		out = append(out, map[string]any{
+			"ts":                       r.TS,
+			"input_wh":                 r.Input,
+			"output_wh":                r.Output,
+			"solar_wh":                 r.Solar,
+			"ac_input_wh":              r.AC,
+			"solar_charge_diverted_wh": r.Diverted,
+			"input_w":                  r.AvgInputW,
+			"output_w":                 r.AvgOutputW,
+			"solar_w":                  math.Max(r.AvgSolarW, r.Solar),
+			"ac_input_w":               r.AvgACW,
+			"battery_pct":              soc,
+			"system_soc":               systemSOC,
+			"solar_coverage_s":         r.Coverage,
+		})
+	}
+	return out, nil
+}
+
+// SolarSinceFromRollups sums solar_wh from energy_minutes since a timestamp.
+func (s *Store) SolarSinceFromRollups(sn string, since float64) (float64, error) {
+	if err := s.EnsureEnergyRollups(sn); err != nil {
+		return 0, err
+	}
+	var row struct {
+		Solar float64 `db:"solar_wh"`
+	}
+	err := s.App.DB().NewQuery(`SELECT COALESCE(sum(solar_wh), 0) AS solar_wh FROM energy_minutes WHERE device_sn={:sn} AND ts>={:since}`).
+		Bind(dbx.Params{"sn": sn, "since": since}).One(&row)
+	return row.Solar, err
 }

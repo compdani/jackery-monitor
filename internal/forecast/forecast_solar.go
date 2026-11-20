@@ -33,13 +33,27 @@ type SolarClient struct {
 	retryUntil time.Time
 }
 
+func solarCacheKey(lat, lon float64, tilt, azimuth int, kwp float64, offset int) string {
+	return fmt.Sprintf("%g:%g:%d:%d:%g:%d", lat, lon, tilt, azimuth, kwp, offset)
+}
+
+// Cached returns a fresh estimate without waiting for an active provider fetch.
+func (c *SolarClient) Cached(lat, lon float64, tilt, azimuth int, kwp float64, offset int) (SolarEstimate, bool) {
+	if !c.mu.TryLock() {
+		return SolarEstimate{}, false
+	}
+	defer c.mu.Unlock()
+	est, ok := c.cache[solarCacheKey(lat, lon, tilt, azimuth, kwp, offset)]
+	return est, ok && time.Now().Unix()-est.FetchedAt < 3600
+}
+
 // Fetch serializes site requests so simultaneous recorder/controller calls do
 // not consume the public IP quota. No request is retried before retry-at.
 func (c *SolarClient) Fetch(ctx context.Context, lat, lon float64, tilt, azimuth int, kwp float64, offset int, key string) SolarEstimate {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	now := time.Now()
-	site := fmt.Sprintf("%.4f:%.4f:%d:%d:%g:%d", lat, lon, tilt, azimuth, kwp, offset)
+	site := solarCacheKey(lat, lon, tilt, azimuth, kwp, offset)
 	cached, ok := c.cache[site]
 	if ok && now.Unix()-cached.FetchedAt < 3600 {
 		return cached

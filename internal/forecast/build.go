@@ -13,12 +13,20 @@ type BuildOptions struct {
 	Horizon              int
 	Packs, Offset        int
 	CarLoad              float64
+	Lat, Lon             float64
+	Plane                *Plane
 	SolarHourly          map[int64]float64
+	SolarHistory         map[int64]float64
 	LoadMode             string
 	Windows              []automation.Window
 	SleepStart, SleepEnd string
 	DisableCeiling       bool
 	Simulation           Options
+	// Optional user overrides stored via /api/devices/params.
+	SolarCoeffOverride *float64
+	ParasiticOverride  *float64
+	OverheadOverride   *float64
+	ChargeEffOverride  *float64
 }
 
 func Build(history, weather []Row, start, capacity float64, o BuildOptions) Row {
@@ -33,13 +41,63 @@ func Build(history, weather []Row, start, capacity float64, o BuildOptions) Row 
 	if o.Horizon <= 0 {
 		o.Horizon = 168
 	}
-	k, n := FitSolarCoefficient(history, weather)
-	shape := FitDiurnalShape(history, weather, k, o.Offset)
-	profile := FitLoadProfile(history, o.Now, o.CarLoad, 3600)
+	completed := make([]Row, 0, len(history))
+	for _, row := range history {
+		ts := int64(Number(row, "ts"))
+		if ts > 0 && ts/3600*3600+3600 <= o.Now {
+			completed = append(completed, row)
+		}
+	}
+	k, n := FitSolarCoefficient(completed, weather)
+	if o.SolarCoeffOverride != nil && *o.SolarCoeffOverride >= 0 {
+		k = *o.SolarCoeffOverride
+	}
+	shape := FitDiurnalShape(completed, weather, k, o.Offset)
+	fsHist := map[int64]float64{}
+	for ts, w := range o.SolarHistory {
+		fsHist[ts] = w
+	}
+	for ts, w := range o.SolarHourly {
+		if ts < o.Now {
+			if _, exists := fsHist[ts]; !exists {
+				fsHist[ts] = w
+			}
+		}
+	}
+	shade := FitShadeModel(completed, weather, ShadeOptions{
+		Now:        o.Now,
+		Offset:     o.Offset,
+		Lat:        o.Lat,
+		Lon:        o.Lon,
+		Plane:      o.Plane,
+		FSHistory:  fsHist,
+		SolarCoeff: k,
+	})
+	profile := FitLoadProfileOffset(history, o.Now, o.CarLoad, 3600, o.Offset)
 	parasitic, pct, dn := FitDrainModel(history, capacity, o.Packs)
+	drainSrc := "default"
+	if dn >= 5 {
+		drainSrc = "fit"
+	}
+	if o.ParasiticOverride != nil && *o.ParasiticOverride >= 0 {
+		parasitic = *o.ParasiticOverride
+		drainSrc = "user"
+	}
+	if o.OverheadOverride != nil && *o.OverheadOverride >= 0 {
+		pct = *o.OverheadOverride
+		drainSrc = "user"
+	}
 	baseline := PerPackBaseline(o.Packs)
 	effective := parasitic + baseline
 	eff, en := FitChargeEfficiency(history, capacity, .9, 5)
+	effSrc := "default"
+	if en >= 5 {
+		effSrc = "fit"
+	}
+	if o.ChargeEffOverride != nil && *o.ChargeEffOverride > 0 && *o.ChargeEffOverride <= 1 {
+		eff = *o.ChargeEffOverride
+		effSrc = "user"
+	}
 	vals := []float64{}
 	peak, total := 0.0, 0.0
 	for _, r := range history {
@@ -84,14 +142,16 @@ func Build(history, weather []Row, start, capacity float64, o BuildOptions) Row 
 		duration := clamp(float64(ts-max(o.Now, begin))/3600, 0, 1)
 		t := time.Unix(begin+int64(o.Offset), 0).UTC()
 		ghi := Number(w, "ghi_w_m2")
-		uncapped := math.Max(0, k*ghi*shape[t.Hour()])
+		uncapped, shadeMult := shade.ApplyOpenMeteo(k, ghi, w, t.Hour(), begin, shape[t.Hour()])
+		rawSolar := math.Max(0, k*ghi)
 		source := "open_meteo"
 		v, ok := o.SolarHourly[begin]
 		if !ok {
 			v, ok = o.SolarHourly[ts]
 		}
 		if ok {
-			uncapped = math.Max(0, v)
+			rawSolar = math.Max(0, v)
+			uncapped, shadeMult = shade.ApplyForecastSolar(rawSolar, w, t.Hour(), begin)
 			source = "forecast_solar"
 			fs++
 		} else {
@@ -114,7 +174,7 @@ func Build(history, weather []Row, start, capacity float64, o BuildOptions) Row 
 		} else if !asleep {
 			load = ExpectedLoad(profile, begin, o.Offset, pct, effective)
 		}
-		hours = append(hours, Row{"ts": ts, "duration_h": round(duration, 6), "solar_w": round(solar, 1), "ghi_w_m2": round(ghi, 1), "solar_w_uncapped": round(uncapped, 1), "solar_capped": solar < uncapped, "solar_source": source, "load_w": round(load, 1), "cloud_cover_pct": round(Number(w, "cloud_cover_pct"), 1)})
+		hours = append(hours, Row{"ts": ts, "duration_h": round(duration, 6), "solar_w": round(solar, 1), "ghi_w_m2": round(ghi, 1), "solar_w_raw": round(rawSolar, 1), "solar_shade_factor": round(shadeMult, 3), "solar_w_uncapped": round(uncapped, 1), "solar_capped": solar < uncapped, "solar_source": source, "load_w": round(load, 1), "cloud_cover_pct": round(Number(w, "cloud_cover_pct"), 1)})
 	}
 	sim := o.Simulation
 	sim.ChargeEfficiency = &eff
@@ -131,19 +191,13 @@ func Build(history, weather []Row, start, capacity float64, o BuildOptions) Row 
 	for h, v := range shape {
 		shapeOut[strconv.Itoa(h)] = round(v, 3)
 	}
-	fitSource := func(n int) string {
-		if n >= 5 {
-			return "fit"
-		}
-		return "default"
-	}
 	nullable := func(v *float64) any {
 		if v == nil {
 			return nil
 		}
 		return round(*v, 1)
 	}
-	for key, v := range (Row{"solar_source": source, "load_mode": mode, "solar_coefficient": round(k, 4), "fit_samples": n, "solar_recent_peak_w": round(peak, 1), "solar_cap_w": nullable(capW), "diurnal_shape": shapeOut, "charge_ceiling_pct": nullable(ceiling), "overall_load_w": round(avg, 1), "output_w_p95": round(p95, 1), "parasitic_w": round(parasitic, 1), "pack_baseline_w": round(baseline, 1), "pack_count": o.Packs, "effective_parasitic_w": round(effective, 1), "inverter_overhead_pct": round(pct, 4), "inverter_overhead_n_windows": dn, "inverter_overhead_source": fitSource(dn), "idle_overhead_w": round(effective, 1), "idle_overhead_n_windows": dn, "charge_efficiency": round(eff, 3), "charge_efficiency_n_windows": en, "charge_efficiency_source": fitSource(en), "solar_calibration": SolarCalibration(history, weather, k), "forecast": hours, "daily": SummarizeDays(hours, &start, o.Offset)}) {
+	for key, v := range (Row{"solar_source": source, "load_mode": mode, "solar_coefficient": round(k, 4), "fit_samples": n, "solar_recent_peak_w": round(peak, 1), "solar_cap_w": nullable(capW), "diurnal_shape": shapeOut, "shade_profile": shade.Diagnostics(), "charge_ceiling_pct": nullable(ceiling), "overall_load_w": round(avg, 1), "output_w_p95": round(p95, 1), "parasitic_w": round(parasitic, 1), "pack_baseline_w": round(baseline, 1), "pack_count": o.Packs, "effective_parasitic_w": round(effective, 1), "inverter_overhead_pct": round(pct, 4), "inverter_overhead_n_windows": dn, "inverter_overhead_source": drainSrc, "idle_overhead_w": round(effective, 1), "idle_overhead_n_windows": dn, "charge_efficiency": round(eff, 3), "charge_efficiency_n_windows": en, "charge_efficiency_source": effSrc, "solar_calibration": SolarCalibration(completed, weather, k), "forecast": hours, "daily": SummarizeDays(hours, &start, o.Offset)}) {
 		out[key] = v
 	}
 	return out

@@ -119,12 +119,16 @@ func FitSolarCoefficient(energy, weather []Row) (float64, int) {
 	soc := map[int64]float64{}
 	ac := map[int64]bool{}
 	detected := false
+	var refNow int64
 	for _, r := range energy {
 		ts := int64(Number(r, "ts"))
 		if ts <= 0 {
 			continue
 		}
 		h := ts / 3600 * 3600
+		if h > refNow {
+			refNow = h
+		}
 		s := Number(r, "solar_w")
 		if s > solar[h] {
 			solar[h] = s
@@ -145,8 +149,11 @@ func FitSolarCoefficient(energy, weather []Row) (float64, int) {
 	if !detected {
 		return 0, 0
 	}
-	type pair struct{ x, y float64 }
-	var head, clear, broad []pair
+	type pair struct {
+		x, y float64
+		ts   int64
+	}
+	var head, clear, headBroad, broad []pair
 	for _, w := range weather {
 		h := int64(Number(w, "ts"))/3600*3600 - 3600
 		ghi := Number(w, "ghi_w_m2")
@@ -154,12 +161,18 @@ func FitSolarCoefficient(energy, weather []Row) (float64, int) {
 		if ghi <= 50 || sol <= 0 {
 			continue
 		}
-		p := pair{ghi, sol}
+		p := pair{ghi, sol, h}
 		broad = append(broad, p)
-		if ghi >= 700 && Number(w, "cloud_cover_pct") <= 30 {
+		v, ok := soc[h]
+		hasHeadroom := ok && v <= 70 && !ac[h]
+		if hasHeadroom {
+			headBroad = append(headBroad, p)
+		}
+		// 300 W/m² captures winter clear-sky midday at mid/high latitudes where
+		// peak horizontal GHI drops well below the summer 700 W/m² threshold.
+		if ghi >= 300 && Number(w, "cloud_cover_pct") <= 30 {
 			clear = append(clear, p)
-			v, ok := soc[h]
-			if ok && v <= 70 && !ac[h] {
+			if hasHeadroom {
 				head = append(head, p)
 			}
 		}
@@ -169,14 +182,17 @@ func FitSolarCoefficient(energy, weather []Row) (float64, int) {
 		pairs = head
 	} else if len(clear) >= 2 {
 		pairs = clear
+	} else if len(headBroad) >= 2 {
+		pairs = headBroad
 	}
 	if len(pairs) < 2 {
 		return .32, len(pairs)
 	}
 	xx, xy := 0.0, 0.0
 	for _, p := range pairs {
-		xx += p.x * p.x
-		xy += p.x * p.y
+		wt := recencyWeight(p.ts, refNow, 7.0)
+		xx += wt * p.x * p.x
+		xy += wt * p.x * p.y
 	}
 	k := xy / xx
 	if k < .05 || k > 15 {
@@ -233,27 +249,60 @@ func FitDiurnalShape(energy, weather []Row, k float64, offset int) map[int]float
 		return out
 	}
 	byHour := map[int64]float64{}
+	hasEnergy := map[int64]bool{}
+	soc := map[int64]float64{}
+	hasSOC := map[int64]bool{}
+	ac := map[int64]bool{}
+	var refNow int64
 	for _, r := range energy {
-		h := int64(Number(r, "ts")) / 3600 * 3600
+		ts := int64(Number(r, "ts"))
+		if ts <= 0 || !hasShadeCoverage(r) {
+			continue
+		}
+		h := ts / 3600 * 3600
+		hasEnergy[h] = true
+		if h > refNow {
+			refNow = h
+		}
 		byHour[h] = math.Max(byHour[h], Number(r, "solar_w"))
+		if v := RowSOC(r); v != nil {
+			if !hasSOC[h] || *v < soc[h] {
+				soc[h] = *v
+				hasSOC[h] = true
+			}
+		}
+		if Number(r, "ac_input_w") > 50 {
+			ac[h] = true
+		}
 	}
-	buckets := map[int][]float64{}
+	vals := map[int][]float64{}
+	weights := map[int][]float64{}
+	wSum := map[int]float64{}
 	for _, w := range weather {
 		ts := int64(Number(w, "ts"))/3600*3600 - 3600
 		ghi := Number(w, "ghi_w_m2")
-		if ghi <= 50 {
+		if ghi <= 50 || !hasEnergy[ts] {
 			continue
 		}
 		ratio := byHour[ts] / (k * ghi)
-		if ratio < .05 || ratio > 5 {
+		if ratio > 5 {
+			continue
+		}
+		// Keep ratio == 0 on shaded daylight hours, but skip hours where the
+		// battery was near full or AC-charging (MPPT curtailment != shade).
+		if ac[ts] || (hasSOC[ts] && soc[ts] >= 85 && ratio < 0.85) {
 			continue
 		}
 		h := time.Unix(ts+int64(offset), 0).UTC().Hour()
-		buckets[h] = append(buckets[h], ratio)
+		wt := recencyWeight(ts, refNow, shadeHalfLifeDays)
+		vals[h] = append(vals[h], ratio)
+		weights[h] = append(weights[h], wt)
+		wSum[h] += wt
 	}
-	for h, v := range buckets {
-		n := float64(len(v))
-		out[h] = (median(v)*n + 4) / (n + 4)
+	const prior = 0.5
+	for h, v := range vals {
+		wm := weightedQuantile(v, weights[h], 0.5)
+		out[h] = (wm*wSum[h] + prior) / (wSum[h] + prior)
 	}
 	return out
 }

@@ -12,6 +12,19 @@ func TestSolarPositionEquinox(t *testing.T) {
 		t.Fatal(z, a)
 	}
 }
+
+func TestDirectIrradianceFollowsSunAzimuth(t *testing.T) {
+	for _, hour := range []int{9, 15} {
+		ts := time.Date(2026, 3, 20, hour, 0, 0, 0, time.UTC).Unix()
+		_, az := SolarPosition(35, 0, ts)
+		east, _ := POAComponents(450, 400, 50, 35, 0, ts, 45, -90)
+		west, _ := POAComponents(450, 400, 50, 35, 0, ts, 45, 90)
+		if hour < 12 && (az >= 180 || east <= west) || hour > 12 && (az <= 180 || west <= east) {
+			t.Errorf("%d:00 azimuth %.1f, east-facing beam %.1f, west-facing beam %.1f", hour, az, east, west)
+		}
+	}
+}
+
 func TestInferPlaneReference(t *testing.T) {
 	if out := InferPlane(nil, nil, 37.3, -121.9); out["error"] == nil || out["n_samples"] != 0 {
 		t.Fatal(out)

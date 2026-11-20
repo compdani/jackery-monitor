@@ -1,8 +1,10 @@
 package store
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/pocketbase/dbx"
 	"github.com/pocketbase/pocketbase/core"
 	"math"
 	"sort"
@@ -57,6 +59,9 @@ func (s *Store) energyMinutesRange(sn string, since, until float64) ([]map[strin
 			b := int64(num(r["bucket"]))
 			if r["bucket"] == nil {
 				b = int64(num(r["ts"])) / 60 * 60
+			}
+			if r["solar_coverage_s"] == nil && (r["last_solar_w"] != nil || r["solar_wh"] != nil) {
+				r["solar_coverage_s"] = 60.0
 			}
 			buckets[b] = r
 		} else {
@@ -116,6 +121,9 @@ func (s *Store) energyMinutesRange(sn string, since, until float64) ([]map[strin
 			end := math.Min(integrationTo, float64(minute+60))
 			if !imported[minute] {
 				row := ensure(minute)
+				if (prev["solar_input_w"] != nil || prev["solar_w"] != nil) && (r["solar_input_w"] != nil || r["solar_w"] != nil) {
+					row["solar_coverage_s"] = num(row["solar_coverage_s"]) + end - cursor
+				}
 				for dst, src := range map[string]string{"input_wh": "input_power_w", "output_wh": "output_power_w", "solar_wh": "solar_input_w", "ac_input_wh": "ac_input_w", "solar_charge_diverted_wh": "solar_charge_diverted_w"} {
 					av, zv := num(prev[src]), num(r[src])
 					if src == "solar_input_w" {
@@ -151,6 +159,7 @@ func (s *Store) energyMinutesRange(sn string, since, until float64) ([]map[strin
 				buckets[b] = row
 			}
 			row["solar_wh"] = num(p["solar_wh"]) / 30
+			row["solar_coverage_s"] = 60.0
 			row["solar_energy_source"] = "siseli_portal"
 		}
 	}
@@ -183,13 +192,14 @@ func (s *Store) CorrectOutput(sn string, start, end, power float64) (map[string]
 		for b := first; b < end; b += 60 {
 			row := byBucket[b]
 			if row == nil {
-				row = map[string]any{"input_wh": 0.0, "solar_wh": 0.0, "ac_input_wh": 0.0, "sample_count": 1.0}
+				row = map[string]any{"input_wh": 0.0, "solar_wh": 0.0, "ac_input_wh": 0.0, "sample_count": 1.0, "solar_coverage_s": 0.0}
 			}
 			row["ts"] = b
 			row["bucket"] = b
 			row["device_sn"] = sn
 			row["output_wh"] = power / 60
 			row["last_output_w"] = math.RoundToEven(power)
+			row["solar_coverage_s"] = num(row["solar_coverage_s"])
 			row["_corrected_output"] = true
 			row["_energy_kind"] = "aggregate"
 			if err := tx.Put("samples", SampleKey(sn, b), sn, row); err != nil {
@@ -218,6 +228,11 @@ func EnergyHistory(minutes []map[string]any, since float64, bucket int) []map[st
 	out := []map[string]any{}
 	for b, rows := range groups {
 		p := map[string]any{"ts": float64(b)}
+		coverage := 0.0
+		for _, row := range rows {
+			coverage += num(row["solar_coverage_s"])
+		}
+		p["solar_coverage_s"] = coverage
 		for _, f := range energyFields {
 			v := 0.0
 			for _, r := range rows {
@@ -324,12 +339,39 @@ func (s *Store) SetCapacity(sn string, capacity any) error {
 // DecorateHistorySOC uses the nearest complete pack snapshot within 30 minutes.
 // Separate imported pack rows at the same timestamp form one snapshot.
 func (s *Store) DecorateHistorySOC(sn string, history []map[string]any, mainCapacity, packCapacity float64) error {
+	return s.DecorateHistorySOCMulti(sn, [][]map[string]any{history}, mainCapacity, packCapacity)
+}
+
+// DecorateHistorySOCMulti shares one bounded battery_packs range read across
+// multiple history slices (e.g. 14-day hourly history and 10-minute fresh SOC).
+func (s *Store) DecorateHistorySOCMulti(sn string, groups [][]map[string]any, mainCapacity, packCapacity float64) error {
 	if mainCapacity <= 0 || packCapacity <= 0 {
 		return nil
 	}
-	packs, err := s.List("battery_packs", sn, 0, 0)
+	minTS, maxTS := math.Inf(1), math.Inf(-1)
+	for _, history := range groups {
+		for _, row := range history {
+			if row["battery_pct"] == nil {
+				continue
+			}
+			ts := num(row["ts"])
+			if ts < minTS {
+				minTS = ts
+			}
+			if ts > maxTS {
+				maxTS = ts
+			}
+		}
+	}
+	if math.IsInf(minTS, 1) {
+		return nil
+	}
+	packs, err := s.ListRange("battery_packs", sn, math.Max(0, minTS-1800), maxTS+1801, 0)
 	if err != nil {
 		return err
+	}
+	if len(packs) == 0 {
+		return nil
 	}
 	grouped := map[float64][]any{}
 	times := []float64{}
@@ -343,35 +385,65 @@ func (s *Store) DecorateHistorySOC(sn string, history []map[string]any, mainCapa
 		}
 	}
 	sort.Float64s(times)
-	for _, row := range history {
-		if row["battery_pct"] == nil {
-			continue
-		}
-		target := num(row["ts"])
-		idx := sort.SearchFloat64s(times, target)
-		nearest := -1
-		distance := math.Inf(1)
-		for _, i := range []int{idx - 1, idx} {
-			if i >= 0 && i < len(times) {
-				d := math.Abs(times[i] - target)
-				if d <= 1800 && d <= distance {
-					distance = d
-					nearest = i
+	for _, history := range groups {
+		for _, row := range history {
+			if row["battery_pct"] == nil {
+				continue
+			}
+			target := num(row["ts"])
+			idx := sort.SearchFloat64s(times, target)
+			nearest := -1
+			distance := math.Inf(1)
+			for _, i := range []int{idx - 1, idx} {
+				if i >= 0 && i < len(times) {
+					d := math.Abs(times[i] - target)
+					if d <= 1800 && d <= distance {
+						distance = d
+						nearest = i
+					}
 				}
 			}
-		}
-		if nearest < 0 {
-			continue
-		}
-		sum, capacity := num(row["battery_pct"])*mainCapacity, mainCapacity
-		for _, raw := range grouped[times[nearest]] {
-			pack, ok := raw.(map[string]any)
-			if ok && pack["rb"] != nil {
-				sum += num(pack["rb"]) * packCapacity
-				capacity += packCapacity
+			if nearest < 0 {
+				continue
 			}
+			sum, capacity := num(row["battery_pct"])*mainCapacity, mainCapacity
+			for _, raw := range grouped[times[nearest]] {
+				pack, ok := raw.(map[string]any)
+				if ok && pack["rb"] != nil {
+					sum += num(pack["rb"]) * packCapacity
+					capacity += packCapacity
+				}
+			}
+			row["system_soc"] = math.Max(0, math.Min(100, sum/capacity))
 		}
-		row["system_soc"] = math.Max(0, math.Min(100, sum/capacity))
 	}
 	return nil
+}
+
+// LatestPackCount returns the expansion-pack count from the latest timestamped
+// snapshot using idx_battery_packs_device_ts instead of scanning lifetime rows.
+func (s *Store) LatestPackCount(sn string) (int, error) {
+	if sn == "" {
+		return 0, nil
+	}
+	var rows []struct {
+		Payload string `db:"payload"`
+	}
+	err := s.App.DB().NewQuery(`SELECT payload FROM battery_packs
+ WHERE device_sn = {:sn} AND ts = (SELECT max(ts) FROM battery_packs WHERE device_sn = {:sn})`).
+		Bind(dbx.Params{"sn": sn}).All(&rows)
+	if err != nil {
+		return 0, err
+	}
+	count := 0
+	for _, row := range rows {
+		var p map[string]any
+		if err := json.Unmarshal([]byte(row.Payload), &p); err != nil {
+			continue
+		}
+		if items, ok := p["packs"].([]any); ok {
+			count += len(items)
+		}
+	}
+	return count, nil
 }

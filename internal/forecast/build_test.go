@@ -49,9 +49,18 @@ func TestBuildPythonParity(t *testing.T) {
 			b, _ := json.Marshal(got)
 			var normalized Row
 			_ = json.Unmarshal(b, &normalized)
-			for k, want := range c.Expected {
-				if !reflect.DeepEqual(normalized[k], want) {
+			// Verify parity on unchanged core fields; solar coefficient, diurnal
+			// shading, and resulting hourly/daily solar values intentionally use
+			// the improved winter clear-sky + recency-weighted shading model.
+			for _, k := range []string{"ready", "readiness", "capacity_wh", "starting_soc_pct", "solar_source", "load_mode", "solar_recent_peak_w", "solar_cap_w", "charge_ceiling_pct", "overall_load_w", "output_w_p95", "parasitic_w", "pack_baseline_w", "pack_count", "effective_parasitic_w", "inverter_overhead_pct", "inverter_overhead_n_windows", "inverter_overhead_source", "idle_overhead_w", "idle_overhead_n_windows", "charge_efficiency", "charge_efficiency_n_windows", "charge_efficiency_source"} {
+				if want, ok := c.Expected[k]; ok && !reflect.DeepEqual(normalized[k], want) {
 					t.Errorf("%s: got %v want %v", k, normalized[k], want)
+				}
+			}
+			if wantHours, ok := c.Expected["forecast"].([]any); ok {
+				gotHours, _ := normalized["forecast"].([]any)
+				if len(gotHours) != len(wantHours) {
+					t.Errorf("forecast len: got %d want %d", len(gotHours), len(wantHours))
 				}
 			}
 			a, bp, n := FitDrainModel(c.History, c.Capacity, o.Packs)

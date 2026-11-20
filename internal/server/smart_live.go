@@ -3,7 +3,9 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
+	"slices"
 	"sort"
 	"strconv"
 	"time"
@@ -64,31 +66,44 @@ func (s *Server) smartInputs(ctx context.Context, sn string, now int64) ([]forec
 	}
 	loc, _ := s.Store.Secret(s.Key, "location")
 	offset := int(forecast.Number(loc, "utc_offset_seconds"))
+	weather = slices.Clone(weather)
 	sort.Slice(weather, func(i, j int) bool { return forecast.Number(weather[i], "ts") < forecast.Number(weather[j], "ts") })
 	return history, weather, capacity, soc, offset, err
 }
 
 // energyInputs returns pack-weighted hourly history over the lookback, the
-// resolved system capacity and the fresh (10-minute) system SOC when present.
+// base capacity hint (before expansion packs) and the fresh (10-minute) system
+// SOC when present. Uses indexed energy_minutes rollups when ready to avoid
+// decoding 14 days of raw sample JSON on every forecast request.
 func (s *Server) energyInputs(sn string, now int64, lookbackHours int) ([]forecast.Row, float64, *float64, error) {
 	since := float64(now - int64(lookbackHours)*3600)
-	minutes, err := s.Store.EnergyMinutes(sn, min(since, float64(now-600)))
-	if err != nil {
+	var history, fresh []map[string]any
+	hourly, err := s.Store.EnergyHourlyFromRollups(sn, since)
+	if err == nil {
+		history = hourly
+		recentMin, err := s.Store.EnergyMinutes(sn, float64(now-600))
+		if err != nil {
+			return nil, 0, nil, err
+		}
+		fresh = store.EnergyHistory(recentMin, float64(now-600), 60)
+	} else if errors.Is(err, store.ErrEnergyBuilding) {
+		minutes, err := s.Store.EnergyMinutes(sn, min(since, float64(now-600)))
+		if err != nil {
+			return nil, 0, nil, err
+		}
+		history = store.EnergyHistory(minutes, since, 3600)
+		fresh = store.EnergyHistory(minutes, float64(now-600), 60)
+	} else {
 		return nil, 0, nil, err
 	}
-	history := store.EnergyHistory(minutes, since, 3600)
 	main, pack, capacity, err := s.capacityHints(sn)
 	if err != nil {
 		return nil, 0, nil, err
 	}
-	if err = s.Store.DecorateHistorySOC(sn, history, main, pack); err != nil {
+	if err = s.Store.DecorateHistorySOCMulti(sn, [][]map[string]any{history, fresh}, main, pack); err != nil {
 		return nil, 0, nil, err
 	}
 	var soc *float64
-	fresh := store.EnergyHistory(minutes, float64(now-600), 60)
-	if err = s.Store.DecorateHistorySOC(sn, fresh, main, pack); err != nil {
-		return nil, 0, nil, err
-	}
 	for _, r := range fresh {
 		if forecast.Number(r, "ts") >= float64(now-600) && forecast.Number(r, "ts") <= float64(now) {
 			v := r["system_soc"]
@@ -150,7 +165,16 @@ func (s *Server) evaluateSmart(ctx context.Context, sn string, now int64, record
 	if soc == nil {
 		reason = "fresh battery telemetry unavailable"
 	} else if len(w) > 0 {
+		capacity = s.resolvedCapacity(sn, capacity)
 		opts := forecast.BuildOptions{Now: now, Offset: offset, Packs: s.packCount(sn), CarLoad: s.carLoad(sn), DisableCeiling: s.ecoflowBatteryWh(sn) > 0}
+		if loc, ok, _ := s.savedLocation(); ok {
+			opts.Lat, opts.Lon = forecast.Number(loc, "latitude"), forecast.Number(loc, "longitude")
+		}
+		if plane, ok, _ := s.weatherStore().Plane(sn); ok {
+			p := plane
+			opts.Plane = &p
+		}
+		s.applyStoredParamOverrides(sn, &opts)
 		baseline := forecast.Build(h, w, *soc, capacity, opts)
 		opts.Simulation.ACFloor = &cfg.Target
 		live := forecast.Build(h, w, *soc, capacity, opts)

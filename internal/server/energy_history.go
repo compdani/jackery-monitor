@@ -154,6 +154,7 @@ func (s *Server) energyMutation(w http.ResponseWriter, r *http.Request, b map[st
 			out["device_sn"] = sn
 			out["live_points_patched"] = 0
 			s.energyReads.invalidate()
+			s.invalidateForecastCache()
 			jsonOut(w, 200, out)
 		}
 		return true
@@ -174,21 +175,10 @@ func (s *Server) energyMutation(w http.ResponseWriter, r *http.Request, b map[st
 			model, _ := d["model_code"].(float64)
 			main, pack := forecast.BatteryCapacity(int(model)), forecast.ExpansionCapacity(int(model))
 			var auto any
-			count := 0
-			packs, err := s.Store.List("battery_packs", sn, 0, 0)
+			count, err := s.Store.LatestPackCount(sn)
 			if err != nil {
 				storageError(w, err)
 				return true
-			}
-			if len(packs) > 0 {
-				latest, _ := packs[len(packs)-1]["ts"].(float64)
-				for _, p := range packs {
-					if p["ts"] == latest {
-						if arr, ok := p["packs"].([]any); ok {
-							count += len(arr)
-						}
-					}
-				}
 			}
 			effective := main
 			if count > 0 {
@@ -225,6 +215,7 @@ func (s *Server) energyMutation(w http.ResponseWriter, r *http.Request, b map[st
 	if err := s.Store.SetCapacity(str(b, "device_sn"), v); err != nil {
 		fail(w, 400, err.Error())
 	} else {
+		s.invalidateForecastCache()
 		jsonOut(w, 200, map[string]any{"ok": true, "device_sn": str(b, "device_sn"), "capacity_wh_override": v})
 	}
 	return true

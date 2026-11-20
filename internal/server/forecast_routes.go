@@ -40,14 +40,17 @@ func (s *Server) forecastRoutes(w http.ResponseWriter, r *http.Request, b map[st
 	switch {
 	case p == "/api/forecast" && m == "GET":
 		sn := q.Get("device_sn")
-		out := s.buildForecast(ctx, sn, time.Now().Unix(), true)
+		var out map[string]any
 		if q.Get("_diag") != "" && q.Get("_diag") != "0" && sn != "" {
+			out = s.buildForecast(ctx, sn, time.Now().Unix(), true)
 			h, _, _, err := s.energyInputs(sn, time.Now().Unix(), 14*24)
 			if err != nil {
 				out["idle_window_diag"] = map[string]any{"error": err.Error()}
 			} else {
 				out["idle_window_diag"] = diagnoseIdleWindows(h)
 			}
+		} else {
+			out = s.cachedForecast(ctx, sn, q.Get("preview") == "1")
 		}
 		jsonOut(w, 200, out)
 	case p == "/api/location" && m == "GET":
@@ -64,7 +67,7 @@ func (s *Server) forecastRoutes(w http.ResponseWriter, r *http.Request, b map[st
 			client, _ := s.forecastClients()
 			if label := client.ReverseGeocode(ctx, forecast.Number(loc, "latitude"), forecast.Number(loc, "longitude")); label != "" {
 				loc["label"] = string([]rune(label)[:min(200, len([]rune(label)))])
-				if err := s.Store.SaveSecret(s.Key, "location", loc); err != nil {
+				if err := s.updateLocationMetadata(loc, map[string]any{"label": loc["label"]}); err != nil {
 					s.Store.App.Logger().Debug("location label backfill", "error", err)
 				}
 			}
@@ -82,13 +85,17 @@ func (s *Server) forecastRoutes(w http.ResponseWriter, r *http.Request, b map[st
 			runes := []rune(strings.TrimSpace(label))
 			rec["label"] = string(runes[:min(200, len(runes))])
 		}
-		if err := s.Store.SaveSecret(s.Key, "location", rec); err != nil {
+		s.forecasts.locationMu.Lock()
+		err := s.Store.SaveSecret(s.Key, "location", rec)
+		s.forecasts.locationMu.Unlock()
+		if err != nil {
 			storageError(w, err)
 			return true
 		}
 		weather, solar := s.forecastClients()
 		weather.ClearCache()
 		solar.ClearCache()
+		s.invalidateForecastCache()
 		jsonOut(w, 200, rec)
 	case p == "/api/location/geocode" && m == "GET":
 		count := 5
@@ -137,6 +144,7 @@ func (s *Server) forecastRoutes(w http.ResponseWriter, r *http.Request, b map[st
 		}
 		_, solar := s.forecastClients()
 		solar.ClearCache()
+		s.invalidateForecastCache()
 		jsonOut(w, 200, map[string]any{"device_sn": sn, "declination": plane.Declination, "azimuth": plane.Azimuth, "kwp": plane.KWP})
 	case p == "/api/forecast/solar_array/infer" && m == "POST":
 		loc, ok, err := s.savedLocation()
@@ -187,6 +195,7 @@ func (s *Server) forecastRoutes(w http.ResponseWriter, r *http.Request, b map[st
 				return true
 			}
 			solar.ClearCache()
+			s.invalidateForecastCache()
 			jsonOut(w, 200, map[string]any{"ok": true})
 		case "DELETE":
 			if err := ws.ClearSolarKey(); err != nil {
@@ -194,6 +203,7 @@ func (s *Server) forecastRoutes(w http.ResponseWriter, r *http.Request, b map[st
 				return true
 			}
 			solar.ClearCache()
+			s.invalidateForecastCache()
 			jsonOut(w, 200, map[string]any{"ok": true})
 		default:
 			fail(w, 405, "method not allowed")
@@ -212,7 +222,7 @@ func (s *Server) forecastRoutes(w http.ResponseWriter, r *http.Request, b map[st
 		learned := []map[string]any{}
 		now := time.Now().Unix()
 		if h, _, _, err := s.energyInputs(sn, now, 14*24); err == nil {
-			learned = learnedProfile(forecast.FitLoadProfile(h, now, s.carLoad(sn), 3600))
+			learned = learnedProfile(forecast.FitLoadProfileOffset(h, now, s.carLoad(sn), 3600, s.tzOffset()))
 		}
 		out := map[string]any{"device_sn": sn, "learned_profile": learned}
 		for k, v := range sched {
@@ -239,7 +249,7 @@ func (s *Server) forecastRoutes(w http.ResponseWriter, r *http.Request, b map[st
 				fail(w, 400, "could not copy learned profile: "+err.Error())
 				return true
 			}
-			payload["windows"] = windowsFromProfile(forecast.FitLoadProfile(h, now, s.carLoad(sn), 3600))
+			payload["windows"] = windowsFromProfile(forecast.FitLoadProfileOffset(h, now, s.carLoad(sn), 3600, s.tzOffset()))
 			payload["mode"] = "scheduled"
 		}
 		rec := NormalizeLoadSchedule(payload)
@@ -247,6 +257,7 @@ func (s *Server) forecastRoutes(w http.ResponseWriter, r *http.Request, b map[st
 			storageError(w, err)
 			return true
 		}
+		s.invalidateForecastCache()
 		out := map[string]any{"device_sn": sn}
 		for k, v := range rec {
 			out[k] = v
@@ -321,6 +332,9 @@ func (s *Server) paramsPost(w http.ResponseWriter, r *http.Request, b map[string
 		if status != 200 {
 			fail(w, status, detail)
 		} else {
+			if b["apply"] == true {
+				s.invalidateForecastCache()
+			}
 			jsonOut(w, 200, out)
 		}
 		return
@@ -368,6 +382,7 @@ func (s *Server) paramsPost(w http.ResponseWriter, r *http.Request, b map[string
 	if p == "/api/devices/params/refit" && b["lookback_hours"] != nil {
 		out["lookback_hours"] = hours
 	}
+	s.invalidateForecastCache()
 	jsonOut(w, 200, out)
 }
 

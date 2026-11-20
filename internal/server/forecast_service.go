@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"slices"
 	"sort"
 	"sync"
 	"time"
@@ -14,11 +15,83 @@ import (
 	"github.com/compdani/jackery-monitor/internal/weatherstore"
 )
 
-// forecastRuntime owns the weather/Forecast.Solar clients shared by the
-// forecast API, the hourly recorder and the charge controllers.
+// forecastRuntime coordinates the shared weather clients and caches API responses.
 type forecastRuntime struct {
-	once  sync.Once
-	fetch sync.Mutex
+	once       sync.Once
+	fetch      sync.Mutex
+	locationMu sync.Mutex
+	cacheMu    sync.Mutex
+	cache      map[forecastCacheKey]*forecastCacheEntry
+}
+
+type forecastCacheKey struct {
+	serial  string
+	preview bool
+}
+
+type forecastCacheEntry struct {
+	ready   chan struct{}
+	expires time.Time
+	value   map[string]any
+}
+
+const forecastCacheTTL = 60 * time.Second
+
+func (s *Server) invalidateForecastCache() {
+	s.forecasts.cacheMu.Lock()
+	s.forecasts.cache = nil
+	s.forecasts.cacheMu.Unlock()
+}
+
+// cachedForecast coalesces concurrent /api/forecast reads for the same device
+// and reuses recent responses for 60s so tab switches don't recompute or write.
+func (s *Server) cachedForecast(ctx context.Context, sn string, preview bool) map[string]any {
+	resolvedSN := sn
+	if resolvedSN == "" {
+		resolvedSN = s.activeSerial()
+	}
+	if resolvedSN == "" {
+		return s.buildForecastWithMode(ctx, sn, time.Now().Unix(), true, preview)
+	}
+	key := forecastCacheKey{serial: resolvedSN, preview: preview}
+	s.forecasts.cacheMu.Lock()
+	if s.forecasts.cache == nil {
+		s.forecasts.cache = map[forecastCacheKey]*forecastCacheEntry{}
+	}
+	now := time.Now()
+	if preview {
+		full := s.forecasts.cache[forecastCacheKey{serial: resolvedSN}]
+		if full != nil && now.Before(full.expires) {
+			s.forecasts.cacheMu.Unlock()
+			return full.value
+		}
+	}
+	entry := s.forecasts.cache[key]
+	leader := entry == nil || (!entry.expires.IsZero() && !now.Before(entry.expires))
+	if leader {
+		entry = &forecastCacheEntry{ready: make(chan struct{})}
+		s.forecasts.cache[key] = entry
+	}
+	s.forecasts.cacheMu.Unlock()
+	if leader {
+		val := s.buildForecastWithMode(ctx, resolvedSN, now.Unix(), true, preview)
+		s.forecasts.cacheMu.Lock()
+		entry.value = val
+		if val["error"] == nil && val["ready"] == true {
+			entry.expires = time.Now().Add(forecastCacheTTL)
+		} else if s.forecasts.cache[key] == entry {
+			delete(s.forecasts.cache, key)
+		}
+		s.forecasts.cacheMu.Unlock()
+		close(entry.ready)
+		return val
+	}
+	select {
+	case <-entry.ready:
+		return entry.value
+	case <-ctx.Done():
+		return map[string]any{"error": "request canceled", "configured": true}
+	}
 }
 
 var errNoLocation = errors.New("location not set")
@@ -68,22 +141,39 @@ func (s *Server) weatherNow(ctx context.Context) (forecast.Weather, error) {
 	if !ok {
 		return forecast.Weather{}, errNoLocation
 	}
+	return s.weatherAt(ctx, loc)
+}
+
+func (s *Server) weatherAt(ctx context.Context, loc map[string]any) (forecast.Weather, error) {
 	client, _ := s.forecastClients()
 	s.forecasts.fetch.Lock()
 	client.Offset = int(forecast.Number(loc, "utc_offset_seconds"))
 	w, err := client.Fetch(ctx, forecast.Number(loc, "latitude"), forecast.Number(loc, "longitude"))
 	s.forecasts.fetch.Unlock()
 	if err == nil && !w.Synthetic && !w.Stale && w.Timezone != "" && (loc["utc_offset_seconds"] == nil || int(forecast.Number(loc, "utc_offset_seconds")) != w.Offset || str(loc, "timezone") != w.Timezone) {
-		loc["utc_offset_seconds"] = w.Offset
-		loc["timezone"] = w.Timezone
-		if loc["updated_at"] == nil {
-			loc["updated_at"] = float64(time.Now().Unix())
-		}
-		if e := s.Store.SaveSecret(s.Key, "location", loc); e != nil {
+		if e := s.updateLocationMetadata(loc, map[string]any{"utc_offset_seconds": w.Offset, "timezone": w.Timezone}); e != nil {
 			s.Store.App.Logger().Warn("location timezone update", "error", e)
 		}
 	}
 	return w, err
+}
+
+func (s *Server) updateLocationMetadata(original, fields map[string]any) error {
+	s.forecasts.locationMu.Lock()
+	defer s.forecasts.locationMu.Unlock()
+	current, ok, err := s.savedLocation()
+	if err != nil || !ok {
+		return err
+	}
+	for _, key := range []string{"latitude", "longitude", "updated_at"} {
+		if forecast.Number(current, key) != forecast.Number(original, key) {
+			return nil
+		}
+	}
+	for key, value := range fields {
+		current[key] = value
+	}
+	return s.Store.SaveSecret(s.Key, "location", current)
 }
 
 func (s *Server) activeSerial() string {
@@ -93,13 +183,26 @@ func (s *Server) activeSerial() string {
 	return str(d, "device_sn")
 }
 func (s *Server) packCount(sn string) int {
-	rows, err := s.Store.List("battery_packs", sn, 0, 0)
-	if err != nil || len(rows) == 0 {
+	n, err := s.Store.LatestPackCount(sn)
+	if err != nil {
 		return 0
 	}
-	sort.SliceStable(rows, func(i, j int) bool { return forecast.Number(rows[i], "ts") < forecast.Number(rows[j], "ts") })
-	items, _ := rows[len(rows)-1]["packs"].([]any)
-	return len(items)
+	return n
+}
+
+func (s *Server) applyStoredParamOverrides(sn string, opts *forecast.BuildOptions) {
+	read := func(key string) *float64 {
+		row, err := s.storedParam(sn, key)
+		if err != nil || row == nil || row["value"] == nil {
+			return nil
+		}
+		v := forecast.Number(row, "value")
+		return &v
+	}
+	opts.SolarCoeffOverride = read("solar_coefficient")
+	opts.ParasiticOverride = read("parasitic_w")
+	opts.OverheadOverride = read("inverter_overhead_pct")
+	opts.ChargeEffOverride = read("charge_efficiency")
 }
 func (s *Server) carLoad(sn string) float64 {
 	c, err := s.solarConfig(sn)
@@ -112,6 +215,10 @@ func (s *Server) carLoad(sn string) float64 {
 // buildForecast mirrors server.py's _build_and_record_forecast: one path for
 // /api/forecast and the hourly recorder, so both persist identical rows.
 func (s *Server) buildForecast(ctx context.Context, sn string, now int64, record bool) map[string]any {
+	return s.buildForecastWithMode(ctx, sn, now, record, false)
+}
+
+func (s *Server) buildForecastWithMode(ctx context.Context, sn string, now int64, record, preview bool) map[string]any {
 	loc, ok, err := s.savedLocation()
 	if err != nil {
 		return map[string]any{"error": "location unavailable", "error_detail": err.Error(), "configured": false}
@@ -125,28 +232,67 @@ func (s *Server) buildForecast(ctx context.Context, sn string, now int64, record
 	if sn == "" {
 		return map[string]any{"error": "no active device", "configured": true}
 	}
-	var wx forecast.Weather
-	if s.SmartForecast != nil {
-		wx.Hourly, err = s.SmartForecast.Weather(ctx, sn, now)
-	} else {
-		wx, err = s.weatherNow(ctx)
+	lat, lon := forecast.Number(loc, "latitude"), forecast.Number(loc, "longitude")
+	savedOffset := int(forecast.Number(loc, "utc_offset_seconds"))
+	plane, hasPlane, err := s.weatherStore().Plane(sn)
+	if err != nil {
+		return map[string]any{"error": "solar array unavailable", "error_detail": err.Error(), "configured": true}
 	}
-	if err != nil || len(wx.Hourly) == 0 {
+	apiKey, keyErr := s.weatherStore().SolarKey(s.Key)
+
+	// Fetch weather, 14-day energy history, and Forecast.Solar in parallel.
+	var (
+		wx         forecast.Weather
+		wxErr      error
+		history    []forecast.Row
+		capacity   float64
+		soc        *float64
+		histErr    error
+		est        forecast.SolarEstimate
+		solarReady bool
+		wg         sync.WaitGroup
+	)
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		if s.SmartForecast != nil {
+			wx.Hourly, wxErr = s.SmartForecast.Weather(ctx, sn, now)
+		} else {
+			wx, wxErr = s.weatherAt(ctx, loc)
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		history, capacity, soc, histErr = s.energyInputs(sn, now, 14*24)
+	}()
+	if !preview && hasPlane && loc["utc_offset_seconds"] != nil {
+		solarReady = true
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, solar := s.forecastClients()
+			est = solar.Fetch(ctx, lat, lon, int(plane.Declination), int(plane.Azimuth), plane.KWP, savedOffset, apiKey)
+		}()
+	}
+	wg.Wait()
+
+	if wxErr != nil || len(wx.Hourly) == 0 {
 		detail := wx.Error
-		if err != nil {
-			detail = err.Error()
+		if wxErr != nil {
+			detail = wxErr.Error()
 		}
 		return map[string]any{"error": "Weather service unreachable (Open-Meteo)", "error_detail": detail, "configured": true}
 	}
+	wx.Hourly = slices.Clone(wx.Hourly)
 	sort.Slice(wx.Hourly, func(i, j int) bool { return forecast.Number(wx.Hourly[i], "ts") < forecast.Number(wx.Hourly[j], "ts") })
 	offset := wx.Offset
-	if offset == 0 {
-		offset = int(forecast.Number(loc, "utc_offset_seconds"))
+	if wx.Timezone == "" && offset == 0 {
+		offset = savedOffset
 	}
-	history, capacity, soc, err := s.energyInputs(sn, now, 14*24)
-	if err != nil {
-		return map[string]any{"error": "history unavailable", "error_detail": err.Error(), "configured": true}
+	if histErr != nil {
+		return map[string]any{"error": "history unavailable", "error_detail": histErr.Error(), "configured": true}
 	}
+	capacity = s.resolvedCapacity(sn, capacity)
 	mainSOC := 50.0
 	if cached, e := s.Store.Get("devices", sn); e == nil {
 		if t, ok := cached["telemetry"].(map[string]any); ok && t["battery_percent"] != nil {
@@ -167,17 +313,23 @@ func (s *Server) buildForecast(ctx context.Context, sn string, now int64, record
 	}
 	fsMeta := map[string]any{"configured": false}
 	var planeOut any
+	var planeOpt *forecast.Plane
 	solarHourly := map[int64]float64{}
-	plane, hasPlane, err := s.weatherStore().Plane(sn)
-	if err != nil {
-		return map[string]any{"error": "solar array unavailable", "error_detail": err.Error(), "configured": true}
-	}
-	apiKey, keyErr := s.weatherStore().SolarKey(s.Key)
+	var solarHistory map[int64]float64
 	if hasPlane {
+		pCopy := plane
+		planeOpt = &pCopy
 		planeOut = map[string]any{"declination": plane.Declination, "azimuth": plane.Azimuth, "kwp": plane.KWP}
 		fsMeta["configured"] = true
-		_, solar := s.forecastClients()
-		est := solar.Fetch(ctx, forecast.Number(loc, "latitude"), forecast.Number(loc, "longitude"), int(plane.Declination), int(plane.Azimuth), plane.KWP, offset, apiKey)
+		if preview {
+			_, solar := s.forecastClients()
+			var cached bool
+			est, cached = solar.Cached(lat, lon, plane.Declination, plane.Azimuth, plane.KWP, offset)
+			fsMeta["pending"] = !cached
+		} else if !solarReady || offset != savedOffset {
+			_, solar := s.forecastClients()
+			est = solar.Fetch(ctx, lat, lon, int(plane.Declination), int(plane.Azimuth), plane.KWP, offset, apiKey)
+		}
 		fsMeta["error"] = nil
 		if est.Error != "" {
 			fsMeta["error"] = est.Error
@@ -185,6 +337,15 @@ func (s *Server) buildForecast(ctx context.Context, sn string, now int64, record
 		fsMeta["stale"] = est.Stale
 		for _, r := range est.Hourly {
 			solarHourly[int64(forecast.Number(r, "ts"))] = forecast.Number(r, "watts")
+		}
+		site := weatherstore.SolarSite{Lat: lat, Lon: lon, Plane: plane}
+		if !preview && !est.Stale && len(est.Hourly) > 0 {
+			if e := s.weatherStore().SaveSolarHistory(sn, site, est.Hourly, now); e != nil {
+				s.Store.App.Logger().Debug("save solar history", "device", sn, "error", e)
+			}
+		}
+		if sh, e := s.weatherStore().LoadSolarHistory(sn, site, now-14*86400); e == nil {
+			solarHistory = sh
 		}
 	}
 	sched, err := s.loadSchedule(sn)
@@ -194,12 +355,27 @@ func (s *Server) buildForecast(ctx context.Context, sn string, now int64, record
 	var windows []automation.Window
 	data, _ := json.Marshal(sched["windows"])
 	_ = json.Unmarshal(data, &windows)
-	opts := forecast.BuildOptions{Now: now, Offset: offset, Packs: s.packCount(sn), CarLoad: s.carLoad(sn), LoadMode: str(sched, "mode"), Windows: windows, SleepStart: str(sched, "sleep_start"), SleepEnd: str(sched, "sleep_end"), DisableCeiling: s.ecoflowBatteryWh(sn) > 0}
+	opts := forecast.BuildOptions{
+		Now:            now,
+		Offset:         offset,
+		Packs:          s.packCount(sn),
+		CarLoad:        s.carLoad(sn),
+		Lat:            lat,
+		Lon:            lon,
+		Plane:          planeOpt,
+		SolarHistory:   solarHistory,
+		LoadMode:       str(sched, "mode"),
+		Windows:        windows,
+		SleepStart:     str(sched, "sleep_start"),
+		SleepEnd:       str(sched, "sleep_end"),
+		DisableCeiling: s.ecoflowBatteryWh(sn) > 0,
+	}
+	s.applyStoredParamOverrides(sn, &opts)
 	if len(solarHourly) > 0 {
 		opts.SolarHourly = solarHourly
 	}
 	result := forecast.Build(history, wx.Hourly, start, capacity, opts)
-	if result["ready"] == true && record {
+	if result["ready"] == true && record && fsMeta["pending"] != true {
 		hours, _ := result["forecast"].([]forecast.Row)
 		if _, e := s.Store.RecordForecast(sn, float64(now), hours); e != nil {
 			s.Store.App.Logger().Warn("record forecast", "device", sn, "error", e)
@@ -210,7 +386,9 @@ func (s *Server) buildForecast(ctx context.Context, sn string, now int64, record
 	}
 	today := 0.0
 	startToday := float64((now+int64(offset))/86400*86400 - int64(offset))
-	if minutes, e := s.Store.EnergyMinutes(sn, startToday); e == nil {
+	if v, e := s.Store.SolarSinceFromRollups(sn, startToday); e == nil {
+		today = v
+	} else if minutes, e := s.Store.EnergyMinutes(sn, startToday); e == nil {
 		totals := store.EnergyTotals(minutes, float64(now), offset)
 		if t, ok := totals["today"].(map[string]any); ok {
 			today = forecast.Number(t, "solar_wh")

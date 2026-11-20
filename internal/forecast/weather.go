@@ -55,7 +55,7 @@ func (c *WeatherClient) Fetch(ctx context.Context, lat, lon float64) (Weather, e
 	if endpoint == "" {
 		endpoint = "https://api.open-meteo.com/v1/forecast"
 	}
-	q := url.Values{"latitude": {strconv.FormatFloat(lat, 'f', -1, 64)}, "longitude": {strconv.FormatFloat(lon, 'f', -1, 64)}, "hourly": {"shortwave_radiation,cloud_cover"}, "past_days": {"14"}, "forecast_days": {"7"}, "timeformat": {"unixtime"}, "timezone": {"auto"}}
+	q := url.Values{"latitude": {strconv.FormatFloat(lat, 'f', -1, 64)}, "longitude": {strconv.FormatFloat(lon, 'f', -1, 64)}, "hourly": {"shortwave_radiation,direct_radiation,diffuse_radiation,cloud_cover"}, "past_days": {"14"}, "forecast_days": {"7"}, "timeformat": {"unixtime"}, "timezone": {"auto"}}
 	req, e := http.NewRequestWithContext(ctx, "GET", endpoint+"?"+q.Encode(), nil)
 	if e != nil {
 		return Weather{}, e
@@ -74,9 +74,11 @@ func (c *WeatherClient) Fetch(ctx context.Context, lat, lon float64) (Weather, e
 				Offset   int    `json:"utc_offset_seconds"`
 				Timezone string `json:"timezone"`
 				Hourly   struct {
-					Time  []int64    `json:"time"`
-					GHI   []*float64 `json:"shortwave_radiation"`
-					Cloud []*float64 `json:"cloud_cover"`
+					Time    []int64    `json:"time"`
+					GHI     []*float64 `json:"shortwave_radiation"`
+					Direct  []*float64 `json:"direct_radiation"`
+					Diffuse []*float64 `json:"diffuse_radiation"`
+					Cloud   []*float64 `json:"cloud_cover"`
 				} `json:"hourly"`
 			}
 			e = json.NewDecoder(io.LimitReader(resp.Body, 8<<20)).Decode(&v)
@@ -93,7 +95,14 @@ func (c *WeatherClient) Fetch(ctx context.Context, lat, lon float64) (Weather, e
 					if v.Hourly.Cloud[i] != nil {
 						cloud = *v.Hourly.Cloud[i]
 					}
-					rows = append(rows, Row{"ts": float64(ts), "ghi_w_m2": g, "cloud_cover_pct": cloud})
+					row := Row{"ts": float64(ts), "ghi_w_m2": g, "cloud_cover_pct": cloud}
+					if i < len(v.Hourly.Direct) && v.Hourly.Direct[i] != nil {
+						row["direct_w_m2"] = *v.Hourly.Direct[i]
+					}
+					if i < len(v.Hourly.Diffuse) && v.Hourly.Diffuse[i] != nil {
+						row["diffuse_w_m2"] = *v.Hourly.Diffuse[i]
+					}
+					rows = append(rows, row)
 				}
 				if len(rows) == 0 {
 					e = fmt.Errorf("weather returned no usable hours")

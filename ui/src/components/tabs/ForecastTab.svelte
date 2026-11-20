@@ -17,6 +17,7 @@
 
   type ForecastPoint = {
     ts?: number;
+    duration_h?: number;
     soc_pct?: number;
     predicted_soc?: number;
     load_w?: number;
@@ -29,6 +30,7 @@
     configured?: boolean;
     forecast?: ForecastPoint[];
     fit?: { r2?: number; samples?: number };
+    forecast_solar?: { pending?: boolean };
     summary?: Record<string, unknown>;
     starting_soc_pct?: number;
     charge_efficiency?: number;
@@ -109,6 +111,8 @@
   const ACC_BUCKETS = ['≤6h', '≤24h', '≤72h', '>72h'] as const;
 
   let forecast = $state.raw<ForecastPayload | null>(null);
+  let loadingForecast = $state(true);
+  let forecastRequest = 0;
   let loc = $state.raw<{
     latitude?: number;
     longitude?: number;
@@ -244,7 +248,9 @@
     let prevEnd = Number(forecast?.starting_soc_pct ?? forecast?.start_soc ?? 0);
     for (const h of fc) {
       if (h.ts == null) continue;
-      const d = new Date(h.ts * 1000);
+      const intervalTs = h.duration_h != null ? h.ts - 3600 : h.ts;
+      const dur = h.duration_h != null ? Math.max(0, Math.min(1, Number(h.duration_h))) : 1;
+      const d = new Date(intervalTs * 1000);
       const key = d.toDateString();
       if (key !== currentKey) {
         if (current) {
@@ -264,7 +270,7 @@
         };
       }
       if (!current) continue;
-      current.solarWh += Number(h.solar_w ?? 0);
+      current.solarWh += Number(h.solar_w ?? 0) * dur;
       const s = Number(h.predicted_soc ?? h.soc_pct);
       if (Number.isFinite(s)) {
         if (s < current.minSoc) current.minSoc = s;
@@ -356,12 +362,13 @@
     let storedWh = 0;
     let peakSolar = 0;
     for (const h of window) {
+      const dur = h.duration_h != null ? Math.max(0, Math.min(1, Number(h.duration_h))) : 1;
       const solar = Number(h.solar_w ?? 0);
       const load = Number(h.load_w ?? 0);
       const net = solar - load;
-      solarWh += solar;
-      loadWh += load;
-      storedWh += net > 0 ? net * eff : net;
+      solarWh += solar * dur;
+      loadWh += load * dur;
+      storedWh += (net > 0 ? net * eff : net) * dur;
       if (solar > peakSolar) peakSolar = solar;
     }
     const socEnd = Number(
@@ -521,10 +528,23 @@
   }
 
   async function loadForecast() {
+    const request = ++forecastRequest;
+    const query = deviceQ();
+    const path = `/forecast${query}`;
+    loadingForecast = true;
     try {
-      forecast = await api<ForecastPayload>(`/forecast${deviceQ()}`);
+      const initial = await api<ForecastPayload>(`${path}${query ? '&' : '?'}preview=1`);
+      if (request !== forecastRequest) return;
+      forecast = initial;
+      loadingForecast = false;
+      if (initial.ready && initial.forecast_solar?.pending) {
+        const updated = await api<ForecastPayload>(path);
+        if (request === forecastRequest && updated.ready) forecast = updated;
+      }
     } catch (err) {
-      msg = err instanceof Error ? err.message : 'Forecast failed';
+      if (request === forecastRequest) msg = err instanceof Error ? err.message : 'Forecast failed';
+    } finally {
+      if (request === forecastRequest) loadingForecast = false;
     }
   }
 
@@ -635,16 +655,23 @@
   }
 
   onMount(() => {
-    void (async () => {
-      await Promise.all([loadLocation(), loadArray(), loadSchedule(), loadAccuracy()]);
-      await loadForecast();
-    })();
-    return live.onDeviceChange(() => {
+    // Load the forecast chart immediately in parallel with config/accuracy panels
+    // instead of blocking the graph behind slower secondary endpoints.
+    void loadForecast();
+    void loadLocation();
+    void loadArray();
+    void loadSchedule();
+    void loadAccuracy();
+    const unsubscribe = live.onDeviceChange(() => {
       void loadForecast();
       void loadArray();
       void loadSchedule();
       void loadAccuracy();
     });
+    return () => {
+      forecastRequest++;
+      unsubscribe();
+    };
   });
 
   async function geocode() {
@@ -1373,7 +1400,9 @@
     <div class="card-header">
       <h2>Forecast</h2>
       <span class="hint">
-        {#if forecast?.ready === false}
+        {#if loadingForecast && !forecast}
+          Loading…
+        {:else if forecast?.ready === false}
           {forecast.reason || 'calibrating'}
         {:else if forecast?.fit?.r2 != null}
           R² {fmt(forecast.fit.r2, 2)} · {forecast.fit.samples ?? '—'} samples

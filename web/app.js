@@ -7615,13 +7615,14 @@ window.addEventListener('resize', () => {
 // FORECAST TAB
 // ============================================================
 let _forecastFetchId = 0;
-async function fetchForecast() {
+async function fetchForecast(full = false) {
   const needsConfig = $('forecast-needs-config');
   const content     = $('forecast-content');
   const stats       = $('forecast-stats');
   const heading     = needsConfig.querySelector('h2');
   const body        = needsConfig.querySelector('p');
   const showNeedsConfig = (h, p) => {
+    if (full) return;
     needsConfig.hidden = false;
     content.hidden = true;
     stats.hidden = true;
@@ -7633,7 +7634,10 @@ async function fetchForecast() {
     // Forecast is per-device — pass the currently-viewed Jackery's SN so
     // the Forecast tab follows the per-browser picker.
     const sn = activeJackeryDevice()?.device_sn;
-    const url = sn ? `/api/forecast?device_sn=${encodeURIComponent(sn)}` : '/api/forecast';
+    const params = new URLSearchParams();
+    if (sn) params.set('device_sn', sn);
+    if (!full) params.set('preview', '1');
+    const url = `/api/forecast?${params}`;
     const r = await fetch(url);
     if (fetchId !== _forecastFetchId) return;
     if (!r.ok) { showNeedsConfig(); return; }
@@ -7743,6 +7747,9 @@ async function fetchForecast() {
     // verify how SOC_now becomes SOC_sunset. Pure transform of `j`,
     // no extra fetch.
     renderTodayEnergyBudget(j);
+    if (!full && j.forecast_solar?.pending) {
+      void fetchForecast(true);
+    }
     // Daily sunset/sunrise pred-vs-actual table + MAE summary. Independent
     // of the main forecast — own /api/daily_summary fetch with a user-
     // controlled window. Render is fire-and-forget; failures shouldn't

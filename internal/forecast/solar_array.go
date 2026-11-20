@@ -29,7 +29,7 @@ func SolarPosition(lat, lon float64, ts int64) (float64, float64) {
 	ha := ((hour*60+eq+4*lon)/4 - 180) * math.Pi / 180
 	l := lat * math.Pi / 180
 	z := math.Acos(max(-1, min(1, math.Sin(l)*math.Sin(decl)+math.Cos(l)*math.Cos(decl)*math.Cos(ha))))
-	az := math.Atan2(-math.Sin(ha), math.Cos(ha)*math.Sin(l)-math.Tan(decl)*math.Cos(l))*180/math.Pi + 180
+	az := math.Atan2(math.Sin(ha), math.Cos(ha)*math.Sin(l)-math.Tan(decl)*math.Cos(l))*180/math.Pi + 180
 	return z * 180 / math.Pi, math.Mod(az+360, 360)
 }
 func POA(ghi, lat, lon float64, ts int64, tilt, az float64) float64 {
@@ -48,6 +48,34 @@ func POA(ghi, lat, lon float64, ts int64, tilt, az float64) float64 {
 		return 0
 	}
 	return ghi * incidence / max(math.Cos(z), 0.12)
+}
+
+// POAComponents separates plane-of-array irradiance into direct beam and
+// isotropic sky diffuse components so horizon/house shading can attenuate
+// direct beam without falsely zeroing diffuse sky light on overcast days.
+func POAComponents(ghi, direct, diffuse, lat, lon float64, ts int64, tilt, az float64) (poaDirect, poaDiffuse float64) {
+	if direct <= 0 && diffuse <= 0 {
+		if ghi <= 0 {
+			return 0, 0
+		}
+		return POA(ghi, lat, lon, ts, tilt, az), 0
+	}
+	t := tilt * math.Pi / 180
+	poaDiffuse = math.Max(0, diffuse) * (1 + math.Cos(t)) / 2
+	if direct <= 0 {
+		return 0, poaDiffuse
+	}
+	z, a := SolarPosition(lat, lon, ts)
+	if z >= 87 {
+		return 0, poaDiffuse
+	}
+	zRad := z * math.Pi / 180
+	delta := (az - (a - 180)) * math.Pi / 180
+	incidence := math.Cos(zRad)*math.Cos(t) + math.Sin(zRad)*math.Sin(t)*math.Cos(delta)
+	if incidence > 0 {
+		poaDirect = direct * incidence / max(math.Cos(zRad), 0.15)
+	}
+	return poaDirect, poaDiffuse
 }
 
 type planePair struct {

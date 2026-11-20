@@ -14,6 +14,7 @@ import (
 
 	"github.com/compdani/jackery-monitor/internal/forecast"
 	"github.com/compdani/jackery-monitor/internal/store"
+	"github.com/compdani/jackery-monitor/internal/weatherstore"
 )
 
 // forecastFixture serves recorded-shape Open-Meteo, geocoding and
@@ -466,5 +467,153 @@ func TestIdleWindowReferenceClassification(t *testing.T) {
 	d = diagnoseIdleWindows(nil)
 	if d["total_pairs"] != 0 || d["qualifying_windows"] != 0 {
 		t.Fatal(d)
+	}
+}
+
+func TestForecastCacheMultiPackCapacityAndShadePersistence(t *testing.T) {
+	s, h := testServer(t)
+	token := contractToken(t, h)
+	now := time.Now().Unix()
+	f := newForecastFixture(t, now)
+	f.install(s)
+	seedHistory(t, s, "SN-PACK", now)
+	// Add 2 expansion packs (model 13 = 5040 Wh main + 2 * 5040 Wh packs = 15120 Wh).
+	if err := s.Store.Put("battery_packs", "packs:SN-PACK:1", "SN-PACK", map[string]any{
+		"ts":    float64(now - 60),
+		"packs": []any{map[string]any{"rb": 60.0}, map[string]any{"rb": 62.0}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	contractJSON(t, h, "POST", "/api/location", `{"latitude":37.3,"longitude":-121.9}`, token, 200)
+	contractJSON(t, h, "POST", "/api/forecast/solar_array", `{"device_sn":"SN-PACK","declination":30,"azimuth":0,"kwp":2}`, token, 200)
+	contractJSON(t, h, "POST", "/api/forecast/load_schedule", `{"device_sn":"SN-PACK","mode":"historical"}`, token, 200)
+
+	v := contractJSON(t, h, "GET", "/api/forecast?device_sn=SN-PACK", "", token, 200)
+	if v["capacity_wh"] != 15120.0 {
+		t.Fatalf("expected multi-pack capacity 15120, got %v", v["capacity_wh"])
+	}
+	if v["shade_profile"] == nil {
+		t.Fatalf("expected shade_profile in forecast payload")
+	}
+	// Forecast.Solar history should have been persisted for future calibration.
+	site := weatherstore.SolarSite{Lat: 37.3, Lon: -121.9, Plane: forecast.Plane{Declination: 30, KWP: 2}}
+	sh, err := s.weatherStore().LoadSolarHistory("SN-PACK", site, now-86400)
+	if err != nil || len(sh) == 0 {
+		t.Fatalf("expected persisted solar history, got len=%d err=%v", len(sh), err)
+	}
+	// Stored solar_coefficient override invalidates cache and takes effect.
+	contractJSON(t, h, "POST", "/api/devices/params", `{"device_sn":"SN-PACK","key":"solar_coefficient","value":1.75}`, token, 200)
+	v2 := contractJSON(t, h, "GET", "/api/forecast?device_sn=SN-PACK", "", token, 200)
+	if v2["solar_coefficient"] != 1.75 {
+		t.Fatalf("expected solar_coefficient override 1.75, got %v", v2["solar_coefficient"])
+	}
+	contractJSON(t, h, "POST", "/api/location", `{"latitude":40,"longitude":-121.9}`, token, 200)
+	site.Lat = 40
+	sh, err = s.weatherStore().LoadSolarHistory("SN-PACK", site, now-86400)
+	if err != nil || len(sh) != 0 {
+		t.Fatalf("new location inherited old solar history: %v, %v", sh, err)
+	}
+}
+
+type testWeatherFunc func(context.Context, string, int64) ([]forecast.Row, error)
+
+func (f testWeatherFunc) Weather(ctx context.Context, sn string, now int64) ([]forecast.Row, error) {
+	return f(ctx, sn, now)
+}
+
+func TestInvalidatedForecastCannotEvictReplacement(t *testing.T) {
+	s, _ := testServer(t)
+	if err := s.Store.SaveSecret(s.Key, "location", map[string]any{"latitude": 35.0, "longitude": -95.0}); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	oldCtx, cancelOld := context.WithCancel(ctx)
+	defer cancelOld()
+	started := make(chan struct{}, 2)
+	s.SmartForecast = testWeatherFunc(func(ctx context.Context, _ string, _ int64) ([]forecast.Row, error) {
+		started <- struct{}{}
+		<-ctx.Done()
+		return nil, ctx.Err()
+	})
+	wait := func(ch <-chan struct{}) {
+		t.Helper()
+		select {
+		case <-ch:
+		case <-ctx.Done():
+			t.Fatal(ctx.Err())
+		}
+	}
+	oldDone, newDone := make(chan struct{}), make(chan struct{})
+	go func() {
+		defer close(oldDone)
+		s.cachedForecast(oldCtx, "SN", false)
+	}()
+	defer func() { cancelOld(); <-oldDone }()
+	wait(started)
+	s.invalidateForecastCache()
+	go func() {
+		defer close(newDone)
+		s.cachedForecast(ctx, "SN", false)
+	}()
+	defer func() { cancel(); <-newDone }()
+	wait(started)
+	cancelOld()
+	wait(oldDone)
+	s.forecasts.cacheMu.Lock()
+	replacement := s.forecasts.cache[forecastCacheKey{serial: "SN"}]
+	s.forecasts.cacheMu.Unlock()
+	if replacement == nil {
+		t.Fatal("invalidated request evicted the replacement")
+	}
+}
+
+func TestForecastPreviewReturnsWhileSolarProviderIsBlocked(t *testing.T) {
+	s, _ := testServer(t)
+	now := time.Now().Unix()
+	fixture := newForecastFixture(t, now)
+	fixture.install(s)
+	seedHistory(t, s, "SN", now)
+	if err := s.Store.SaveSecret(s.Key, "location", map[string]any{
+		"latitude": 35.0, "longitude": -95.0, "utc_offset_seconds": 0, "timezone": "GMT",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.weatherStore().SavePlane("SN", 30, 0, 2); err != nil {
+		t.Fatal(err)
+	}
+	started, release := make(chan struct{}, 1), make(chan struct{})
+	solarServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		started <- struct{}{}
+		select {
+		case <-release:
+			fixture.srv.Config.Handler.ServeHTTP(w, r)
+		case <-r.Context().Done():
+		}
+	}))
+	defer solarServer.Close()
+	s.SolarForecast.BaseURL = solarServer.URL
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	full := make(chan map[string]any, 1)
+	go func() { full <- s.cachedForecast(ctx, "SN", false) }()
+	select {
+	case <-started:
+	case <-ctx.Done():
+		t.Fatal("full forecast never requested Forecast.Solar")
+	}
+	preview := s.cachedForecast(ctx, "SN", true)
+	meta, _ := preview["forecast_solar"].(map[string]any)
+	if preview["ready"] != true || preview["solar_source"] != "open_meteo" || meta["pending"] != true {
+		t.Fatalf("preview did not return an Open-Meteo forecast while solar was pending: %v, %v", preview["error"], meta)
+	}
+	close(release)
+	select {
+	case result := <-full:
+		if source := result["solar_source"]; source != "mixed" && source != "forecast_solar" {
+			t.Fatalf("full forecast did not pick up the provider response: %v", source)
+		}
+	case <-ctx.Done():
+		t.Fatal("full forecast never completed")
 	}
 }
