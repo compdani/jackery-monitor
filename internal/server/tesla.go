@@ -49,6 +49,7 @@ type teslaRuntime struct {
 	job         *teslaJob
 	pollNow     chan struct{}
 	places      *tesla.PlaceResolver // keeps its lookup cache across batches
+	byRequest   map[string]*teslaJob // recent jobs by client request_id
 	cmdLog      *tesla.CommandLog    // recent commands sent to the car
 
 	// HTTP overrides the Fleet API transport in tests.
@@ -56,14 +57,17 @@ type teslaRuntime struct {
 }
 
 type teslaJob struct {
-	ID       string             `json:"id"`
-	Status   string             `json:"status"` // running, done, failed
-	Started  int64              `json:"started"`
-	Finished int64              `json:"finished,omitempty"`
-	Stops    []tesla.Stop       `json:"stops"`
-	Results  []tesla.StopResult `json:"results,omitempty"`
-	Error    string             `json:"error,omitempty"`
-	Options  map[string]string  `json:"options"`
+	ID        string `json:"id"`
+	RequestID string `json:"request_id,omitempty"` // client's idempotency key
+	// Supersedes is the request_id of the batch this one replaces.
+	Supersedes string             `json:"supersedes_request_id,omitempty"`
+	Status     string             `json:"status"` // running, done, failed; "unknown" if the server restarted mid-send
+	Started    int64              `json:"started"`
+	Finished   int64              `json:"finished,omitempty"`
+	Stops      []tesla.Stop       `json:"stops"`
+	Results    []tesla.StopResult `json:"results,omitempty"`
+	Error      string             `json:"error,omitempty"`
+	Options    map[string]string  `json:"options"`
 }
 
 func (t *teslaRuntime) http() tesla.HTTPDoer {
@@ -400,11 +404,13 @@ func (s *Server) teslaRoutes(w http.ResponseWriter, r *http.Request, b map[strin
 	case "POST /navigate":
 		s.teslaNavigate(w, r, b)
 	case "POST /navigate/gps":
-		s.teslaNavigateGPS(w, r, b)
+		fail(w, http.StatusGone, "GPS batch sending was removed; use /api/tesla/navigate for Maps batches or /api/tesla/navigate/one for one GPS stop")
 	case "POST /places/resolve":
 		s.teslaResolvePlaces(w, r, b)
 	case "POST /navigate/one":
 		s.teslaNavigateOne(w, r, b)
+	case "GET /navigate/job":
+		s.teslaJobLookup(w, r)
 	case "GET /navigate/last":
 		s.tesla.mu.Lock()
 		job := s.tesla.job
@@ -618,32 +624,6 @@ func (s *Server) teslaNavigate(w http.ResponseWriter, r *http.Request, b map[str
 	})
 }
 
-// teslaNavigateGPS sends a batch as one navigation_gps_request per stop,
-// numbered by the saved (or requested) order mode and paused between stops.
-func (s *Server) teslaNavigateGPS(w http.ResponseWriter, r *http.Request, b map[string]any) {
-	cfg, stops, ok := s.teslaBatchRequest(w, b)
-	if !ok {
-		return
-	}
-	order, err := optString(b, "order_mode", tesla.OrderEnum, tesla.OrderPosition, tesla.OrderOneThree)
-	if err != nil {
-		fail(w, 400, err.Error())
-		return
-	}
-	if order != "" {
-		cfg.NavOrderMode = order
-	}
-	opts := map[string]string{
-		"method":             "gps",
-		"transport":          cfg.NavTransport,
-		"order_mode":         cfg.NavOrderMode,
-		"stop_delay_seconds": strconv.Itoa(max(cfg.NavStopDelaySeconds, 0)),
-	}
-	s.teslaRunJob(w, b, cfg, stops, opts, func(ctx context.Context, c *tesla.Client) ([]tesla.StopResult, error) {
-		return c.NavigateGPS(ctx, stops)
-	})
-}
-
 // teslaBatchRequest reads and validates a batch request and applies the
 // per-request transport and stop-delay overrides.
 func (s *Server) teslaBatchRequest(w http.ResponseWriter, b map[string]any) (tesla.Config, []tesla.Stop, bool) {
@@ -726,8 +706,7 @@ func (s *Server) teslaResolvePlaces(w http.ResponseWriter, r *http.Request, b ma
 	jsonOut(w, 200, map[string]any{"max_distance_m": limit, "stops": out})
 }
 
-// teslaNavigateOne sends a single stop placed before (prepend) or after
-// (append) the trip already on the car, leaving the rest of the trip alone.
+// teslaNavigateOne inserts one GPS stop before the existing route, always order 1.
 func (s *Server) teslaNavigateOne(w http.ResponseWriter, r *http.Request, b map[string]any) {
 	cfg, err := s.teslaConfig()
 	if err != nil {
@@ -743,30 +722,15 @@ func (s *Server) teslaNavigateOne(w http.ResponseWriter, r *http.Request, b map[
 		fail(w, 400, err.Error())
 		return
 	}
-	placement := str(b, "position")
-	order, err := tesla.OrderForPlacement(placement)
-	if err != nil {
-		fail(w, 400, err.Error())
-		return
-	}
-	if placement == "" {
-		placement = tesla.PlaceAppend
-	}
-	// Raw order value, for trying other numbering on the car.
-	if v, ok := b["order"].(float64); ok {
-		if v < 0 || v > 255 || v != float64(int32(v)) {
-			fail(w, 400, "order must be a small whole number")
-			return
-		}
-		order = int32(v)
-	}
+	// Legacy position/order inputs are ignored: real-car testing confirmed
+	// GPS insertion is only usable as a single stop with order 1.
 	if cfg, err = teslaNavOverrides(cfg, b); err != nil {
 		fail(w, 400, err.Error())
 		return
 	}
-	opts := map[string]string{"method": "single", "position": placement, "transport": cfg.NavTransport}
+	opts := map[string]string{"method": "single", "position": "prepend", "transport": cfg.NavTransport}
 	s.teslaRunJob(w, b, cfg, []tesla.Stop{stop}, opts, func(ctx context.Context, c *tesla.Client) ([]tesla.StopResult, error) {
-		res, err := c.SendOne(ctx, stop, order)
+		res, err := c.SendOne(ctx, stop)
 		return []tesla.StopResult{res}, err
 	})
 }
@@ -808,16 +772,67 @@ func (s *Server) teslaRunJob(w http.ResponseWriter, b map[string]any, cfg tesla.
 	if v, ok := b["wait"].(bool); ok {
 		wait = v
 	}
+	rid := str(b, "request_id")
+	if rid != "" && !validRequestID(rid) {
+		fail(w, 400, "request_id must be 8 to 64 letters, digits, _ or -")
+		return
+	}
+	// A repeated request_id never sends again: it reports the first job.
+	if rid != "" {
+		if prev := s.teslaFindJob("", rid); prev != nil {
+			status := 200
+			if prev.Status == "running" {
+				status = 202
+			}
+			jsonOut(w, status, prev)
+			return
+		}
+	}
+	// A batch that replaces an earlier one must not race it: refuse while
+	// the earlier send is running, and when its outcome is unknown (the
+	// server restarted mid-send) unless the app confirms the replacement.
+	sup := str(b, "supersedes_request_id")
+	if sup != "" {
+		if !validRequestID(sup) {
+			fail(w, 400, "invalid supersedes_request_id")
+			return
+		}
+		if prev := s.teslaFindJob("", sup); prev != nil {
+			confirmed, _ := b["confirm_unknown"].(bool)
+			switch {
+			case prev.Status == "running":
+				jsonOut(w, 409, map[string]any{"detail": "the previous batch is still being sent", "previous": prev})
+				return
+			case prev.Status == "unknown" && !confirmed:
+				jsonOut(w, 409, map[string]any{"detail": "the previous batch's outcome is unknown; check the car, then confirm to replace it", "previous": prev, "needs_confirm": true})
+				return
+			}
+		}
+	}
 	buf := make([]byte, 6)
 	_, _ = rand.Read(buf)
-	job := &teslaJob{ID: base64.RawURLEncoding.EncodeToString(buf), Status: "running", Started: time.Now().Unix(), Stops: stops, Options: opts}
+	job := &teslaJob{ID: base64.RawURLEncoding.EncodeToString(buf), RequestID: rid, Supersedes: sup, Status: "running", Started: time.Now().Unix(), Stops: stops, Options: opts}
 	if !s.tesla.cmdMu.TryLock() {
 		fail(w, 409, "another navigation batch is being sent")
 		return
 	}
 	s.tesla.mu.Lock()
 	s.tesla.job = job
+	if rid != "" {
+		if s.tesla.byRequest == nil || len(s.tesla.byRequest) > 200 {
+			s.tesla.byRequest = map[string]*teslaJob{}
+		}
+		s.tesla.byRequest[rid] = job
+	}
+	started := *job
 	s.tesla.mu.Unlock()
+	if rid != "" {
+		// Recorded before sending, so a lookup after a server restart
+		// reports "unknown" rather than "never sent".
+		if m, err := toMap(started); err == nil {
+			_ = s.Store.Put("events", "tesla_nav_req:"+rid, cfg.VIN, m)
+		}
+	}
 	delay := time.Duration(max(cfg.NavStopDelaySeconds, 0)) * time.Second
 	run := func() {
 		defer s.tesla.cmdMu.Unlock()
@@ -854,6 +869,9 @@ func (s *Server) teslaRunJob(w http.ResponseWriter, b map[string]any, cfg tesla.
 		s.tesla.mu.Unlock()
 		if m, err := toMap(snapshot); err == nil {
 			_ = s.Store.Put("events", "tesla_nav:"+snapshot.ID, cfg.VIN, m)
+			if snapshot.RequestID != "" {
+				_ = s.Store.Put("events", "tesla_nav_req:"+snapshot.RequestID, cfg.VIN, m)
+			}
 		}
 	}
 	if !wait {
@@ -1117,4 +1135,73 @@ func (s *Server) teslaTracker(cfg tesla.Config) *tesla.Tracker {
 	// Settings can change between polls.
 	tr.Efficiency, tr.Rate, tr.Currency, tr.Home = cfg.ChargeEfficiency, rate, currency, home
 	return tr
+}
+
+func validRequestID(v string) bool {
+	if len(v) < 8 || len(v) > 64 {
+		return false
+	}
+	for _, r := range v {
+		if !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '_' || r == '-') {
+			return false
+		}
+	}
+	return true
+}
+
+// teslaFindJob finds a navigation job by id or request_id: in memory, else
+// in the stored events. A stored job still "running" that this process is
+// not running was interrupted by a restart; its outcome is "unknown".
+func (s *Server) teslaFindJob(id, rid string) *teslaJob {
+	s.tesla.mu.Lock()
+	if j := s.tesla.job; j != nil && ((id != "" && j.ID == id) || (rid != "" && j.RequestID == rid)) {
+		out := *j
+		s.tesla.mu.Unlock()
+		return &out
+	}
+	if rid != "" {
+		if j, ok := s.tesla.byRequest[rid]; ok {
+			out := *j
+			s.tesla.mu.Unlock()
+			return &out
+		}
+	}
+	s.tesla.mu.Unlock()
+	key := "tesla_nav:" + id
+	if rid != "" {
+		key = "tesla_nav_req:" + rid
+	}
+	m, err := s.Store.Get("events", key)
+	if err != nil {
+		return nil
+	}
+	var j teslaJob
+	if fromMap(m, &j) != nil {
+		return nil
+	}
+	if j.Status == "running" {
+		j.Status = "unknown"
+		j.Error = "the server restarted while sending; check the car before resending"
+	}
+	return &j
+}
+
+// teslaJobLookup answers GET /navigate/job?id=… or ?request_id=…, so the
+// app can settle a send whose response it never received.
+func (s *Server) teslaJobLookup(w http.ResponseWriter, r *http.Request) {
+	id, rid := r.URL.Query().Get("id"), r.URL.Query().Get("request_id")
+	if (id == "") == (rid == "") {
+		fail(w, 400, "give id or request_id")
+		return
+	}
+	if rid != "" && !validRequestID(rid) {
+		fail(w, 400, "invalid request_id")
+		return
+	}
+	j := s.teslaFindJob(id, rid)
+	if j == nil {
+		fail(w, 404, "no such navigation job")
+		return
+	}
+	jsonOut(w, 200, j)
 }

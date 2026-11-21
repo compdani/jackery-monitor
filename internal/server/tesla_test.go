@@ -161,7 +161,7 @@ func TestTeslaOAuthAndNavigateREST(t *testing.T) {
 	}
 
 	nine := `{"stops":[` + strings.TrimSuffix(strings.Repeat(`{"lat":1,"lng":1},`, 9), ",") + `]}`
-	for _, path := range []string{"/api/tesla/navigate", "/api/tesla/navigate/gps"} {
+	for _, path := range []string{"/api/tesla/navigate"} {
 		if w := request(h, "POST", path, nine, token); w.Code != 400 {
 			t.Fatalf("%s: 9 stops accepted: %d", path, w.Code)
 		}
@@ -184,27 +184,13 @@ func TestTeslaOAuthAndNavigateREST(t *testing.T) {
 	}
 
 	fake.commands = nil
-	w = request(h, "POST", "/api/tesla/navigate/gps", `{"stop_delay_seconds":0,"stops":[{"lat":30.1,"lng":-97.1},{"lat":30.2,"lng":-97.2},{"lat":30.3,"lng":-97.3}]}`, token)
-	if w.Code != 200 {
-		t.Fatalf("navigate %d %s", w.Code, w.Body)
-	}
-	if len(fake.commands) != 3 {
-		t.Fatalf("commands %v", fake.commands)
-	}
-	for i, want := range []float64{0, 2, 2} {
-		if fake.commands[i]["order"] != want {
-			t.Fatalf("stop %d order %v", i, fake.commands[i]["order"])
+	for _, body := range []string{`{"stops":[{"lat":30.1,"lng":-97.1}]}`, `{"stops":[{"lat":30.1,"lng":-97.1},{"lat":30.2,"lng":-97.2}]}`} {
+		w = request(h, "POST", "/api/tesla/navigate/gps", body, token)
+		if w.Code != 410 || len(fake.commands) != 0 {
+			t.Fatalf("GPS batch endpoint must be gone without sending: %d %v", w.Code, fake.commands)
 		}
 	}
-	// Per-request override of the order semantics.
-	fake.commands = nil
-	request(h, "POST", "/api/tesla/navigate/gps", `{"stop_delay_seconds":0,"stops":[{"lat":30.1,"lng":-97.1},{"lat":30.2,"lng":-97.2}],"order_mode":"position"}`, token)
-	if fake.commands[0]["order"] != 1.0 || fake.commands[1]["order"] != 2.0 {
-		t.Fatalf("position orders %v", fake.commands)
-	}
-	if w := request(h, "GET", "/api/tesla/navigate/last", "", token); !strings.Contains(w.Body.String(), `"status":"done"`) {
-		t.Fatalf("last job %s", w.Body)
-	}
+
 }
 
 func TestTeslaNavigateOne(t *testing.T) {
@@ -217,10 +203,10 @@ func TestTeslaNavigateOne(t *testing.T) {
 		body  string
 		order float64
 	}{
-		{`{"lat":30.1,"lng":-97.1}`, 2},
-		{`{"lat":30.1,"lng":-97.1,"position":"append"}`, 2},
+		{`{"lat":30.1,"lng":-97.1}`, 1},
+		{`{"lat":30.1,"lng":-97.1,"position":"append"}`, 1},
 		{`{"lat":30.1,"lng":-97.1,"position":"prepend"}`, 1},
-		{`{"lat":30.1,"lng":-97.1,"position":"prepend","order":3}`, 3},
+		{`{"lat":30.1,"lng":-97.1,"position":"prepend","order":3}`, 1},
 	} {
 		fake.commands = nil
 		w := request(h, "POST", "/api/tesla/navigate/one", tc.body, token)
@@ -228,14 +214,14 @@ func TestTeslaNavigateOne(t *testing.T) {
 			t.Fatalf("%s: %d %s %v", tc.body, w.Code, w.Body, fake.commands)
 		}
 	}
-	if w := request(h, "POST", "/api/tesla/navigate/one", `{"lat":30.1,"lng":-97.1,"position":"middle"}`, token); w.Code != 400 {
-		t.Fatalf("bad position accepted: %d", w.Code)
+	if w := request(h, "POST", "/api/tesla/navigate/one", `{"lat":30.1,"lng":-97.1,"position":"middle"}`, token); w.Code != 200 {
+		t.Fatalf("legacy position should be ignored: %d", w.Code)
 	}
 	if w := request(h, "POST", "/api/tesla/navigate/one", `{"lat":0,"lng":0}`, token); w.Code != 400 {
 		t.Fatalf("0,0 accepted: %d", w.Code)
 	}
-	if w := request(h, "POST", "/api/tesla/navigate/gps", `{"stop_delay_seconds":61,"stops":[{"lat":30.1,"lng":-97.1}]}`, token); w.Code != 400 {
-		t.Fatalf("delay 61 accepted: %d", w.Code)
+	if w := request(h, "POST", "/api/tesla/navigate/gps", `{"stop_delay_seconds":61,"stops":[{"lat":30.1,"lng":-97.1}]}`, token); w.Code != 410 {
+		t.Fatalf("removed GPS endpoint accepted: %d", w.Code)
 	}
 	if w := request(h, "GET", "/api/tesla/navigate/last", "", token); !strings.Contains(w.Body.String(), `"position":"prepend"`) {
 		t.Fatalf("last job %s", w.Body)
@@ -254,7 +240,7 @@ func TestTeslaNavigateOne(t *testing.T) {
 		t.Fatalf("command log %d %s", w.Code, w.Body)
 	}
 	got := log.Commands[0]
-	if got.Command != "navigation_gps_request" || got.Transport != "rest" || !got.OK || got.Params["order"] != 3.0 ||
+	if got.Command != "navigation_gps_request" || got.Transport != "rest" || !got.OK || got.Params["order"] != 1.0 ||
 		!strings.HasSuffix(got.Endpoint, "/command/navigation_gps_request") || !strings.Contains(got.Response, "result") {
 		t.Fatalf("newest record %+v", got)
 	}

@@ -300,30 +300,14 @@ func (c *Client) NavigateWaypoints(ctx context.Context, stops []Stop) ([]StopRes
 	return results, nil
 }
 
-// NavigateGPS sends one navigation_gps_request per stop, StopDelay apart,
-// numbering them with Config.NavOrderMode, and stops at the first failure.
-// The car must be awake.
-func (c *Client) NavigateGPS(ctx context.Context, stops []Stop) ([]StopResult, error) {
-	if err := ValidateStops(stops); err != nil {
-		return nil, err
-	}
-	orders := make([]int32, len(stops))
-	for i := range stops {
-		orders[i] = OrderFor(c.Config.NavOrderMode, i)
-	}
-	return c.sendGPS(ctx, stops, orders)
-}
-
-// SendOne sends a single stop with an explicit order value, e.g. to append
-// it to or prepend it before the trip already on the car. The car must be
-// awake.
-func (c *Client) SendOne(ctx context.Context, s Stop, order int32) (StopResult, error) {
+// SendOne inserts a single GPS stop before the existing route. Always order 1.
+func (c *Client) SendOne(ctx context.Context, s Stop) (StopResult, error) {
 	if err := ValidateStops([]Stop{s}); err != nil {
 		return StopResult{}, err
 	}
-	res, err := c.sendGPS(ctx, []Stop{s}, []int32{order})
+	res, err := c.sendGPS(ctx, []Stop{s}, []int32{OrderPrepend})
 	if len(res) == 0 {
-		return StopResult{Order: order}, err
+		return StopResult{Order: OrderPrepend}, err
 	}
 	return res[0], err
 }
@@ -331,6 +315,11 @@ func (c *Client) SendOne(ctx context.Context, s Stop, order int32) (StopResult, 
 // sendGPS sends one navigation_gps_request per stop, StopDelay apart,
 // stopping at the first failure.
 func (c *Client) sendGPS(ctx context.Context, stops []Stop, orders []int32) ([]StopResult, error) {
+	if len(stops) != 1 {
+		return nil, errors.New("GPS supports single-stop sends only")
+	}
+	orders = []int32{OrderPrepend}
+
 	results := make([]StopResult, 0, len(stops))
 	sendAll := func(send func(Stop, int32) error) {
 		for i, s := range stops {

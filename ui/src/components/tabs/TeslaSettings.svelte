@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { api, apiPost } from '$lib/api';
+  import AppleMapsSettings from './AppleMapsSettings.svelte';
 
   type Config = {
     configured?: boolean;
@@ -12,8 +13,6 @@
     domain?: string;
     redirect_uri?: string;
     nav_transport?: string;
-    nav_order_mode?: string;
-    nav_stop_delay_seconds?: number;
     google_api_key?: string;
     place_max_distance_m?: number;
     has_google_api_key?: boolean;
@@ -89,7 +88,7 @@
 
   let status = $state<Status | null>(null);
   let commands = $state.raw<CommandRecord[]>([]);
-  let cfg = $state<Config>({ region: 'na', nav_transport: 'signed', nav_order_mode: 'enum' });
+  let cfg = $state<Config>({ region: 'na', nav_transport: 'signed' });
   let secret = $state('');
   let googleKey = $state('');
   let msg = $state('');
@@ -365,30 +364,8 @@
           <input id="t-pdist" type="number" min="5" max="200" step="1" bind:value={cfg.place_max_distance_m} />
         </div>
       </div>
-      <h3 class="tesla-sub">GPS sends (one command per stop)</h3>
-      <p class="hint" style="margin:0 0 8px">Defaults for GPS batches; the app can override both. Single-stop sends always use GPS.</p>
-      <div class="settings-row">
-        <label class="settings-label" for="t-order">
-          <span class="settings-label-text">Stop order field</span>
-          <span class="settings-hint">How the car reads "order": replace/append, or stop position.</span>
-        </label>
-        <div class="settings-control">
-          <select id="t-order" class="device-select" bind:value={cfg.nav_order_mode}>
-            <option value="enum">Replace, then append (0, 2, 2…)</option>
-            <option value="position">Position number (1, 2, 3…)</option>
-            <option value="one_three">1 to replace, then 3 (1, 3, 3…)</option>
-          </select>
-        </div>
-      </div>
-      <div class="settings-row">
-        <label class="settings-label" for="t-delay">
-          <span class="settings-label-text">Seconds between stops</span>
-          <span class="settings-hint">Pause between GPS commands; the car drops stops sent too fast. The app can override it.</span>
-        </label>
-        <div class="settings-control">
-          <input id="t-delay" type="number" min="1" max="60" step="1" bind:value={cfg.nav_stop_delay_seconds} />
-        </div>
-      </div>
+      <h3 class="tesla-sub">Single GPS sends</h3>
+      <p class="hint" style="margin:0 0 8px">GPS supports one stop at a time, inserted before the existing route with order 1. Multi-stop routes use Maps waypoints.</p>
       <h3 class="tesla-sub">Charging</h3>
       <div class="settings-row">
         <label class="settings-label" for="t-eff">
@@ -441,6 +418,8 @@
     {/if}
   </div>
 </section>
+
+<AppleMapsSettings />
 
 {#if status?.last_navigation}
   {@const job = status.last_navigation}

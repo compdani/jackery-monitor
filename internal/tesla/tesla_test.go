@@ -185,75 +185,30 @@ func testClient(h *fakeHTTP, transport string) *Client {
 	return &Client{Config: cfg, HTTP: h, Tokens: staticToken("tok"), PollInterval: time.Millisecond}
 }
 
-func TestNavigateRESTSendsOrdersAndStopsOnFailure(t *testing.T) {
-	calls := 0
+func TestSingleGPSAlwaysOrderOne(t *testing.T) {
 	h := &fakeHTTP{handle: func(r *http.Request) (int, string) {
-		calls++
-		if calls == 3 {
-			return 200, `{"response":{"result":false,"reason":"busy"}}`
-		}
 		return 200, `{"response":{"result":true,"reason":""}}`
 	}}
 	c := testClient(h, TransportREST)
-	stops := []Stop{{Lat: 1, Lng: 1}, {Lat: 2, Lng: 2}, {Lat: 3, Lng: 3}, {Lat: 4, Lng: 4}}
-	res, err := c.NavigateGPS(context.Background(), stops)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(res) != 3 || !res[0].OK || !res[1].OK || res[2].OK || !strings.Contains(res[2].Error, "busy") {
-		t.Fatalf("results %+v", res)
-	}
-	var first, second map[string]any
-	_ = json.Unmarshal([]byte(h.bodies[0]), &first)
-	_ = json.Unmarshal([]byte(h.bodies[1]), &second)
-	if first["order"] != 0.0 || second["order"] != 2.0 {
-		t.Errorf("orders %v %v", first["order"], second["order"])
-	}
-	if h.reqs[0].Header.Get("Authorization") != "Bearer tok" {
-		t.Error("missing bearer")
-	}
-	if !strings.HasSuffix(h.reqs[0].URL.Path, "/api/1/vehicles/5YJ3E1EA7KF000000/command/navigation_gps_request") {
-		t.Errorf("path %s", h.reqs[0].URL.Path)
-	}
-}
-
-func TestSendGPSPausesBetweenStopsAndSendOne(t *testing.T) {
-	var at []time.Time
-	h := &fakeHTTP{handle: func(r *http.Request) (int, string) {
-		at = append(at, time.Now())
-		return 200, `{"response":{"result":true,"reason":""}}`
-	}}
-	c := testClient(h, TransportREST)
-	c.StopDelay = 40 * time.Millisecond
-	if _, err := c.NavigateGPS(context.Background(), []Stop{{Lat: 1, Lng: 1}, {Lat: 2, Lng: 2}, {Lat: 3, Lng: 3}}); err != nil {
-		t.Fatal(err)
-	}
-	if len(at) != 3 || at[1].Sub(at[0]) < 40*time.Millisecond || at[2].Sub(at[1]) < 40*time.Millisecond {
-		t.Fatalf("no pause between stops: %v", at)
-	}
-	res, err := c.SendOne(context.Background(), Stop{Lat: 5, Lng: 5}, OrderPrepend)
+	res, err := c.SendOne(context.Background(), Stop{Lat: 5, Lng: 5})
 	if err != nil || !res.OK || res.Order != 1 {
 		t.Fatalf("send one %+v %v", res, err)
 	}
 	var body map[string]any
-	_ = json.Unmarshal([]byte(h.bodies[3]), &body)
+	_ = json.Unmarshal([]byte(h.bodies[0]), &body)
 	if body["order"] != 1.0 || body["lat"] != 5.0 {
 		t.Fatalf("body %v", body)
 	}
-	// A cancelled context stops the pause and reports the stop as failed.
-	ctx, cancel := context.WithCancel(context.Background())
-	c.StopDelay = time.Hour
-	go func() { time.Sleep(20 * time.Millisecond); cancel() }()
-	res2, _ := c.NavigateGPS(ctx, []Stop{{Lat: 1, Lng: 1}, {Lat: 2, Lng: 2}})
-	if len(res2) != 2 || !res2[0].OK || res2[1].OK {
-		t.Fatalf("cancel results %+v", res2)
+	before := len(h.bodies)
+	if _, err := c.sendGPS(context.Background(), []Stop{{Lat: 1, Lng: 1}, {Lat: 2, Lng: 2}}, []int32{0, 2}); err == nil || len(h.bodies) != before {
+		t.Fatal("GPS batch must fail before any command")
 	}
-	for _, p := range []string{"", "append", "prepend", "x"} {
-		o, err := OrderForPlacement(p)
-		want := map[string]int32{"": 2, "append": 2, "prepend": 1}[p]
-		if (p == "x") != (err != nil) || (err == nil && o != want) {
-			t.Errorf("placement %q -> %d %v", p, o, err)
-		}
+	if _, err := c.sendGPS(context.Background(), []Stop{{Lat: 1, Lng: 1}}, []int32{3}); err != nil {
+		t.Fatal(err)
+	}
+	_ = json.Unmarshal([]byte(h.bodies[1]), &body)
+	if body["order"] != 1.0 {
+		t.Fatalf("override escaped: %v", body)
 	}
 }
 
