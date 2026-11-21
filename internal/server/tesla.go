@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"html"
+	"math"
 	"net/http"
 	"strconv"
 	"strings"
@@ -17,6 +18,7 @@ import (
 	"time"
 
 	"github.com/compdani/jackery-monitor/internal/automation"
+	"github.com/compdani/jackery-monitor/internal/store"
 	"github.com/compdani/jackery-monitor/internal/tesla"
 	"github.com/teslamotors/vehicle-command/pkg/cache"
 )
@@ -350,6 +352,16 @@ func (s *Server) teslaRoutes(w http.ResponseWriter, r *http.Request, b map[strin
 		return false
 	}
 	route := r.Method + " " + strings.TrimPrefix(p, "/api/tesla")
+	if id, ok := strings.CutPrefix(route, "DELETE /places/corrections/"); ok {
+		if err := s.Store.DeletePlaceCorrection(id); errors.Is(err, sql.ErrNoRows) {
+			fail(w, 404, "correction not found")
+		} else if err != nil {
+			storageError(w, err)
+		} else {
+			jsonOut(w, 200, map[string]any{"ok": true})
+		}
+		return true
+	}
 	switch route {
 	case "GET /status":
 		jsonOut(w, 200, s.teslaStatus())
@@ -407,6 +419,15 @@ func (s *Server) teslaRoutes(w http.ResponseWriter, r *http.Request, b map[strin
 		fail(w, http.StatusGone, "GPS batch sending was removed; use /api/tesla/navigate for Maps batches or /api/tesla/navigate/one for one GPS stop")
 	case "POST /places/resolve":
 		s.teslaResolvePlaces(w, r, b)
+	case "GET /places/corrections":
+		list, err := s.Store.ListPlaceCorrections()
+		if err != nil {
+			storageError(w, err)
+			return true
+		}
+		jsonOut(w, 200, map[string]any{"corrections": list, "match_m": store.CorrectionMatchM})
+	case "POST /places/corrections":
+		s.teslaSaveCorrection(w, b)
 	case "POST /navigate/one":
 		s.teslaNavigateOne(w, r, b)
 	case "GET /navigate/job":
@@ -687,7 +708,16 @@ func (s *Server) teslaResolvePlaces(w http.ResponseWriter, r *http.Request, b ma
 		Match      *tesla.Place  `json:"match,omitempty"`
 		Candidates []tesla.Place `json:"candidates"`
 		Error      string        `json:"error,omitempty"`
+		// Source of the match: "correction" (the driver's earlier pick for
+		// this pin) or "nearest".
+		Source       string `json:"source,omitempty"`
+		CorrectionID string `json:"correction_id,omitempty"`
+		// Confident: the nearest address is clearly the one; otherwise the
+		// app asks the driver to check. Nearby: addresses within the limit.
+		Confident bool `json:"confident"`
+		Nearby    int  `json:"nearby"`
 	}
+	useCorrections := b["corrections"] != false
 	out := make([]stopOut, len(req.Stops))
 	for i, st := range req.Stops {
 		out[i] = stopOut{Index: i, Candidates: []tesla.Place{}}
@@ -697,13 +727,50 @@ func (s *Server) teslaResolvePlaces(w http.ResponseWriter, r *http.Request, b ma
 			continue
 		}
 		out[i].Candidates = cands
+		out[i].Confident, out[i].Nearby = tesla.Confidence(cands, limit)
+		if useCorrections {
+			if c, err := s.Store.FindPlaceCorrection(st.Lat, st.Lng); err == nil && c != nil {
+				pl := tesla.Place{ID: c.PlaceID, Address: c.Address, Lat: c.Lat, Lng: c.Lng,
+					DistanceM: math.Round(tesla.DistanceM(st.Lat, st.Lng, c.Lat, c.Lng)*10) / 10}
+				out[i].Match, out[i].Source, out[i].CorrectionID, out[i].Confident = &pl, "correction", c.ID, true
+				continue
+			}
+		}
 		if m, err := resolver.Match(ctx, st, limit); err == nil {
-			out[i].Match = &m
+			out[i].Match, out[i].Source = &m, "nearest"
 		} else {
 			out[i].Error = err.Error()
+			out[i].Confident = false
 		}
 	}
 	jsonOut(w, 200, map[string]any{"max_distance_m": limit, "stops": out})
+}
+
+// teslaSaveCorrection remembers the address the driver picked for a Flex
+// pin: {"pin":{lat,lng},"place":{place_id,address,lat,lng}}.
+func (s *Server) teslaSaveCorrection(w http.ResponseWriter, b map[string]any) {
+	var req struct {
+		Pin   tesla.Stop  `json:"pin"`
+		Place tesla.Place `json:"place"`
+	}
+	if err := fromMap(b, &req); err != nil || tesla.ValidateStops([]tesla.Stop{req.Pin}) != nil {
+		fail(w, 400, "pin {lat,lng} and place {place_id,…} required")
+		return
+	}
+	// The place must be one the car can route to (valid ID and location).
+	if err := tesla.ValidateStops([]tesla.Stop{{Lat: req.Place.Lat, Lng: req.Place.Lng, PlaceID: req.Place.ID}}); err != nil || req.Place.ID == "" || len(req.Place.Address) > 500 {
+		fail(w, 400, "place {place_id, lat, lng} required and valid")
+		return
+	}
+	c, err := s.Store.SavePlaceCorrection(store.PlaceCorrection{
+		PinLat: req.Pin.Lat, PinLng: req.Pin.Lng,
+		PlaceID: req.Place.ID, Address: req.Place.Address, Lat: req.Place.Lat, Lng: req.Place.Lng,
+	})
+	if err != nil {
+		storageError(w, err)
+		return
+	}
+	jsonOut(w, 200, c)
 }
 
 // teslaNavigateOne inserts one GPS stop before the existing route, always order 1.
@@ -826,10 +893,12 @@ func (s *Server) teslaRunJob(w http.ResponseWriter, b map[string]any, cfg tesla.
 	}
 	started := *job
 	s.tesla.mu.Unlock()
-	if rid != "" {
-		// Recorded before sending, so a lookup after a server restart
-		// reports "unknown" rather than "never sent".
-		if m, err := toMap(started); err == nil {
+	// Recorded before sending (by request ID and by job ID, both of which
+	// the app may look up), so a lookup after a server restart reports
+	// "unknown" rather than "never sent".
+	if m, err := toMap(started); err == nil {
+		_ = s.Store.Put("events", "tesla_nav:"+started.ID, cfg.VIN, m)
+		if rid != "" {
 			_ = s.Store.Put("events", "tesla_nav_req:"+rid, cfg.VIN, m)
 		}
 	}

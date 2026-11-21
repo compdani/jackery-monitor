@@ -349,3 +349,78 @@ func TestTeslaAppTokenAuthenticates(t *testing.T) {
 }
 
 func itoa(v int64) string { b, _ := json.Marshal(v); return string(b) }
+
+func TestPlaceCorrectionsRememberThePick(t *testing.T) {
+	_, h, token, _ := teslaSetup(t)
+	connectTesla(t, h, token)
+	request(h, "POST", "/api/tesla/config", `{"client_id":"cid","vin":"5YJ3E1EA7KF000000","domain":"j.cdani.net","nav_transport":"rest","google_api_key":"gk"}`, token)
+	type stop struct {
+		Match *struct {
+			PlaceID string `json:"place_id"`
+		} `json:"match"`
+		Source       string `json:"source"`
+		CorrectionID string `json:"correction_id"`
+		Confident    bool   `json:"confident"`
+	}
+	resolve := func(body string) stop {
+		t.Helper()
+		var out struct{ Stops []stop }
+		w := request(h, "POST", "/api/tesla/places/resolve", body, token)
+		_ = json.Unmarshal(w.Body.Bytes(), &out)
+		if w.Code != 200 || len(out.Stops) != 1 {
+			t.Fatalf("resolve %d %s", w.Code, w.Body)
+		}
+		return out.Stops[0]
+	}
+	pin := `{"stops":[{"lat":30.1,"lng":-97.1}]}`
+	if s := resolve(pin); s.Source != "nearest" || s.Match == nil || s.Match.PlaceID != "P30.10000,-97.10000" {
+		t.Fatalf("before %+v", s)
+	}
+	// The driver picks the house across the street.
+	w := request(h, "POST", "/api/tesla/places/corrections", `{"pin":{"lat":30.1,"lng":-97.1},"place":{"place_id":"Phouse","address":"12 Real St","lat":30.1002,"lng":-97.1}}`, token)
+	if w.Code != 200 {
+		t.Fatalf("save %d %s", w.Code, w.Body)
+	}
+	// Same spot again (a few metres off): the pick is used and marked.
+	s := resolve(`{"stops":[{"lat":30.10002,"lng":-97.1}]}`)
+	if s.Source != "correction" || s.Match.PlaceID != "Phouse" || s.CorrectionID == "" || !s.Confident {
+		t.Fatalf("corrected %+v", s)
+	}
+	// A pin 20 m away (a neighbour) is not affected.
+	if s := resolve(`{"stops":[{"lat":30.10018,"lng":-97.1}]}`); s.Source != "nearest" {
+		t.Fatalf("neighbour %+v", s)
+	}
+	// Saving again at the same spot replaces the pick (one per spot).
+	request(h, "POST", "/api/tesla/places/corrections", `{"pin":{"lat":30.1,"lng":-97.1},"place":{"place_id":"Pother","lat":30.1,"lng":-97.1001}}`, token)
+	var list struct {
+		Corrections []struct {
+			ID      string `json:"id"`
+			PlaceID string `json:"place_id"`
+		}
+	}
+	w = request(h, "GET", "/api/tesla/places/corrections", "", token)
+	_ = json.Unmarshal(w.Body.Bytes(), &list)
+	if len(list.Corrections) != 1 {
+		t.Fatalf("list %s", w.Body)
+	}
+	// The app can ask for the plain nearest match, and forget the pick.
+	if s := resolve(`{"corrections":false,"stops":[{"lat":30.1,"lng":-97.1}]}`); s.Source != "nearest" {
+		t.Fatalf("without corrections %+v", s)
+	}
+	s = resolve(pin)
+	if w := request(h, "DELETE", "/api/tesla/places/corrections/"+s.CorrectionID, "", token); w.Code != 200 {
+		t.Fatalf("delete %d %s", w.Code, w.Body)
+	}
+	if s := resolve(pin); s.Source != "nearest" {
+		t.Fatalf("after delete %+v", s)
+	}
+	if w := request(h, "POST", "/api/tesla/places/corrections", `{"pin":{"lat":30.1,"lng":-97.1},"place":{}}`, token); w.Code != 400 {
+		t.Fatalf("empty place accepted %d", w.Code)
+	}
+	if w := request(h, "POST", "/api/tesla/places/corrections", `{"pin":{"lat":30.1,"lng":-97.1},"place":{"place_id":"a,b","lat":30.1,"lng":-97.1}}`, token); w.Code != 400 {
+		t.Fatalf("bad place id accepted %d", w.Code)
+	}
+	if w := request(h, "POST", "/api/tesla/places/corrections", `{"pin":{"lat":30.1,"lng":-97.1},"place":{"place_id":"Pok"}}`, token); w.Code != 400 {
+		t.Fatalf("place without location accepted %d", w.Code)
+	}
+}

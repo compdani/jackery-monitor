@@ -301,6 +301,10 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if s.teslaPublic(w, r) {
 		return
 	}
+	// expo-updates fetches these without the app token.
+	if s.otaPublic(w, r) {
+		return
+	}
 	s.cfAccessSession(w, r)
 	if s.auth(w, r) {
 		return
@@ -331,6 +335,10 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if strings.HasPrefix(p, "/api/ble/") {
 		// The inspector handler owns its request bodies and status codes.
 		s.bmsInit().sessions.Handler().ServeHTTP(w, r)
+		return
+	}
+	// Multipart upload and the other update endpoints (owns its body).
+	if s.otaRoutes(w, r) {
 		return
 	}
 	if p == "/api/assistant/attachments" && r.Method == "POST" {

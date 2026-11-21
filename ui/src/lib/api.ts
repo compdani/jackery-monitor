@@ -52,7 +52,8 @@ export async function api<T = unknown>(
     if (pushed !== undefined) return pushed as T;
   }
   const headers = new Headers(init.headers);
-  if (init.body != null && !headers.has('Content-Type')) {
+  // A FormData body sets its own multipart content type.
+  if (init.body != null && !(init.body instanceof FormData) && !headers.has('Content-Type')) {
     headers.set('Content-Type', 'application/json');
   }
   const response = await fetch(url, {

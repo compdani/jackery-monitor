@@ -2,6 +2,7 @@
   import { onMount } from 'svelte';
   import { api, apiPost } from '$lib/api';
   import AppleMapsSettings from './AppleMapsSettings.svelte';
+  import AppUpdatesSettings from './AppUpdatesSettings.svelte';
 
   type Config = {
     configured?: boolean;
@@ -420,6 +421,8 @@
 </section>
 
 <AppleMapsSettings />
+
+<AppUpdatesSettings />
 
 {#if status?.last_navigation}
   {@const job = status.last_navigation}

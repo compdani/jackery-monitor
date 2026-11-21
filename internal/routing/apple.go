@@ -11,6 +11,7 @@ package routing
 import (
 	"context"
 	"crypto/ecdsa"
+	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/x509"
@@ -115,6 +116,9 @@ func parseECKey(p string) (*ecdsa.PrivateKey, error) {
 	k, err := x509.ParsePKCS8PrivateKey(block.Bytes)
 	if err != nil {
 		if ek, err2 := x509.ParseECPrivateKey(block.Bytes); err2 == nil {
+			if ek.Curve != elliptic.P256() {
+				return nil, errors.New("private key must be a P-256 (ES256) key")
+			}
 			return ek, nil
 		}
 		return nil, fmt.Errorf("private key: %w", err)
@@ -122,6 +126,10 @@ func parseECKey(p string) (*ecdsa.PrivateKey, error) {
 	ek, ok := k.(*ecdsa.PrivateKey)
 	if !ok {
 		return nil, errors.New("private key is not an EC (ES256) key")
+	}
+	if ek.Curve != elliptic.P256() {
+		// ES256 signatures are 64 bytes; another curve would panic when signing.
+		return nil, errors.New("private key must be a P-256 (ES256) key")
 	}
 	return ek, nil
 }

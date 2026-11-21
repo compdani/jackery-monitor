@@ -507,3 +507,26 @@ func TestCommandLogKeepsNewestFirst(t *testing.T) {
 	var nilLog *CommandLog
 	nilLog.Add(CommandRecord{}) // must not panic
 }
+
+func TestConfidence(t *testing.T) {
+	p := func(d float64) Place { return Place{DistanceM: d} }
+	cases := []struct {
+		name   string
+		cands  []Place
+		ok     bool
+		nearby int
+	}{
+		{"one close house", []Place{p(5)}, true, 1},
+		{"clearly nearest", []Place{p(4), p(14)}, true, 2},
+		{"house across the street almost as close", []Place{p(8), p(10)}, false, 2},
+		{"next door within 5 m more", []Place{p(3), p(7)}, false, 2},
+		{"nearest too far from the pin", []Place{p(18), p(40)}, false, 1},
+		{"nothing", nil, false, 0},
+	}
+	for _, c := range cases {
+		ok, n := Confidence(c.cands, 30)
+		if ok != c.ok || n != c.nearby {
+			t.Errorf("%s: got %v %d, want %v %d", c.name, ok, n, c.ok, c.nearby)
+		}
+	}
+}

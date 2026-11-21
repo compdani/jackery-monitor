@@ -192,6 +192,34 @@ func (p *PlaceResolver) lookup(ctx context.Context, s Stop) ([]Place, error) {
 	return cands, nil
 }
 
+// A match is confident when it is close to the pin and clearly nearer than
+// the next address. Flex pins are often the parking spot, so with houses on
+// both sides of the street (or next door at a similar distance) the nearest
+// address is a guess the driver should check.
+const (
+	ConfidentWithinM = 12
+	ClearLeadRatio   = 1.5
+	ClearLeadM       = 5
+)
+
+// Confidence reports whether the nearest candidate is a safe match and how
+// many addresses lie within limitM of the pin.
+func Confidence(cands []Place, limitM float64) (confident bool, nearby int) {
+	for _, c := range cands {
+		if c.DistanceM <= limitM {
+			nearby++
+		}
+	}
+	if len(cands) == 0 || cands[0].DistanceM > ConfidentWithinM {
+		return false, nearby
+	}
+	if len(cands) == 1 {
+		return true, nearby
+	}
+	first, second := cands[0].DistanceM, cands[1].DistanceM
+	return second >= first*ClearLeadRatio && second-first >= ClearLeadM, nearby
+}
+
 // WaypointsString formats place IDs for navigation_waypoints_request: in
 // travel order, the last one being the final destination.
 func WaypointsString(places []Place) string {
