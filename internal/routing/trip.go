@@ -24,6 +24,17 @@ const ContractVersion = 1
 // is offered instead of the current order.
 const MinImprovementS = 60
 
+// MinImprovementM is how much distance a proposal must save before it is
+// offered when optimizing for distance (about a quarter mile).
+const MinImprovementM = 400
+
+// Objectives for Optimize: the soonest finish (default) or the fewest
+// driven metres.
+const (
+	ObjectiveTime     = "time"
+	ObjectiveDistance = "distance"
+)
+
 // Request is a whole trip: a start, visits and an optional fixed finish.
 // Order is the visit order to evaluate (evaluate) or the baseline to beat
 // (optimize). A nil Finish means the trip may end at any visit.
@@ -42,7 +53,14 @@ type Request struct {
 	// ServiceS is the default time spent at each visit (a visit's own
 	// service_s overrides it).
 	ServiceS float64 `json:"service_s,omitempty"`
+	// Objective is what optimize minimizes: "time" (default, when the trip
+	// ends) or "distance" (total driven distance). Deadlines come first
+	// either way.
+	Objective string `json:"objective,omitempty"`
 }
+
+// ByDistance reports whether optimize minimizes distance instead of time.
+func (r Request) ByDistance() bool { return r.Objective == ObjectiveDistance }
 
 // MaxServiceS bounds a stop's service time.
 const MaxServiceS = 3600
@@ -50,6 +68,10 @@ const MaxServiceS = 3600
 // LatePenalty weighs one second of lateness against one second of trip
 // time when ranking orders: arriving on time comes first.
 const LatePenalty = 100
+
+// LatePenaltyM weighs one second of lateness against metres driven when
+// optimizing for distance (a minute late outweighs 60 km).
+const LatePenaltyM = 1000
 
 // departAt is the schedule's time zero (unix seconds).
 func (r Request) departAt() int64 {
@@ -110,6 +132,9 @@ func (r Request) Validate() error {
 	}
 	if r.ServiceS < 0 || r.ServiceS > MaxServiceS {
 		return bad("service_s must be 0 to %d", MaxServiceS)
+	}
+	if r.Objective != "" && r.Objective != ObjectiveTime && r.Objective != ObjectiveDistance {
+		return bad("unsupported objective %q (\"time\" or \"distance\")", r.Objective)
 	}
 	if r.LockFirst < 0 || r.LockFirst > len(r.Visits) {
 		return bad("lock_first must be 0 to the number of visits")
@@ -346,7 +371,11 @@ type Comparison struct {
 	Proposed *Evaluation `json:"proposed,omitempty"`
 	Improved bool        `json:"improved"`
 	SavingS  float64     `json:"saving_s"`
-	Message  string      `json:"message"`
+	// SavingM is the driving distance saved (negative when longer).
+	SavingM float64 `json:"saving_m"`
+	// Objective is what the search minimized ("time" or "distance").
+	Objective string `json:"objective"`
+	Message   string `json:"message"`
 	// Matrix describes how candidate orders were scored.
 	Matrix MatrixInfo `json:"matrix"`
 }
@@ -494,7 +523,10 @@ var OptimizeTime = 5 * time.Second
 func Optimize(ctx context.Context, p Provider, r Request) (Comparison, error) {
 	n := len(r.Visits)
 	base := r.indexOrder(r.Order)
-	var cmp Comparison
+	cmp := Comparison{Objective: ObjectiveTime}
+	if r.ByDistance() {
+		cmp.Objective = ObjectiveDistance
+	}
 	if n < 2 {
 		ev, err := Evaluate(ctx, p, r, r.Order)
 		if err != nil {
@@ -513,12 +545,15 @@ func Optimize(ctx context.Context, p Provider, r Request) (Comparison, error) {
 		cmp.Message = "Nothing to reorder after the stops kept first."
 		return cmp, nil
 	}
-	m, info, err := buildMatrix(ctx, p, r, base)
+	m, dm, info, err := buildMatrix(ctx, p, r, base)
 	if err != nil {
 		return cmp, err
 	}
 	cmp.Matrix = info
 	pr := newProblem(r, m, base[:r.LockFirst])
+	if r.ByDistance() {
+		pr.d = dm
+	}
 	best := search(pr, base[r.LockFirst:], time.Now().Add(OptimizeTime))
 	proposed := make([]string, 0, n)
 	for _, v := range append(append([]int{}, base[:r.LockFirst]...), best...) {
@@ -539,9 +574,40 @@ func Optimize(ctx context.Context, p Provider, r Request) (Comparison, error) {
 		return cmp, err
 	}
 	// Lateness first, then when the trip ends (driving + stops + waiting;
-	// without windows or service this is the driving time).
+	// without windows or service this is the driving time) or, optimizing
+	// for distance, the distance driven.
 	saving := baseline.FinishS - prop.FinishS
 	cmp.SavingS = math.Round(saving)
+	savingM := baseline.TotalDistanceM - prop.TotalDistanceM
+	cmp.SavingM = math.Round(savingM)
+	if r.ByDistance() {
+		switch {
+		case prop.LateS < baseline.LateS-1:
+			cmp.Message = fmt.Sprintf("Late at %d stop(s) instead of %d (%.0f min less late).", len(prop.Late), len(baseline.Late), (baseline.LateS-prop.LateS)/60)
+			if savingM >= MinImprovementM {
+				cmp.Message += " Also " + miles(savingM) + " shorter."
+			}
+		case prop.LateS > baseline.LateS+1:
+			cmp.Message = "The shorter order found would be later at time-limited stops; keeping the current order."
+			return cmp, nil
+		case savingM < MinImprovementM:
+			cmp.Message = fmt.Sprintf("The best order found saves %s, less than %s; keeping the current order.", miles(math.Max(savingM, 0)), miles(MinImprovementM))
+			return cmp, nil
+		default:
+			cmp.Message = "Estimated " + miles(savingM) + " less driving"
+			switch {
+			case saving <= -60:
+				cmp.Message += fmt.Sprintf(", %.0f min longer.", -saving/60)
+			case saving >= 60:
+				cmp.Message += fmt.Sprintf(", and %.0f min shorter.", saving/60)
+			default:
+				cmp.Message += "."
+			}
+		}
+		cmp.Proposed = &prop
+		cmp.Improved = true
+		return cmp, nil
+	}
 	switch {
 	case prop.LateS < baseline.LateS-1:
 		cmp.Message = fmt.Sprintf("Late at %d stop(s) instead of %d (%.0f min less late).", len(prop.Late), len(baseline.Late), (baseline.LateS-prop.LateS)/60)
@@ -562,6 +628,11 @@ func Optimize(ctx context.Context, p Provider, r Request) (Comparison, error) {
 	return cmp, nil
 }
 
+// miles formats metres as miles with km in brackets.
+func miles(m float64) string {
+	return fmt.Sprintf("%.1f mi (%.1f km)", m/1609.344, m/1000)
+}
+
 func equalOrder(a, b []string) bool {
 	if len(a) != len(b) {
 		return false
@@ -574,16 +645,20 @@ func equalOrder(a, b []string) bool {
 	return true
 }
 
-// buildMatrix prices the planned pairs with ETAs calls.
-func buildMatrix(ctx context.Context, p Provider, r Request, base []int) ([][]float64, MatrixInfo, error) {
+// buildMatrix prices the planned pairs with ETAs calls: travel times and
+// the distances of those (fastest) routes.
+func buildMatrix(ctx context.Context, p Provider, r Request, base []int) ([][]float64, [][]float64, MatrixInfo, error) {
 	pts := r.nodes()
 	size := len(pts)
 	m := make([][]float64, size)
+	dm := make([][]float64, size)
 	for i := range m {
 		m[i] = make([]float64, size)
+		dm[i] = make([]float64, size)
 		for j := range m[i] {
 			if i != j {
 				m[i][j] = Inf
+				dm[i][j] = Inf
 			}
 		}
 	}
@@ -601,7 +676,7 @@ func buildMatrix(ctx context.Context, p Provider, r Request, base []int) ([][]fl
 		var ds []int
 		for _, d := range all {
 			if pts[o].Lat == pts[d].Lat && pts[o].Lng == pts[d].Lng {
-				m[o][d] = 0
+				m[o][d], dm[o][d] = 0, 0
 				continue
 			}
 			ds = append(ds, d)
@@ -635,27 +710,31 @@ func buildMatrix(ctx context.Context, p Provider, r Request, base []int) ([][]fl
 			}
 			for i, d := range j.dests {
 				m[j.o][d] = costs[i].DurationS
+				dm[j.o][d] = costs[i].DistanceM
 			}
 		}(j)
 	}
 	wg.Wait()
 	if firstErr != nil {
-		return nil, MatrixInfo{}, firstErr
+		return nil, nil, MatrixInfo{}, firstErr
 	}
 	info := MatrixInfo{Nodes: size, Pairs: pairs, Complete: len(r.Visits) <= FullMatrixMaxVisits}
 	if !info.Complete {
 		info.Neighbors = Neighbors
 	}
-	return m, info, nil
+	return m, dm, info, nil
 }
 
 // problem is the order search on a priced matrix: node 0 is the start,
 // visits are 1..n, the finish (if fixed) is fin. The searched visits
 // leave from origin at time t0 (after any locked visits). Costs are the
 // schedule: travel, waiting for windows and service, plus LatePenalty per
-// second late. Without windows or service that is the travel time.
+// second late. Without windows or service that is the travel time. With d
+// set (optimizing for distance) the score is metres driven plus
+// LatePenaltyM per second late; m still drives the schedule.
 type problem struct {
 	m       [][]float64
+	d       [][]float64
 	origin  int
 	t0      float64
 	fin     int
@@ -705,19 +784,46 @@ func (p *problem) step(t float64, prev, v int) float64 {
 
 // cost scores an order of the searched visits.
 func (p *problem) cost(order []int) float64 {
-	t, late, prev := p.t0, 0.0, p.origin
+	t, late, prev, dist := p.t0, 0.0, p.origin, 0.0
 	for _, v := range order {
 		arrive := t + p.m[prev][v]
 		if arrive > p.close[v] {
 			late += arrive - p.close[v]
 		}
 		t = p.step(t, prev, v)
+		if p.d != nil {
+			dist += p.d[prev][v]
+		}
 		prev = v
 	}
 	if p.fin >= 0 {
 		t += p.m[prev][p.fin]
+		if p.d != nil {
+			dist += p.d[prev][p.fin]
+		}
+	}
+	if p.d != nil {
+		return dist + LatePenaltyM*late
 	}
 	return t + LatePenalty*late
+}
+
+// edge is the objective's cost of travelling a -> b (greedy choices).
+func (p *problem) edge(a, b int) float64 {
+	if p.d != nil {
+		return p.d[a][b]
+	}
+	return p.m[a][b]
+}
+
+// windowed reports whether any searched visit has a time window.
+func (p *problem) windowed() bool {
+	for i := range p.open {
+		if p.open[i] > 0 || !math.IsInf(p.close[i], 1) {
+			return true
+		}
+	}
+	return false
 }
 
 // tourCost: start(0) -> order... -> finish (if fin >= 0), travel only.
@@ -755,12 +861,13 @@ func search(p *problem, base []int, deadline time.Time) []int {
 		return false
 	}
 	if len(base) <= ExactMaxVisits {
-		if o := exact(p, base); o != nil {
+		if o := exactFor(p, base); o != nil {
 			consider(o)
 			return best
 		}
-		// No order meets every deadline: fall through to the penalized
-		// heuristics, which minimize lateness.
+		// No order meets every deadline (or, by distance, windows make the
+		// exact search inapplicable): fall through to the penalized
+		// heuristics, which put lateness first.
 	}
 	consider(improve(p, append([]int{}, base...), deadline))
 	if nn := nearestNeighbour(p, base); nn != nil {
@@ -848,6 +955,22 @@ func exact(p *problem, visits []int) []int {
 	return out
 }
 
+// exactFor runs exact for the problem's objective. By distance it is exact
+// only without time windows (distance then ignores the schedule); with
+// windows it returns nil and the heuristics decide.
+func exactFor(p *problem, visits []int) []int {
+	if p.d == nil {
+		return exact(p, visits)
+	}
+	if p.windowed() {
+		return nil
+	}
+	q := *p
+	q.m, q.d, q.t0 = p.d, nil, 0
+	q.service = make([]float64, len(p.service))
+	return exact(&q, visits)
+}
+
 // doubleBridge cuts the tour into four parts A B C D and returns A C B D,
 // a move local search cannot undo in one step.
 func doubleBridge(o []int, rng *rand.Rand) []int {
@@ -874,8 +997,8 @@ func nearestNeighbour(p *problem, visits []int) []int {
 	for len(left) > 0 {
 		next, nc := -1, Inf
 		for _, v := range visits { // deterministic order
-			if left[v] && p.m[cur][v] < nc {
-				next, nc = v, p.m[cur][v]
+			if c := p.edge(cur, v); left[v] && c < nc {
+				next, nc = v, c
 			}
 		}
 		if next < 0 {

@@ -309,6 +309,10 @@ func (s *Server) routeRun(w http.ResponseWriter, r *http.Request, b map[string]a
 		ctx = routing.WithAvoidTolls(ctx)
 		tolls = "avoided where Apple finds a reasonable toll-free route (see has_tolls per leg); the stop-order search itself ranks on Apple ETAs, which cannot avoid tolls"
 	}
+	objective := "soonest finish (deadlines first)"
+	if req.ByDistance() {
+		objective = "fewest miles: distance of Apple's fastest route per leg (deadlines first); time may be longer"
+	}
 	optimizer := fmt.Sprintf("exact for the priced travel times up to %d stops; above that a heuristic search, not guaranteed globally optimal", routing.ExactMaxVisits)
 	out := map[string]any{
 		"v":           routing.ContractVersion,
@@ -324,6 +328,7 @@ func (s *Server) routeRun(w http.ResponseWriter, r *http.Request, b map[string]a
 			"finish":        req.Finish != nil,
 			"optimizer":     optimizer,
 			"tolls":         tolls,
+			"objective":     objective,
 			"min_saving_s":  routing.MinImprovementS,
 			"geometry":      "display only, simplified; metrics come from unsimplified routes",
 			"calls_planned": need,

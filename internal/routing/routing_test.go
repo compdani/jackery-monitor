@@ -660,3 +660,128 @@ func lateOf(p *problem, order []int) float64 {
 	}
 	return late
 }
+
+// detourProvider: the "highway" leg a -> b is fast but long, so the fastest
+// order and the shortest order differ.
+type detourProvider struct{ gridProvider }
+
+func (d *detourProvider) adjust(a, b Point, c Cost) Cost {
+	if (a.ID == "__start" && b.ID == "far") || (a.ID == "far" && b.ID == "__start") {
+		// fast highway: quick but many metres
+		return Cost{DistanceM: c.DistanceM * 5, DurationS: c.DurationS / 5}
+	}
+	return c
+}
+
+func (d *detourProvider) Directions(ctx context.Context, a, b Point) (Leg, error) {
+	l, err := d.gridProvider.Directions(ctx, a, b)
+	l.Cost = d.adjust(a, b, l.Cost)
+	return l, err
+}
+
+func (d *detourProvider) ETAs(ctx context.Context, o Point, ds []Point) ([]Cost, error) {
+	out, err := d.gridProvider.ETAs(ctx, o, ds)
+	for i := range out {
+		out[i] = d.adjust(o, ds[i], out[i])
+	}
+	return out, err
+}
+
+func TestOptimizeByDistancePrefersFewerMetres(t *testing.T) {
+	visits := []Point{pt("near", 1, 0), pt("far", 10, 0)}
+	home := pt("__finish", 0, 0)
+	// near, far: 2000 s, 200 m. far, near (highway first): 1200 s, 600 m.
+	r := req([]Point{visits[1], visits[0]}, &home)
+	r.Order = []string{"near", "far"}
+	byTime, err := Optimize(context.Background(), &detourProvider{}, r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if byTime.Objective != ObjectiveTime {
+		t.Fatalf("objective %q", byTime.Objective)
+	}
+	if byTime.Proposed == nil || byTime.Proposed.Order[0] != "far" {
+		t.Fatalf("by time want far first, got %+v %s", byTime.Proposed, byTime.Message)
+	}
+	r.Objective = ObjectiveDistance
+	if err := r.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	byDist, err := Optimize(context.Background(), &detourProvider{}, r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if byDist.Proposed != nil || byDist.Objective != ObjectiveDistance {
+		t.Fatalf("by distance near-first is already shortest; got %+v %s", byDist.Proposed, byDist.Message)
+	}
+	// Reverse the baseline: by distance it should propose near first.
+	r.Order = []string{"far", "near"}
+	byDist, err = Optimize(context.Background(), &detourProvider{}, r)
+	if err != nil || byDist.Proposed == nil || byDist.Proposed.Order[0] != "near" || byDist.SavingM < MinImprovementM {
+		t.Fatalf("%v %+v %s", err, byDist.Proposed, byDist.Message)
+	}
+	if byDist.SavingS >= 0 {
+		t.Fatalf("shorter order should be slower here, saving_s %v", byDist.SavingS)
+	}
+	if !strings.Contains(byDist.Message, "mi") || !strings.Contains(byDist.Message, "longer") {
+		t.Fatalf("message %q", byDist.Message)
+	}
+}
+
+func TestOptimizeByDistanceLargeTripAndDeadlines(t *testing.T) {
+	// On the grid distance is proportional to time, so the distance
+	// objective must reach the same lattice optimum through the heuristics.
+	var visits []Point
+	for x := 0; x < 4; x++ {
+		for y := 0; y < 5; y++ {
+			if x == 0 && y == 0 {
+				continue
+			}
+			visits = append(visits, pt(fmt.Sprintf("p%d%d", x, y), float64(x), float64(y)))
+		}
+	}
+	rng := rand.New(rand.NewPCG(7, 7))
+	rng.Shuffle(len(visits), func(i, j int) { visits[i], visits[j] = visits[j], visits[i] })
+	home := pt("__finish", 0, 0)
+	r := req(visits, &home)
+	r.Objective = ObjectiveDistance
+	cmp, err := Optimize(context.Background(), &gridProvider{}, r)
+	if err != nil || cmp.Proposed == nil {
+		t.Fatalf("%v %s", err, cmp.Message)
+	}
+	if math.Abs(cmp.Proposed.TotalDistanceM-200) > 1 {
+		t.Fatalf("loop %v m, optimum 200 m", cmp.Proposed.TotalDistanceM)
+	}
+
+	// A deadline still beats distance: windows skip the exact search.
+	small := []Point{pt("a", 1, 0), pt("b", 2, 0), pt("c", 3, 0)}
+	r = req([]Point{small[2], small[1], small[0]}, nil)
+	r.Objective = ObjectiveDistance
+	r.Departure = time.Now().Unix()
+	r.Visits[0].Latest = r.Departure + 350 // c (300 s away) is on time only if first
+	cmp, err = Optimize(context.Background(), &gridProvider{}, r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ev := cmp.Baseline
+	if cmp.Proposed != nil {
+		ev = *cmp.Proposed
+	}
+	if ev.Order[0] != "c" {
+		t.Fatalf("deadline stop should lead, got %v (%s)", ev.Order, cmp.Message)
+	}
+}
+
+func TestValidateObjective(t *testing.T) {
+	r := req([]Point{pt("a", 1, 0)}, nil)
+	for _, o := range []string{"", "time", "distance"} {
+		r.Objective = o
+		if err := r.Validate(); err != nil {
+			t.Fatalf("%q: %v", o, err)
+		}
+	}
+	r.Objective = "miles"
+	if r.Validate() == nil {
+		t.Fatal("unknown objective accepted")
+	}
+}
