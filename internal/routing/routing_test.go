@@ -785,3 +785,34 @@ func TestValidateObjective(t *testing.T) {
 		t.Fatal("unknown objective accepted")
 	}
 }
+
+func TestAppleDirectionsCache(t *testing.T) {
+	key, _ := ecdsa.GenerateKey(elliptic.P256(), rand2.Reader)
+	der, _ := x509.MarshalPKCS8PrivateKey(key)
+	pemKey := string(pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der}))
+	now := time.Date(2026, 11, 22, 12, 0, 0, 0, time.UTC)
+	a := &Apple{
+		Config: AppleConfig{TeamID: "ABCDE12345", KeyID: "KEY1234567", PrivateKeyPEM: pemKey},
+		HTTP:   &appleFake{pub: &key.PublicKey}, Budget: &Budget{Limit: 100},
+		Now: func() time.Time { return now },
+	}
+	ctx := context.Background()
+	used := func() int { u, _ := a.Budget.Usage(); return u }
+	if _, err := a.Directions(ctx, pt("a", 0, 0), pt("b", 1, 0)); err != nil {
+		t.Fatal(err)
+	}
+	base := used() // token + one directions call
+	if _, err := a.Directions(ctx, pt("x", 0, 0), pt("y", 1, 0)); err != nil || used() != base {
+		t.Fatalf("same points not reused: %v, used %d want %d", err, used(), base)
+	}
+	if _, err := a.Directions(ctx, pt("b", 1, 0), pt("a", 0, 0)); err != nil || used() != base+1 {
+		t.Fatalf("reverse leg must be fetched: used %d", used())
+	}
+	if _, err := a.Directions(WithAvoidTolls(ctx), pt("a", 0, 0), pt("b", 1, 0)); err != nil || used() != base+2 {
+		t.Fatalf("toll-free leg must be fetched: used %d", used())
+	}
+	now = now.Add(DirectionsTTL)
+	if _, err := a.Directions(ctx, pt("a", 0, 0), pt("b", 1, 0)); err != nil || used() < base+3 {
+		t.Fatalf("expired leg not refetched: used %d", used())
+	}
+}

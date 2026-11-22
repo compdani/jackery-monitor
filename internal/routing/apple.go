@@ -144,6 +144,10 @@ type Apple struct {
 	mu      sync.Mutex
 	access  string
 	expires time.Time
+
+	// dirs reuses recent Directions results (see DirectionsTTL). Callers
+	// treat a Leg's Path as read-only.
+	dirs dirCache
 }
 
 func (a *Apple) now() time.Time {
@@ -326,8 +330,22 @@ func ll(p Point) string {
 	return strconv.FormatFloat(p.Lat, 'f', 6, 64) + "," + strconv.FormatFloat(p.Lng, 'f', 6, 64)
 }
 
-// Directions implements Provider.
+// Directions implements Provider. Recent identical requests are served
+// from memory without an API call.
 func (a *Apple) Directions(ctx context.Context, from, to Point) (Leg, error) {
+	key := dirKey(ctx, from, to)
+	if leg, ok := a.dirs.get(key, a.now()); ok {
+		return leg, nil
+	}
+	leg, err := a.fetchDirections(ctx, from, to)
+	if err != nil {
+		return Leg{}, err
+	}
+	a.dirs.put(key, leg, a.now())
+	return leg, nil
+}
+
+func (a *Apple) fetchDirections(ctx context.Context, from, to Point) (Leg, error) {
 	var out struct {
 		Routes []struct {
 			DistanceMeters  float64 `json:"distanceMeters"`
